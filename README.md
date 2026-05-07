@@ -69,7 +69,6 @@ Examples:
 `-s` is the short form of solver mode. `--solve` still works for compatibility, and is optional when only `"polynomials" field_size` are provided.
 Example:
 ```bash
-./drsolve "x*y-2, x+2*y-5" 0 
 ./drsolve -s "x^2 + y^2 + z^2 - 6, x + y + z - 4, x*y*z - x - 1" 257
 ```
 
@@ -97,7 +96,7 @@ x0^3+x1^3+x2^3, x0*x1+x1*x2+x2*x1, x1*x2*x0+1
 Run:
 ```bash
 ./drsolve example.dr
-./drsolve -f example.dr -o example_result.dr
+./drsolve -f example.dr -o my_result.dr
 ```
 
 ### Polynomial solver mode (multiline)
@@ -115,7 +114,7 @@ x^2+y^2+z^2-6, x+y+z-4, x*y*z-x-1
 Run:
 ```bash
 ./drsolve example_solve.dr
-./drsolve -f example_solve.dr -o example_solutions.dr
+./drsolve -s -f example_solve.dr -o my_solutions.dr
 ```
 ---
 
