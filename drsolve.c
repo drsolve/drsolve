@@ -34,7 +34,7 @@
 #include "rational_system_solver.h"
 #include "dixon_test.h"
 
-#define PROGRAM_VERSION "0.2.3"
+#define PROGRAM_VERSION "0.2.4"
 
 #ifdef _WIN32
 #define DIXON_NULL_DEVICE "NUL"
@@ -43,6 +43,17 @@
 #endif
 
 #define DEFAULT_OUTPUT_DIR "out"
+
+static int drsolve_default_thread_count(void)
+{
+#ifdef _OPENMP
+    int threads = omp_get_max_threads();
+    int half_threads = (threads + 1) / 2;
+    return half_threads > 0 ? half_threads : 1;
+#else
+    return 1;
+#endif
+}
 
 /* =========================================================================
  * Print usage
@@ -59,6 +70,34 @@ static void print_version()
     printf("PML support: DISABLED\n");
 #endif
     printf("===============================================\n");
+}
+
+static void print_short_usage(const char *prog_name)
+{
+    printf("USAGE:\n");
+    printf("  %s \"polynomials\" \"eliminate_vars\" field_size\n", prog_name);
+    printf("  %s \"polynomials\" field_size\n", prog_name);
+    printf("  %s input_file\n", prog_name);
+    printf("\n");
+
+    printf("CORE MODES:\n");
+    printf("  Elimination/resultant:\n");
+    printf("    %s \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
+    printf("  Polynomial system solving:\n");
+    printf("    %s \"x^2+y^2+z^2-6, x+y+z-4, x*y*z-x-1\" 257\n", prog_name);
+    printf("  Complexity analysis:\n");
+    printf("    %s -c \"x^2+y^2+1, x*y+z, x+y+z^2\" \"x,y\" 257\n", prog_name);
+    printf("  Random input:\n");
+    printf("    %s -r \"[3]*3\" 0\n", prog_name);
+    printf("  File input:\n");
+    printf("    %s example.dr\n", prog_name);
+    printf("\n");
+
+    printf("NOTES:\n");
+    printf("  - Use -v 2 or -v 3 for detailed diagnostics\n");
+    printf("  - In extension fields, 't' is default field generator\n");
+    printf("\n");
+    printf("Run '%s --help' or '%s -h' for full help.\n", prog_name, prog_name);
 }
 
 static void print_usage(const char *prog_name)
@@ -130,24 +169,33 @@ static void print_usage(const char *prog_name)
     printf("    -> `-v 0` matches `--silent` and prints nothing\n");
     printf("    -> `-v 1` is the default output level\n");
     printf("    -> `-v 2` matches the old `--debug` output and also enables per-step timing\n");
-    printf("    -> `-v 3` additionally prints the cancellation matrix, Dixon matrix, and maximal-rank submatrix when each is <= 10 x 10\n");
+    printf("    -> `-v 2` also prints detailed profiling for fast Dixon construction (block counts, tuple counts, per-phase timings)\n");
+    printf("    -> `-v 3` additionally prints the cancellation matrix, Dixon matrix, maximal-rank submatrix when each is <= 10 x 10, plus recursive fast-Dixon trace lines\n");
 
     printf("  Diagnostics:\n");
     printf("    %s --time <args>\n", prog_name);
     printf("    %s -v 2 <args>\n", prog_name);
     printf("    -> --time prints per-step timing; interpolation steps also show CPU/Wall/Threads\n");
     printf("    -> `--silent`, `--debug`, `--solve-verbose` and `--solve` remain accepted for compatibility\n");
+    printf("  Root search controls:\n");
+    printf("    %s --rational-root-scan <auto|off|force> <args>\n", prog_name);
+    printf("    %s --no-rational-root-scan <args>\n", prog_name);
+    printf("    %s --force-rational-root-scan <args>\n", prog_name);
+    printf("    -> controls the exhaustive Rational Root Theorem scan used before approximate real-root finding\n");
+    printf("    -> default `auto` skips only pathological candidate explosions; `off` disables that exact scan; `force` always runs it\n");
 
     printf("  Method selection:\n");
     printf("    %s --method <num> <args>\n", prog_name);
     printf("    %s --step1 <num> --step4 <num> <args>\n", prog_name);
-    printf("    -> Available methods: 0.Recursive; 1.Kronecker+HNF; 2.Interpolation; 3.Sparse interpolation; 4.Kronecker+direct nmod\n");
+    printf("    -> Available methods: 0.Recursive; 1.Kronecker+HNF; 2.Interpolation; 3.Sparse interpolation; 4.Kronecker+direct nmod; 5.Fast Dixon construction\n");
     printf("    -> --method sets both step 1 and step 4 for backward compatibility\n");
+    printf("    -> --fast-ksy enables a KSY precondition check for method 5 submatrix extraction; --no-fast-ksy disables it\n");
+    printf("    -> --fast-ksy-col <idx> selects which fast-Dixon column is treated as the constant column for the KSY check (default: 0)\n");
     printf("  Resultant construction:\n");
-    printf("    %s --resultant dixon|macaulay|subres <args>\n", prog_name);
+    printf("    %s --dixon <args>\n", prog_name);
     printf("    %s --macaulay <args>\n", prog_name);
     printf("    %s --subres <args>\n", prog_name);
-    printf("    -> --macaulay is shorthand for --resultant macaulay\n");
+    printf("    -> --dixon / --macaulay / --subres are direct method selectors\n");
     printf("    -> --subres is for exactly 2 polynomials and 1 elimination variable\n");
 
     printf("  Process count:\n");
@@ -180,6 +228,7 @@ static void print_usage(const char *prog_name)
     printf("  %s -v 0 \"x+y^2+t, x*y+t*y+1\" \"y\" 2^8\n", prog_name);
     printf("  %s \"x^2 + t*y, x*y + t^2\" \"2^8: t^8 + t^4 + t^3 + t + 1\"\n", prog_name);
     printf("  (AES polynomial for GF(2^8), 't' is the field extension generator)\n");
+    printf("  In Q and prime fields, 't' is treated as an ordinary variable; only extension fields reserve it as the generator.\n");
     printf("  %s example.dr\n", prog_name);
     printf("  %s -v 2 -f in.dr -o out.dr\n", prog_name);
     printf("  %s example_solve.dr\n", prog_name);
@@ -291,6 +340,7 @@ static const char *det_method_name_cli(int method)
         case 2: return "Interpolation";
         case 3: return "sparse interpolation";
         case 4: return "Kronecker+direct nmod";
+        case 5: return "Fast Dixon construction";
         default: return "Default";
     }
 }
@@ -302,6 +352,8 @@ static const char *resultant_method_heading(resultant_method_t method)
             return "Macaulay Resultant Computation";
         case RESULTANT_METHOD_SUBRES:
             return "Subresultant Resultant Computation";
+        case RESULTANT_METHOD_DIXON_FAST:
+            return "Fast Dixon Resultant Computation";
         case RESULTANT_METHOD_DIXON:
         default:
             return "Dixon Resultant Computation";
@@ -315,6 +367,8 @@ static const char *resultant_method_task_label(resultant_method_t method)
             return "Macaulay resultant";
         case RESULTANT_METHOD_SUBRES:
             return "Subresultant resultant";
+        case RESULTANT_METHOD_DIXON_FAST:
+            return "Fast Dixon resultant";
         case RESULTANT_METHOD_DIXON:
         default:
             return "Dixon resultant";
@@ -1469,10 +1523,13 @@ static void save_solver_result_to_file(const char *filename,
     print_field_label(out_fp, prime, power);
     if (!fmpz_is_zero(prime) && power > 1) {
         fprintf(out_fp, "\nField extension generator: t");
+        fprintf(out_fp, "\nNote: in extension fields, symbol 't' is interpreted as the field generator.");
     }
     fprintf(out_fp, "\n");
     fprintf(out_fp, "Polynomials: %s\n", polys_str);
-    fprintf(out_fp, "CPU time: %.3f seconds | Wall time: %.3f seconds | Threads: %d\n", cpu_time, wall_time, threads_num);
+    (void) cpu_time;
+    (void) threads_num;
+    fprintf(out_fp, "Time: %.3f seconds\n", wall_time);
     fprintf(out_fp, "\nSolutions:\n==========\n");
 
     if (!sols) { fprintf(out_fp, "Solution structure is null\n"); fclose(out_fp); return; }
@@ -1563,7 +1620,9 @@ static void save_rational_solver_result_to_file(const char *filename,
     fprintf(out_fp, "==================================\n");
     fprintf(out_fp, "Field: Q\n");
     fprintf(out_fp, "Polynomials: %s\n", polys_str);
-    fprintf(out_fp, "CPU time: %.3f seconds | Wall time: %.3f seconds | Threads: %d\n", cpu_time, wall_time, threads_num);
+    (void) cpu_time;
+    (void) threads_num;
+    fprintf(out_fp, "Time: %.3f seconds\n", wall_time);
     fprintf(out_fp, "\nSolutions:\n==========\n");
 
     if (!sols) { fprintf(out_fp, "Solution structure is null\n"); fclose(out_fp); return; }
@@ -1915,6 +1974,7 @@ static void save_result_to_file(const char *filename,
     print_field_label(out_fp, prime, power);
     if (!fmpz_is_zero(prime) && power > 1) {
         fprintf(out_fp, "\nField extension generator: t");
+        fprintf(out_fp, "\nNote: in extension fields, symbol 't' is interpreted as the field generator.");
     }
     fprintf(out_fp, "\n");
 
@@ -1927,7 +1987,9 @@ static void save_result_to_file(const char *filename,
     }
     fprintf(out_fp, "Variables eliminated: %s\n", vars_str);
     fprintf(out_fp, "Polynomials: %s\n", polys_str);
-    fprintf(out_fp, "CPU time: %.3f seconds | Wall time: %.3f seconds | Threads: %d\n", cpu_time, wall_time, threads_num);
+    (void) cpu_time;
+    (void) threads_num;
+    fprintf(out_fp, "Time: %.3f seconds\n", wall_time);
     fprintf(out_fp, "\nResultant:\n%s\n", result);
     fclose(out_fp);
 }
@@ -2259,7 +2321,17 @@ int main(int argc, char *argv[])
     struct timeval program_start;
     gettimeofday(&program_start, NULL);
 
-    if (argc == 1) { print_version(); print_usage(prog_name); return 0; }
+    if (argc == 1) {
+        print_version();
+        print_short_usage(prog_name);
+        return 0;
+    }
+    if (argc == 2 &&
+        (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)) {
+        print_version();
+        print_usage(prog_name);
+        return 0;
+    }
 
     /* ---- parse flags ---- */
     int    verbose_level = 1;
@@ -2275,6 +2347,12 @@ int main(int argc, char *argv[])
     int    det_method_step4 = -1;  /* determinant method override for step 4 */
     int    num_threads = -1;  /* number of threads, -1 means use default */
     resultant_method_t resultant_method = RESULTANT_METHOD_DIXON;
+    int resultant_method_explicit = 0;
+    int determinant_method_explicit = 0;
+    int fast_ksy_precondition = 0;
+    long fast_ksy_constant_col = 0;
+    rational_root_scan_mode_t rational_root_scan_mode = RATIONAL_ROOT_SCAN_AUTO;
+    int rational_root_scan_mode_explicit = 0;
     const char *cli_input_filename = NULL;
     const char *cli_output_filename = NULL;
     char *positional_args[argc];
@@ -2309,6 +2387,31 @@ int main(int argc, char *argv[])
             field_eq_mode = 1;
         } else if (strcmp(argv[i], "--time") == 0) {
             time_mode = 1;
+        } else if (strcmp(argv[i], "--no-rational-root-scan") == 0) {
+            rational_root_scan_mode = RATIONAL_ROOT_SCAN_OFF;
+            rational_root_scan_mode_explicit = 1;
+        } else if (strcmp(argv[i], "--force-rational-root-scan") == 0) {
+            rational_root_scan_mode = RATIONAL_ROOT_SCAN_FORCE;
+            rational_root_scan_mode_explicit = 1;
+        } else if (strcmp(argv[i], "--rational-root-scan") == 0 && i + 1 < argc) {
+            if (strcmp(argv[i + 1], "auto") == 0) {
+                rational_root_scan_mode = RATIONAL_ROOT_SCAN_AUTO;
+            } else if (strcmp(argv[i + 1], "off") == 0) {
+                rational_root_scan_mode = RATIONAL_ROOT_SCAN_OFF;
+            } else if (strcmp(argv[i + 1], "force") == 0) {
+                rational_root_scan_mode = RATIONAL_ROOT_SCAN_FORCE;
+            } else {
+                fprintf(stderr,
+                        "Error: invalid --rational-root-scan value '%s'; expected auto, off, or force.\n",
+                        argv[i + 1]);
+                return 1;
+            }
+            rational_root_scan_mode_explicit = 1;
+            i++;
+        } else if (strcmp(argv[i], "--rational-root-scan") == 0) {
+            fprintf(stderr,
+                    "Error: --rational-root-scan requires one of: auto, off, force.\n");
+            return 1;
         } else if (strcmp(argv[i], "--debug") == 0) {
             verbose_level = 2;
         } else if ((strcmp(argv[i], "--verbose") == 0 ||
@@ -2323,10 +2426,15 @@ int main(int argc, char *argv[])
                    strcmp(argv[i], "-v")        == 0) {
             fprintf(stderr, "Error: %s requires an integer argument 0, 1, or 2.\n", argv[i]);
             return 1;
+        } else if (strcmp(argv[i], "--dixon") == 0) {
+            resultant_method = RESULTANT_METHOD_DIXON;
+            resultant_method_explicit = 1;
         } else if (strcmp(argv[i], "--macaulay") == 0) {
             resultant_method = RESULTANT_METHOD_MACAULAY;
+            resultant_method_explicit = 1;
         } else if (strcmp(argv[i], "--subres") == 0) {
             resultant_method = RESULTANT_METHOD_SUBRES;
+            resultant_method_explicit = 1;
         } else if ((strcmp(argv[i], "--resultant") == 0 ||
                     strcmp(argv[i], "--resultant-method") == 0) && i + 1 < argc) {
             if (strcmp(argv[i + 1], "macaulay") == 0) {
@@ -2339,6 +2447,7 @@ int main(int argc, char *argv[])
                 fprintf(stderr, "Warning: invalid resultant method '%s', using dixon.\n",
                                 argv[i + 1]);
             }
+            resultant_method_explicit = 1;
             i++;
         } else if ((strcmp(argv[i], "--omega") == 0 ||
                     strcmp(argv[i], "-w")      == 0) && i + 1 < argc) {
@@ -2354,19 +2463,44 @@ int main(int argc, char *argv[])
         } else if ((strcmp(argv[i], "--method") == 0) && i + 1 < argc) {
             char *endptr = NULL;
             long val = strtol(argv[i + 1], &endptr, 10);
-            if (endptr && *endptr == '\0' && val >= 0 && val <= 4) {
-                det_method_step1 = (int)val;
-                det_method_step4 = (int)val;
+            if (endptr && *endptr == '\0' && val >= 0 && val <= 5) {
+                determinant_method_explicit = 1;
+                if (val == 5) {
+                    resultant_method = RESULTANT_METHOD_DIXON_FAST;
+                    resultant_method_explicit = 1;
+                    det_method_step1 = -1;
+                    det_method_step4 = -1;
+                } else {
+                    det_method_step1 = (int)val;
+                    det_method_step4 = (int)val;
+                }
             } else {
                 fprintf(stderr, "Warning: invalid --method value '%s', "
-                                "must be 0-4. Using default.\n", argv[i + 1]);
+                                "must be 0-5. Using default.\n", argv[i + 1]);
             }
             i++;          /* skip the value token */
+        } else if (strcmp(argv[i], "--fast-ksy") == 0 ||
+                   strcmp(argv[i], "--ksy-precondition") == 0) {
+            fast_ksy_precondition = 1;
+        } else if (strcmp(argv[i], "--fast-ksy-col") == 0 && i + 1 < argc) {
+            char *endptr = NULL;
+            long val = strtol(argv[i + 1], &endptr, 10);
+            if (endptr && *endptr == '\0' && val >= 0) {
+                fast_ksy_constant_col = val;
+            } else {
+                fprintf(stderr, "Warning: invalid --fast-ksy-col value '%s', using 0.\n",
+                                argv[i + 1]);
+                fast_ksy_constant_col = 0;
+            }
+            i++;
+        } else if (strcmp(argv[i], "--no-fast-ksy") == 0) {
+            fast_ksy_precondition = 0;
         } else if ((strcmp(argv[i], "--step1") == 0) && i + 1 < argc) {
             char *endptr = NULL;
             long val = strtol(argv[i + 1], &endptr, 10);
             if (endptr && *endptr == '\0' && val >= 0 && val <= 4) {
                 det_method_step1 = (int)val;
+                determinant_method_explicit = 1;
             } else {
                 fprintf(stderr, "Warning: invalid --step1 value '%s', "
                                 "must be 0-4. Using default.\n", argv[i + 1]);
@@ -2377,6 +2511,7 @@ int main(int argc, char *argv[])
             long val = strtol(argv[i + 1], &endptr, 10);
             if (endptr && *endptr == '\0' && val >= 0 && val <= 4) {
                 det_method_step4 = (int)val;
+                determinant_method_explicit = 1;
             } else {
                 fprintf(stderr, "Warning: invalid --step4 value '%s', "
                                 "must be 0-4. Using default.\n", argv[i + 1]);
@@ -2772,26 +2907,6 @@ int main(int argc, char *argv[])
         prime = fmpz_get_ui(p_fmpz);
     }
 
-    if (!silent_mode) {
-        if (!comp_mode && !solve_mode) {
-            printf("=== %s ===\n", resultant_method_heading(resultant_method));
-            printf("Field: ");
-            print_field_label(stdout, p_fmpz, power);
-            printf("\n");
-            if (!rational_mode && power > 1) {
-                printf("Field extension generator: t\n");
-            }
-        } else if (comp_mode) {
-            printf("Mode: Complexity analysis  |  Field: ");
-            print_field_label(stdout, p_fmpz, power);
-            printf("\n");
-        } else {
-            printf("Mode: Polynomial system solver  |  Field: ");
-            print_field_label(stdout, p_fmpz, power);
-            printf("\n");
-        }
-    }
-
     if (rational_mode) {
         if (ideal_str) {
             fprintf(stderr, "Error: field_size=0 currently does not support --ideal.\n");
@@ -3035,6 +3150,28 @@ int main(int argc, char *argv[])
         }
     }
 
+    if (!comp_mode && !solve_mode && !ideal_str &&
+        !resultant_method_explicit && !determinant_method_explicit &&
+        polys_str && vars_str) {
+        int poly_count = count_comma_separated_items(polys_str);
+        int var_count = count_comma_separated_items(vars_str);
+
+        if (!rational_mode && !large_prime_mode && poly_count == 2 && var_count == 1) {
+            resultant_method = RESULTANT_METHOD_SUBRES;
+            if (!silent_mode) {
+                printf("Hint: detected 2 equations with 1 elimination variable; auto-enabling --subres.\n");
+            }
+        } else if (!rational_mode && !large_prime_mode &&
+                   (poly_count == 3 || poly_count == 4) &&
+                   var_count == poly_count - 1) {
+            resultant_method = RESULTANT_METHOD_DIXON_FAST;
+            if (!silent_mode) {
+                printf("Hint: detected %d equations; auto-enabling fast Dixon construction (--method 5).\n",
+                       poly_count);
+            }
+        }
+    }
+
     if (resultant_method == RESULTANT_METHOD_SUBRES) {
         if (comp_mode) {
             fprintf(stderr, "Error: --subres does not support --comp.\n");
@@ -3061,6 +3198,27 @@ int main(int argc, char *argv[])
         }
     }
 
+    if (!silent_mode) {
+        if (!comp_mode && !solve_mode) {
+            printf("=== %s ===\n", resultant_method_heading(resultant_method));
+            printf("Field: ");
+            print_field_label(stdout, p_fmpz, power);
+            printf("\n");
+            if (!rational_mode && power > 1) {
+                printf("Field extension generator: t\n");
+                printf("Note: in extension fields, symbol 't' is interpreted as the field generator.\n");
+            }
+        } else if (comp_mode) {
+            printf("Mode: Complexity analysis  |  Field: ");
+            print_field_label(stdout, p_fmpz, power);
+            printf("\n");
+        } else {
+            printf("Mode: Polynomial system solver  |  Field: ");
+            print_field_label(stdout, p_fmpz, power);
+            printf("\n");
+        }
+    }
+
     /* ======================================================
      * Set determinant method and thread count
      * ====================================================== */
@@ -3071,6 +3229,9 @@ int main(int argc, char *argv[])
     g_dixon_verbose_level = verbose_level;
     g_dixon_show_step_timing = (!silent_mode) && (time_mode || debug_mode);
     g_dixon_debug_mode = debug_mode;
+    g_rational_root_scan_mode = rational_root_scan_mode;
+    g_dixon_fast_use_ksy_precondition = fast_ksy_precondition;
+    g_dixon_fast_ksy_constant_col = fast_ksy_constant_col;
     if (det_method_step1 != -1) {
         dixon_global_method_step1 = (det_method_t)det_method_step1;
         dixon_global_method = dixon_global_method_step1;
@@ -3087,12 +3248,23 @@ int main(int argc, char *argv[])
                    det_method_name_cli(det_method_step4));
         }
     }
-    if (num_threads != -1) {
-        fq_interpolation_set_threads(num_threads);
-        // fq_nmod_poly_mat_det_set_threads(num_threads);
-        if (!silent_mode) {
-            printf("Using %d threads\n", num_threads);
+    if (!silent_mode && rational_root_scan_mode_explicit) {
+        const char *mode_name = "auto";
+        if (rational_root_scan_mode == RATIONAL_ROOT_SCAN_OFF) {
+            mode_name = "off";
+        } else if (rational_root_scan_mode == RATIONAL_ROOT_SCAN_FORCE) {
+            mode_name = "force";
         }
+        printf("Rational root scan mode: %s\n", mode_name);
+    }
+    int threads_requested_explicitly = (num_threads != -1);
+    if (num_threads == -1) {
+        num_threads = drsolve_default_thread_count();
+    }
+    fq_interpolation_set_threads(num_threads);
+    // fq_nmod_poly_mat_det_set_threads(num_threads);
+    if (!silent_mode && threads_requested_explicitly && num_threads > 0) {
+        printf("Using %d threads\n", num_threads);
     }
 
     /* ======================================================
@@ -3386,8 +3558,12 @@ int main(int argc, char *argv[])
     }
 
     if (!silent_mode) {
-        printf("Total - CPU time: %.3f seconds | Wall time: %.3f seconds | Threads: %d\n",
-               cpu_time, wall_time, total_threads);
+        if (time_mode || verbose_level >= 2) {
+            printf("Total - CPU time: %.3f seconds | Wall time: %.3f seconds | Threads: %d\n",
+                   cpu_time, wall_time, total_threads);
+        } else {
+            printf("Time: %.3f seconds\n", wall_time);
+        }
     }
 
     /* ---- cleanup ---- */

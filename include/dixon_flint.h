@@ -57,8 +57,15 @@ typedef enum {
 typedef enum {
     RESULTANT_METHOD_DIXON = 0,
     RESULTANT_METHOD_MACAULAY = 1,
-    RESULTANT_METHOD_SUBRES = 2
+    RESULTANT_METHOD_SUBRES = 2,
+    RESULTANT_METHOD_DIXON_FAST = 3
 } resultant_method_t;
+
+typedef enum {
+    RATIONAL_ROOT_SCAN_AUTO = 0,
+    RATIONAL_ROOT_SCAN_OFF = 1,
+    RATIONAL_ROOT_SCAN_FORCE = 2
+} rational_root_scan_mode_t;
 
 // Global method selection variables
 extern det_method_t dixon_global_method_step1;
@@ -68,11 +75,17 @@ extern resultant_method_t g_resultant_method;
 extern int g_dixon_verbose_level;
 extern int g_dixon_debug_mode;
 extern int g_dixon_show_step_timing;
+extern rational_root_scan_mode_t g_rational_root_scan_mode;
 extern int g_matrix_transpose_threshold;
+extern int g_dixon_fast_use_ksy_precondition;
+extern slong g_dixon_fast_ksy_constant_col;
 
 int dixon_method_uses_parallel_timing(det_method_t method);
 int dixon_get_effective_interpolation_threads(void);
 void dixon_maybe_print_step_time(const char *step_label, double wall_elapsed);
+void dixon_maybe_print_parallel_step_time(const char *step_label,
+                                          double cpu_elapsed,
+                                          double wall_elapsed);
 void dixon_maybe_print_step_method_time(const char *step_label,
                                         det_method_t method,
                                         double cpu_elapsed,
@@ -126,7 +139,8 @@ void find_fq_optimal_maximal_rank_submatrix(fq_mvpoly_t ***full_matrix,
                                            slong **row_indices_out, 
                                            slong **col_indices_out,
                                            slong *num_rows, slong *num_cols,
-                                           slong npars);
+                                           slong npars,
+                                           slong ksy_constant_col);
 
 // Monomial collection structures and functions
 typedef struct {

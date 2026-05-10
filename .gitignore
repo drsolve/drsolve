@@ -3,6 +3,14 @@ build/
 build-*/
 cmake-build-*/
 
+# Temp directories
+out/
+temp/
+doc/
+paper/
+scripts/
+__pycache__/
+
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
 
