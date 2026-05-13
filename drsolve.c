@@ -69,15 +69,19 @@ static void print_short_usage(const char *prog_name)
     printf("  %s input_file\n", prog_name);
     printf("\n");
 
-    printf("CORE MODES:\n");
+    printf("EXAMPLES:\n");
     printf("  Elimination/resultant:\n");
     printf("    %s \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
     printf("  Polynomial system solving:\n");
     printf("    %s \"x^2+y^2+z^2-6, x+y+z-4, x*y*z-x-1\" 257\n", prog_name);
     printf("  Complexity analysis:\n");
     printf("    %s -c \"x^2+y^2+1, x*y+z, x+y+z^2\" \"x,y\" 257\n", prog_name);
-    printf("  Random input:\n");
-    printf("    %s -r \"[3]*3\" 0\n", prog_name);
+    printf("  Random input solving (three cubic polynomials):\n");
+    printf("    %s -r -s \"[3]*3\" 257\n", prog_name);
+    printf("  Extension field:\n");
+    printf("    %s \"x^2 + t*y, x*y + t^2\" \"2^8: t^8 + t^4 + t^3 + t + 1\"\n", prog_name);
+    printf("  Rational:\n");
+    printf("    %s \"x^2+y^2+z^2-1, x^2+y^2-2*z^2, x+y+z\" 0\n", prog_name);
     printf("  File input:\n");
     printf("    %s example.dr\n", prog_name);
     printf("\n");
@@ -180,6 +184,8 @@ static void print_usage(const char *prog_name)
     printf("    -> --method sets both step 1 and step 4 for backward compatibility\n");
     printf("    -> --fast-ksy enables a KSY precondition check for method 5 submatrix extraction; --no-fast-ksy disables it\n");
     printf("    -> --fast-ksy-col <idx> selects which fast-Dixon column is treated as the constant column for the KSY check (default: 0)\n");
+    printf("    -> --step3-verify-second enables the second Step 3 verification pass; default is off\n");
+    printf("    -> --no-step3-verify-second disables the second Step 3 verification pass\n");
     printf("  Resultant construction:\n");
     printf("    %s --dixon <args>\n", prog_name);
     printf("    %s --macaulay <args>\n", prog_name);
@@ -2390,6 +2396,7 @@ int main(int argc, char *argv[])
     int determinant_method_explicit = 0;
     int fast_ksy_precondition = 0;
     long fast_ksy_constant_col = 0;
+    int step3_verify_second = 0;
     rational_root_scan_mode_t rational_root_scan_mode = RATIONAL_ROOT_SCAN_AUTO;
     int rational_root_scan_mode_explicit = 0;
     const char *cli_input_filename = NULL;
@@ -2534,6 +2541,10 @@ int main(int argc, char *argv[])
             i++;
         } else if (strcmp(argv[i], "--no-fast-ksy") == 0) {
             fast_ksy_precondition = 0;
+        } else if (strcmp(argv[i], "--step3-verify-second") == 0) {
+            step3_verify_second = 1;
+        } else if (strcmp(argv[i], "--no-step3-verify-second") == 0) {
+            step3_verify_second = 0;
         } else if ((strcmp(argv[i], "--step1") == 0) && i + 1 < argc) {
             char *endptr = NULL;
             long val = strtol(argv[i + 1], &endptr, 10);
@@ -3281,6 +3292,7 @@ int main(int argc, char *argv[])
     g_rational_root_scan_mode = rational_root_scan_mode;
     g_dixon_fast_use_ksy_precondition = fast_ksy_precondition;
     g_dixon_fast_ksy_constant_col = fast_ksy_constant_col;
+    g_dixon_step3_second_verification = step3_verify_second;
     if (det_method_step1 != -1) {
         dixon_global_method_step1 = (det_method_t)det_method_step1;
         dixon_global_method = dixon_global_method_step1;
