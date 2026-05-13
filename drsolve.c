@@ -34,7 +34,7 @@
 #include "rational_system_solver.h"
 #include "dixon_test.h"
 
-#define PROGRAM_VERSION "0.2.4"
+#define PROGRAM_VERSION "0.2.5"
 
 #ifdef _WIN32
 #define DIXON_NULL_DEVICE "NUL"
@@ -43,17 +43,6 @@
 #endif
 
 #define DEFAULT_OUTPUT_DIR "out"
-
-static int drsolve_default_thread_count(void)
-{
-#ifdef _OPENMP
-    int threads = omp_get_max_threads();
-    int half_threads = (threads + 1) / 2;
-    return half_threads > 0 ? half_threads : 1;
-#else
-    return 1;
-#endif
-}
 
 /* =========================================================================
  * Print usage
@@ -169,7 +158,7 @@ static void print_usage(const char *prog_name)
     printf("    -> `-v 0` matches `--silent` and prints nothing\n");
     printf("    -> `-v 1` is the default output level\n");
     printf("    -> `-v 2` matches the old `--debug` output and also enables per-step timing\n");
-    printf("    -> `-v 2` also prints detailed profiling for fast Dixon construction (block counts, tuple counts, per-phase timings)\n");
+    printf("    -> `-v 2` also prints detailed profiling for recursive Dixon construction (block counts, tuple counts, per-phase timings)\n");
     printf("    -> `-v 3` additionally prints the cancellation matrix, Dixon matrix, maximal-rank submatrix when each is <= 10 x 10, plus recursive fast-Dixon trace lines\n");
 
     printf("  Diagnostics:\n");
@@ -187,7 +176,7 @@ static void print_usage(const char *prog_name)
     printf("  Method selection:\n");
     printf("    %s --method <num> <args>\n", prog_name);
     printf("    %s --step1 <num> --step4 <num> <args>\n", prog_name);
-    printf("    -> Available methods: 0.Recursive; 1.Kronecker+HNF; 2.Interpolation; 3.Sparse interpolation; 4.Kronecker+direct nmod; 5.Fast Dixon construction\n");
+    printf("    -> Available methods: 0.Recursive; 1.Kronecker+HNF; 2.Interpolation; 3.Sparse interpolation; 4.Kronecker+direct nmod; 5.Recursive Dixon construction\n");
     printf("    -> --method sets both step 1 and step 4 for backward compatibility\n");
     printf("    -> --fast-ksy enables a KSY precondition check for method 5 submatrix extraction; --no-fast-ksy disables it\n");
     printf("    -> --fast-ksy-col <idx> selects which fast-Dixon column is treated as the constant column for the KSY check (default: 0)\n");
@@ -237,6 +226,17 @@ static void print_usage(const char *prog_name)
 /* =========================================================================
  * Utility helpers
  * ========================================================================= */
+
+static int drsolve_default_thread_count(void)
+{
+#ifdef _OPENMP
+    int threads = omp_get_max_threads();
+    int half_threads = (threads + 1) / 2;
+    return half_threads > 0 ? half_threads : 1;
+#else
+    return 1;
+#endif
+}
 
 static char *dixon_arb_to_string(const arb_t value, slong digits)
 {
@@ -340,7 +340,7 @@ static const char *det_method_name_cli(int method)
         case 2: return "Interpolation";
         case 3: return "sparse interpolation";
         case 4: return "Kronecker+direct nmod";
-        case 5: return "Fast Dixon construction";
+        case 5: return "Recursive Dixon construction";
         default: return "Default";
     }
 }
@@ -352,8 +352,8 @@ static const char *resultant_method_heading(resultant_method_t method)
             return "Macaulay Resultant Computation";
         case RESULTANT_METHOD_SUBRES:
             return "Subresultant Resultant Computation";
-        case RESULTANT_METHOD_DIXON_FAST:
-            return "Fast Dixon Resultant Computation";
+        case RESULTANT_METHOD_DIXON_RECURSIVE:
+            return "Recursive Dixon Resultant Computation";
         case RESULTANT_METHOD_DIXON:
         default:
             return "Dixon Resultant Computation";
@@ -367,8 +367,8 @@ static const char *resultant_method_task_label(resultant_method_t method)
             return "Macaulay resultant";
         case RESULTANT_METHOD_SUBRES:
             return "Subresultant resultant";
-        case RESULTANT_METHOD_DIXON_FAST:
-            return "Fast Dixon resultant";
+        case RESULTANT_METHOD_DIXON_RECURSIVE:
+            return "Recursive Dixon resultant";
         case RESULTANT_METHOD_DIXON:
         default:
             return "Dixon resultant";
@@ -446,6 +446,33 @@ static int check_prime_power(const fmpz_t n, fmpz_t prime, ulong *power)
     return 0;
 }
 
+static int drsolve_is_ident_start_char(char c)
+{
+    return ((c >= 'A' && c <= 'Z') ||
+            (c >= 'a' && c <= 'z') ||
+            c == '_');
+}
+
+static int drsolve_is_ident_continue_char(char c)
+{
+    return drsolve_is_ident_start_char(c) || (c >= '0' && c <= '9');
+}
+
+static char *drsolve_find_identifier_token(char *text, const char *name)
+{
+    size_t name_len = strlen(name);
+    char *p = text;
+    while ((p = strstr(p, name)) != NULL) {
+        int left_ok = (p == text) || !drsolve_is_ident_continue_char(*(p - 1));
+        int right_ok = !drsolve_is_ident_continue_char(p[name_len]);
+        if (left_ok && right_ok) {
+            return p;
+        }
+        p += 1;
+    }
+    return NULL;
+}
+
 static int parse_field_polynomial(nmod_poly_t modulus, const char *poly_str,
                                   mp_limb_t prime, const char *var_name)
 {
@@ -470,7 +497,7 @@ static int parse_field_polynomial(nmod_poly_t modulus, const char *poly_str,
 
         mp_limb_t coeff  = 1;
         ulong      degree = 0;
-        char      *var_pos = strstr(token, var_name);
+        char      *var_pos = drsolve_find_identifier_token(token, var_name);
 
         if (!var_pos) {
             if (strlen(token) > 0) coeff = strtoul(token, NULL, 10);
@@ -529,10 +556,17 @@ static int parse_field_size(const char *field_str, fmpz_t prime, ulong *power,
             *field_poly = strdup(poly_start);
             if (gen_var && *field_poly) {
                 const char *p = *field_poly;
-                while (*p && !isalpha(*p)) p++;
-                if (*p && isalpha(*p)) {
-                    char var_name[2] = { *p, '\0' };
-                    *gen_var = strdup(var_name);
+                while (*p && !drsolve_is_ident_start_char(*p)) p++;
+                if (*p && drsolve_is_ident_start_char(*p)) {
+                    const char *start = p;
+                    while (*p && drsolve_is_ident_continue_char(*p)) p++;
+                    size_t var_len = (size_t) (p - start);
+                    char *var_name = (char *) malloc(var_len + 1);
+                    if (var_name) {
+                        memcpy(var_name, start, var_len);
+                        var_name[var_len] = '\0';
+                        *gen_var = var_name;
+                    }
                 }
             }
         }
@@ -2332,6 +2366,11 @@ int main(int argc, char *argv[])
         print_usage(prog_name);
         return 0;
     }
+    if (argc == 2 &&
+        (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-V") == 0)) {
+        print_version();
+        return 0;
+    }
 
     /* ---- parse flags ---- */
     int    verbose_level = 1;
@@ -2466,7 +2505,7 @@ int main(int argc, char *argv[])
             if (endptr && *endptr == '\0' && val >= 0 && val <= 5) {
                 determinant_method_explicit = 1;
                 if (val == 5) {
-                    resultant_method = RESULTANT_METHOD_DIXON_FAST;
+                    resultant_method = RESULTANT_METHOD_DIXON_RECURSIVE;
                     resultant_method_explicit = 1;
                     det_method_step1 = -1;
                     det_method_step4 = -1;
@@ -3015,10 +3054,10 @@ int main(int argc, char *argv[])
         slong num_elim_rand = comp_mode ? (npolys_rand - 1)
                                         : (solve_mode ? nvars_rand : (npolys_rand - 1));
 
-        if (!degrees_rand || npolys_rand < 2) {
+        if (!degrees_rand || npolys_rand < 1) {
             if (!silent_mode)
-                fprintf(stderr, "Error: --random requires at least 2 degrees "
-                                "(e.g. \"3,3,2\")\n");
+                fprintf(stderr, "Error: --random requires at least 1 degree "
+                                "(e.g. \"10000\" or \"3,3,2\")\n");
             free(degrees_rand);
             goto cleanup_fail;
         }
@@ -3120,6 +3159,16 @@ int main(int argc, char *argv[])
         }
     }
 
+    if (rand_generated && !comp_mode && !solve_mode && !ideal_str &&
+        polys_str && vars_str &&
+        count_comma_separated_items(polys_str) == 1 &&
+        count_comma_separated_items(vars_str) == 0) {
+        solve_mode = 1;
+        if (!silent_mode) {
+            printf("Detected a random univariate polynomial; auto-enabling solver mode.\n");
+        }
+    }
+
     if (!solve_mode && polys_str && vars_str) {
         char *compat_vars = NULL;
         if (!auto_adjust_elimination_vars_for_msolve_compat(polys_str, field_str, vars_str,
@@ -3162,11 +3211,11 @@ int main(int argc, char *argv[])
                 printf("Hint: detected 2 equations with 1 elimination variable; auto-enabling --subres.\n");
             }
         } else if (!rational_mode && !large_prime_mode &&
-                   (poly_count == 3 || poly_count == 4) &&
+                   (poly_count == 3) && // || poly_count == 4
                    var_count == poly_count - 1) {
-            resultant_method = RESULTANT_METHOD_DIXON_FAST;
+            resultant_method = RESULTANT_METHOD_DIXON_RECURSIVE;
             if (!silent_mode) {
-                printf("Hint: detected %d equations; auto-enabling fast Dixon construction (--method 5).\n",
+                printf("Hint: detected %d equations; auto-enabling recursive Dixon construction (--method 5).\n",
                        poly_count);
             }
         }
