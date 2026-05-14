@@ -34,7 +34,7 @@
 #include "rational_system_solver.h"
 #include "dixon_test.h"
 
-#define PROGRAM_VERSION "0.2.5"
+#define PROGRAM_VERSION "0.3.0"
 
 #ifdef _WIN32
 #define DIXON_NULL_DEVICE "NUL"
@@ -179,7 +179,9 @@ static void print_usage(const char *prog_name)
     printf("    %s --no-rational-root-scan <args>\n", prog_name);
     printf("    %s --force-rational-root-scan <args>\n", prog_name);
     printf("    -> controls the exhaustive Rational Root Theorem scan used before approximate real-root finding\n");
-    printf("    -> default `auto` skips only pathological candidate explosions; `off` disables that exact scan; `force` always runs it\n");
+    printf("    -> default `auto` skips the scan when candidate count exceeds %d; `off` disables it; `force` runs it up to the hard cap %d\n",
+           FMPQ_ROOT_SEARCH_AUTO_MAX_CANDIDATES,
+           FMPQ_ROOT_SEARCH_HARD_MAX_CANDIDATES);
 
     printf("  Method selection:\n");
     printf("    %s --method <num> <args>\n", prog_name);
@@ -3381,46 +3383,66 @@ int main(int argc, char *argv[])
         }
 
         int orig_stdout = -1, orig_stderr = -1;
-        int suppress_solver_internal_output = !solve_verbose_mode;
+        int enable_solver_realtime_progress = !silent_mode;
+        int suppress_solver_stdout = !solve_verbose_mode;
+        int suppress_solver_stderr = !enable_solver_realtime_progress;
 
         if (rational_mode) {
-            rational_solver_set_realtime_progress(solve_verbose_mode);
+            rational_solver_set_realtime_progress(enable_solver_realtime_progress);
             rational_solver_set_internal_trace(solve_verbose_mode);
             rational_solver_set_exact_only(solve_rational_only_mode);
 
-            if (suppress_solver_internal_output) {
-                redirect_stdio_to_devnull(&orig_stdout, &orig_stderr);
+            if (suppress_solver_stdout) {
+                redirect_fd_to_devnull(STDOUT_FILENO, &orig_stdout);
+            }
+            if (suppress_solver_stderr) {
+                redirect_fd_to_devnull(STDERR_FILENO, &orig_stderr);
             }
 
             rational_solutions = solve_rational_polynomial_system_string(polys_str);
 
-            if (suppress_solver_internal_output) {
-                restore_stdio(orig_stdout, orig_stderr);
+            if (suppress_solver_stdout) {
+                restore_fd(STDOUT_FILENO, orig_stdout);
+            }
+            if (suppress_solver_stderr) {
+                restore_fd(STDERR_FILENO, orig_stderr);
             }
         } else if (large_prime_mode) {
-            large_prime_solver_set_realtime_progress(solve_verbose_mode);
+            large_prime_solver_set_realtime_progress(enable_solver_realtime_progress);
 
-            if (suppress_solver_internal_output) {
-                redirect_stdio_to_devnull(&orig_stdout, &orig_stderr);
+            if (suppress_solver_stdout) {
+                redirect_fd_to_devnull(STDOUT_FILENO, &orig_stdout);
+            }
+            if (suppress_solver_stderr) {
+                redirect_fd_to_devnull(STDERR_FILENO, &orig_stderr);
             }
 
             large_prime_solutions = solve_large_prime_polynomial_system_string(polys_str, p_fmpz);
 
-            if (suppress_solver_internal_output) {
-                restore_stdio(orig_stdout, orig_stderr);
+            if (suppress_solver_stdout) {
+                restore_fd(STDOUT_FILENO, orig_stdout);
+            }
+            if (suppress_solver_stderr) {
+                restore_fd(STDERR_FILENO, orig_stderr);
             }
         } else {
-            polynomial_solver_set_realtime_progress(solve_verbose_mode);
+            polynomial_solver_set_realtime_progress(enable_solver_realtime_progress);
             polynomial_solver_set_internal_trace(solve_verbose_mode);
 
-            if (suppress_solver_internal_output) {
-                redirect_stdio_to_devnull(&orig_stdout, &orig_stderr);
+            if (suppress_solver_stdout) {
+                redirect_fd_to_devnull(STDOUT_FILENO, &orig_stdout);
+            }
+            if (suppress_solver_stderr) {
+                redirect_fd_to_devnull(STDERR_FILENO, &orig_stderr);
             }
 
             solutions = solve_polynomial_system_string(polys_str, ctx);
 
-            if (suppress_solver_internal_output) {
-                restore_stdio(orig_stdout, orig_stderr);
+            if (suppress_solver_stdout) {
+                restore_fd(STDOUT_FILENO, orig_stdout);
+            }
+            if (suppress_solver_stderr) {
+                restore_fd(STDERR_FILENO, orig_stderr);
             }
         }
 
