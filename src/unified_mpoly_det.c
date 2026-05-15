@@ -1,6 +1,137 @@
 /* unified_mpoly_det.c - Implementation of unified polynomial matrix determinant computation */
 
 #include "unified_mpoly_det.h"
+#include "dixon_flint.h"
+
+static void debug_print_unified_mpoly_generic(const unified_mpoly_t poly)
+{
+    slong nvars = (poly != NULL && poly->ctx_ptr != NULL) ? poly->ctx_ptr->nvars : 0;
+    if (nvars <= 0) {
+        const char *fallback[] = {"x"};
+        unified_mpoly_print_pretty(poly, fallback);
+        return;
+    }
+
+    char **vars = (char **) malloc((size_t) nvars * sizeof(char *));
+    if (vars == NULL) {
+        printf("<debug-print allocation failed>");
+        return;
+    }
+    for (slong i = 0; i < nvars; i++) {
+        vars[i] = (char *) malloc(24);
+        if (vars[i] == NULL) {
+            for (slong j = 0; j < i; j++) free(vars[j]);
+            free(vars);
+            printf("<debug-print allocation failed>");
+            return;
+        }
+        snprintf(vars[i], 24, "x%ld", i + 1);
+    }
+
+    unified_mpoly_print_pretty(poly, (const char **) vars);
+
+    for (slong i = 0; i < nvars; i++) free(vars[i]);
+    free(vars);
+}
+
+static int debug_perm_sign(const slong *perm, slong size)
+{
+    int sign = 1;
+    for (slong i = 0; i < size; i++) {
+        for (slong j = i + 1; j < size; j++) {
+            if (perm[i] > perm[j]) sign = -sign;
+        }
+    }
+    return sign;
+}
+
+static slong debug_small_factorial(slong n)
+{
+    slong r = 1;
+    for (slong i = 2; i <= n; i++) r *= i;
+    return r;
+}
+
+static void debug_dump_leibniz_paths_dfs(unified_mpoly_t **mpoly_matrix,
+                                         slong size,
+                                         unified_mpoly_ctx_t ctx,
+                                         slong row,
+                                         slong *perm,
+                                         int *used,
+                                         slong *path_index)
+{
+    if (row == size) {
+        unified_mpoly_t prefix = unified_mpoly_init(ctx);
+        unified_mpoly_t full = unified_mpoly_init(ctx);
+        slong prefix_terms;
+        slong last_terms;
+        int sign = debug_perm_sign(perm, size);
+
+        unified_mpoly_one(prefix);
+        for (slong i = 0; i < size - 1; i++) {
+            unified_mpoly_mul(prefix, prefix, mpoly_matrix[i][perm[i]]);
+        }
+        prefix_terms = unified_mpoly_length(prefix);
+        last_terms = unified_mpoly_length(mpoly_matrix[size - 1][perm[size - 1]]);
+
+        unified_mpoly_mul(full, prefix, mpoly_matrix[size - 1][perm[size - 1]]);
+        if (sign < 0) {
+            unified_mpoly_neg(full, full);
+        }
+
+        printf("[direct-det path %ld/%ld] perm=[",
+               *path_index + 1, debug_small_factorial(size));
+        for (slong i = 0; i < size; i++) {
+            printf("%ld%s", perm[i], (i + 1 < size) ? "," : "");
+        }
+        printf("] sign=%c\n", sign > 0 ? '+' : '-');
+        printf("  final multiply operand term counts: left=%ld, right=%ld\n",
+               prefix_terms, last_terms);
+        printf("  path result before summation: terms=%ld\n",
+               unified_mpoly_length(full));
+
+        unified_mpoly_clear(prefix);
+        unified_mpoly_clear(full);
+        (*path_index)++;
+        return;
+    }
+
+    for (slong col = 0; col < size; col++) {
+        if (used[col]) continue;
+        used[col] = 1;
+        perm[row] = col;
+        debug_dump_leibniz_paths_dfs(mpoly_matrix, size, ctx, row + 1, perm, used, path_index);
+        used[col] = 0;
+    }
+}
+
+static void debug_dump_leibniz_paths(unified_mpoly_t **mpoly_matrix,
+                                     slong size,
+                                     unified_mpoly_ctx_t ctx)
+{
+    slong *perm = NULL;
+    int *used = NULL;
+    slong path_index = 0;
+
+    if (g_dixon_verbose_level < 3 || size > 5 || size <= 0) {
+        return;
+    }
+
+    perm = (slong *) calloc((size_t) size, sizeof(slong));
+    used = (int *) calloc((size_t) size, sizeof(int));
+    if (perm == NULL || used == NULL) {
+        free(perm);
+        free(used);
+        return;
+    }
+
+    printf("\n=== Direct determinant Leibniz path dump (size=%ld) ===\n", size);
+    debug_dump_leibniz_paths_dfs(mpoly_matrix, size, ctx, 0, perm, used, &path_index);
+    printf("=== End direct determinant Leibniz path dump ===\n");
+
+    free(perm);
+    free(used);
+}
 
 /* ============================================================================
    RECURSIVE DETERMINANT COMPUTATION WITH UNIFIED INTERFACE
@@ -107,6 +238,209 @@ static void compute_det_3x3_unified(unified_mpoly_t det,
     unified_mpoly_clear(sum);
 }
 
+static int unified_mpoly_find_nonzero_pivot(unified_mpoly_t **mat,
+                                            slong size,
+                                            slong start)
+{
+    for (slong i = start; i < size; i++) {
+        for (slong j = start; j < size; j++) {
+            if (!unified_mpoly_is_zero(mat[i][j])) {
+                return (int) i;
+            }
+        }
+    }
+    return -1;
+}
+
+static int unified_mpoly_find_nonzero_pivot_col(unified_mpoly_t **mat,
+                                                slong size,
+                                                slong row,
+                                                slong start_col)
+{
+    for (slong j = start_col; j < size; j++) {
+        if (!unified_mpoly_is_zero(mat[row][j])) {
+            return (int) j;
+        }
+    }
+    return -1;
+}
+
+int compute_unified_mpoly_det_bareiss(unified_mpoly_t det_result,
+                                     unified_mpoly_t **mpoly_matrix,
+                                     slong size,
+                                     unified_mpoly_ctx_t ctx) {
+    if (size <= 0) {
+        unified_mpoly_one(det_result);
+        return 1;
+    }
+
+    if (size == 1) {
+        unified_mpoly_set(det_result, mpoly_matrix[0][0]);
+        return 1;
+    }
+
+    if (size == 2) {
+        unified_mpoly_t ad, bc;
+        ad = unified_mpoly_init(ctx);
+        bc = unified_mpoly_init(ctx);
+        unified_mpoly_mul(ad, mpoly_matrix[0][0], mpoly_matrix[1][1]);
+        unified_mpoly_mul(bc, mpoly_matrix[0][1], mpoly_matrix[1][0]);
+        unified_mpoly_sub(det_result, ad, bc);
+        unified_mpoly_clear(ad);
+        unified_mpoly_clear(bc);
+        return 1;
+    }
+
+    unified_mpoly_t **work = unified_mpoly_mat_init(size, size, ctx);
+    unified_mpoly_t prev_pivot = unified_mpoly_init(ctx);
+    unified_mpoly_t pivot = unified_mpoly_init(ctx);
+    unified_mpoly_t zero_poly = unified_mpoly_init(ctx);
+    int sign = 1;
+    int ok = 1;
+
+    unified_mpoly_zero(zero_poly);
+    unified_mpoly_one(prev_pivot);
+
+    for (slong i = 0; i < size; i++) {
+        for (slong j = 0; j < size; j++) {
+            unified_mpoly_set(work[i][j], mpoly_matrix[i][j]);
+        }
+    }
+
+    for (slong k = 0; k < size - 1; k++) {
+        slong pivot_row = k;
+        slong pivot_col = k;
+
+        if (unified_mpoly_is_zero(work[k][k])) {
+            int row_found = unified_mpoly_find_nonzero_pivot(work, size, k);
+            if (row_found < 0) {
+                unified_mpoly_zero(det_result);
+                goto cleanup;
+            }
+            pivot_row = (slong) row_found;
+            pivot_col = (slong) unified_mpoly_find_nonzero_pivot_col(work, size, pivot_row, k);
+            if (pivot_col < 0) {
+                unified_mpoly_zero(det_result);
+                goto cleanup;
+            }
+            if (pivot_row != k) {
+                unified_mpoly_t *tmp_row = work[k];
+                work[k] = work[pivot_row];
+                work[pivot_row] = tmp_row;
+                sign = -sign;
+            }
+            if (pivot_col != k) {
+                for (slong i = 0; i < size; i++) {
+                    unified_mpoly_swap(work[i][k], work[i][pivot_col]);
+                }
+                sign = -sign;
+            }
+        }
+
+        unified_mpoly_set(pivot, work[k][k]);
+        if (unified_mpoly_is_zero(pivot)) {
+            unified_mpoly_zero(det_result);
+            goto cleanup;
+        }
+
+        if (unified_mpoly_is_zero(prev_pivot) && k > 0) {
+            unified_mpoly_zero(det_result);
+            ok = 0;
+            goto cleanup;
+        }
+
+        #ifdef _OPENMP
+        if ((size - (k + 1)) >= 2 && omp_get_max_threads() > 1) {
+            volatile int parallel_failed = 0;
+            #pragma omp parallel for collapse(2) schedule(static)
+            for (slong i = k + 1; i < size; i++) {
+                for (slong j = k + 1; j < size; j++) {
+                    unified_mpoly_t t1 = unified_mpoly_init(ctx);
+                    unified_mpoly_t t2 = unified_mpoly_init(ctx);
+                    unified_mpoly_t numer = unified_mpoly_init(ctx);
+                    unified_mpoly_t quotient = unified_mpoly_init(ctx);
+
+                    unified_mpoly_mul(t1, work[i][j], work[k][k]);
+                    unified_mpoly_mul(t2, work[i][k], work[k][j]);
+                    unified_mpoly_sub(numer, t1, t2);
+
+                    if (k == 0) {
+                        unified_mpoly_set(work[i][j], numer);
+                    } else {
+                        if (!unified_mpoly_divexact(quotient, numer, prev_pivot)) {
+                            parallel_failed = 1;
+                        } else {
+                            unified_mpoly_set(work[i][j], quotient);
+                        }
+                    }
+
+                    unified_mpoly_clear(t1);
+                    unified_mpoly_clear(t2);
+                    unified_mpoly_clear(numer);
+                    unified_mpoly_clear(quotient);
+                }
+            }
+            if (parallel_failed) {
+                ok = 0;
+                goto cleanup;
+            }
+        } else
+        #endif
+        {
+            unified_mpoly_t t1 = unified_mpoly_init(ctx);
+            unified_mpoly_t t2 = unified_mpoly_init(ctx);
+            unified_mpoly_t numer = unified_mpoly_init(ctx);
+            unified_mpoly_t quotient = unified_mpoly_init(ctx);
+
+            for (slong i = k + 1; i < size; i++) {
+                for (slong j = k + 1; j < size; j++) {
+                    unified_mpoly_mul(t1, work[i][j], work[k][k]);
+                    unified_mpoly_mul(t2, work[i][k], work[k][j]);
+                    unified_mpoly_sub(numer, t1, t2);
+
+                    if (k == 0) {
+                        unified_mpoly_set(work[i][j], numer);
+                    } else {
+                        if (!unified_mpoly_divexact(quotient, numer, prev_pivot)) {
+                            ok = 0;
+                            unified_mpoly_clear(t1);
+                            unified_mpoly_clear(t2);
+                            unified_mpoly_clear(numer);
+                            unified_mpoly_clear(quotient);
+                            goto cleanup;
+                        }
+                        unified_mpoly_set(work[i][j], quotient);
+                    }
+                }
+            }
+
+            unified_mpoly_clear(t1);
+            unified_mpoly_clear(t2);
+            unified_mpoly_clear(numer);
+            unified_mpoly_clear(quotient);
+        }
+
+        for (slong i = k + 1; i < size; i++) {
+            unified_mpoly_zero(work[i][k]);
+            unified_mpoly_zero(work[k][i]);
+        }
+
+        unified_mpoly_set(prev_pivot, pivot);
+    }
+
+    unified_mpoly_set(det_result, work[size - 1][size - 1]);
+    if (sign < 0) {
+        unified_mpoly_sub(det_result, zero_poly, det_result);
+    }
+
+cleanup:
+    unified_mpoly_clear(prev_pivot);
+    unified_mpoly_clear(pivot);
+    unified_mpoly_clear(zero_poly);
+    unified_mpoly_mat_clear(work, size, size);
+    return ok;
+}
+
 /* Recursive determinant computation using unified_mpoly interface */
 void compute_unified_mpoly_det_recursive(unified_mpoly_t det_result, 
                                         unified_mpoly_t **mpoly_matrix, 
@@ -118,11 +452,13 @@ void compute_unified_mpoly_det_recursive(unified_mpoly_t det_result,
     
     if (size <= 0) {
         unified_mpoly_one(det_result);
+        recursion_depth--;
         return;
     }
     
     if (size == 1) {
         unified_mpoly_set(det_result, mpoly_matrix[0][0]);
+        recursion_depth--;
         return;
     }
     
@@ -138,11 +474,13 @@ void compute_unified_mpoly_det_recursive(unified_mpoly_t det_result,
         
         unified_mpoly_clear(ad);
         unified_mpoly_clear(bc);
+        recursion_depth--;
         return;
     }
     
     if (size == 3) {
         compute_det_3x3_unified(det_result, mpoly_matrix, ctx);
+        recursion_depth--;
         return;
     }
     
@@ -462,6 +800,26 @@ void compute_unified_mpoly_det(unified_mpoly_t det_result,
                               slong size,
                               unified_mpoly_ctx_t ctx,
                               int use_parallel) {
+    compute_unified_mpoly_det_with_method(det_result, mpoly_matrix, size, ctx,
+                                          use_parallel, 0);
+}
+
+void compute_unified_mpoly_det_with_method(unified_mpoly_t det_result,
+                                          unified_mpoly_t **mpoly_matrix,
+                                          slong size,
+                                          unified_mpoly_ctx_t ctx,
+                                          int use_parallel,
+                                          int prefer_bareiss) {
+    if (!prefer_bareiss && g_dixon_verbose_level >= 3 && size <= 5) {
+        debug_dump_leibniz_paths(mpoly_matrix, size, ctx);
+    }
+
+    if (prefer_bareiss) {
+        if (!compute_unified_mpoly_det_bareiss(det_result, mpoly_matrix, size, ctx)) {
+            compute_unified_mpoly_det_recursive(det_result, mpoly_matrix, size, ctx);
+        }
+        return;
+    }
     
     /* Special case: 3x3 matrix with parallel computation available */
     #ifdef _OPENMP

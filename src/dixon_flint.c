@@ -31,13 +31,13 @@ static const char *dixon_det_method_name(det_method_t method)
         case DET_METHOD_RECURSIVE:
             return "recursive expansion";
         case DET_METHOD_KRONECKER:
-            return "Kronecker+HNF";
+            return "fast HNF";
         case DET_METHOD_INTERPOLATION:
             return "interpolation";
         case DET_METHOD_HUANG:
             return "sparse interpolation";
         case DET_METHOD_KRONECKER_NMOD:
-            return "Kronecker+direct nmod";
+            return "Bareiss";
         default:
             return "default";
     }
@@ -1136,8 +1136,8 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
 
             compute_fq_det_huang_interpolation(result, coeff_matrix, size);
         } else if (method == DET_METHOD_KRONECKER_NMOD) {
-            dixon_debug_log("  Method: Kronecker+direct nmod\n");
-            compute_fq_det_kronecker_nmod_recursive(result, coeff_matrix, size);
+            dixon_debug_log("  Method: Bareiss\n");
+            compute_fq_det_bareiss(result, coeff_matrix, size);
         } else {
             fq_mvpoly_init(result, 0, npars, ctx);
             
@@ -1161,7 +1161,7 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
             fq_nmod_poly_t det_poly;
             fq_nmod_poly_init(det_poly, ctx);
             
-            dixon_debug_log("  Method: HNF\n");
+            dixon_debug_log("  Method: fast HNF\n");
             
             fq_nmod_poly_mat_det_iter(det_poly, poly_mat, ctx);
             
@@ -1212,15 +1212,14 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
                 break;
                 
             case DET_METHOD_KRONECKER:
-                dixon_debug_log("  Method: Kronecker+HNF\n");
+                dixon_debug_log("  Method: fast HNF\n");
                 
                 compute_fq_det_kronecker(result, coeff_matrix, size);
                 break;
 
             case DET_METHOD_KRONECKER_NMOD:
-                dixon_debug_log("  Method: Kronecker+direct nmod\n");
-
-                compute_fq_det_kronecker_nmod_recursive(result, coeff_matrix, size);
+                dixon_debug_log("  Method: Bareiss\n");
+                compute_fq_det_bareiss(result, coeff_matrix, size);
                 break;
 
             case DET_METHOD_HUANG:
@@ -3341,7 +3340,7 @@ void compute_fq_cancel_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **modified_M_
             compute_fq_det_kronecker(result, modified_M_mvpoly, nvars + 1);
             break;
         case DET_METHOD_KRONECKER_NMOD:
-            compute_fq_det_kronecker_nmod_recursive(result, modified_M_mvpoly, nvars + 1);
+            compute_fq_det_bareiss(result, modified_M_mvpoly, nvars + 1);
             break;
         case DET_METHOD_HUANG:
             compute_fq_det_huang_interpolation(result, modified_M_mvpoly, nvars + 1);
@@ -3539,9 +3538,8 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     det_method_t step1_method = DET_METHOD_RECURSIVE;
     if (dixon_global_method_step1 != -1) {
         step1_method = dixon_global_method_step1;
-        dixon_info_log("  Step 1 method override active: %d (%s)\n",
-                       dixon_global_method_step1, dixon_det_method_name(dixon_global_method_step1));
     }
+    dixon_info_log("  Determinant method: %s\n", dixon_det_method_name(step1_method));
     if (dixon_show_step_details()) {
         dixon_debug_log("  Computing cancellation matrix determinant using %s...\n",
                         dixon_det_method_name(step1_method));
@@ -3609,9 +3607,8 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
         //coeff_method = DET_METHOD_INTERPOLATION;
         if (dixon_global_method_step4 != -1) {
             coeff_method = dixon_global_method_step4;
-            dixon_info_log("  Step 4 method override active: %d (%s)\n",
-                           dixon_global_method_step4, dixon_det_method_name(dixon_global_method_step4));
         }
+        dixon_info_log("  Determinant method: %s\n", dixon_det_method_name(coeff_method));
         
         compute_fq_coefficient_matrix_det(result, coeff_matrix, matrix_size,
                                          npars, polys[0].ctx, coeff_method, res_deg_bound);
@@ -3674,9 +3671,8 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     det_method_t step1_method = DET_METHOD_RECURSIVE;
     if (dixon_global_method_step1 != -1) {
         step1_method = dixon_global_method_step1;
-        dixon_info_log("  Step 1 method override active: %d (%s)\n",
-                       dixon_global_method_step1, dixon_det_method_name(dixon_global_method_step1));
     }
+    dixon_info_log("  Determinant method: %s\n", dixon_det_method_name(step1_method));
     dixon_debug_log("  Computing cancellation matrix determinant using %s...\n",
                     dixon_det_method_name(step1_method));
     compute_fq_cancel_matrix_det(&d_poly, modified_M_mvpoly, nvars, npars, step1_method);
@@ -3726,9 +3722,8 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
         }
         if (dixon_global_method_step4 != -1) {
             coeff_method = dixon_global_method_step4;
-            dixon_info_log("  Step 4 method override active: %d (%s)\n",
-                           dixon_global_method_step4, dixon_det_method_name(dixon_global_method_step4));
         }
+        dixon_info_log("  Determinant method: %s\n", dixon_det_method_name(coeff_method));
         
         compute_fq_coefficient_matrix_det(result, coeff_matrix, matrix_size,
                                          npars, polys[0].ctx, coeff_method, res_deg_bound);
