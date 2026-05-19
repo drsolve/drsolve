@@ -5,7 +5,7 @@ Website: <https://drsolve.github.io>
 
 ## Features
 - Dixon resultant computation for variable elimination
-- Polynomial system solver for n×n systems
+- Polynomial system solver
 - Finite fields:
   - Prime fields F_p (any size): Implemented with FLINT modular arithmetic, optionally accelerated by PML.
   - Extension fields F_{p^k}: Further optimized for binary fields F_{2^n} with n in {8, 16, 32, 64, 128}.
@@ -77,8 +77,7 @@ Example:
 ```
 Line 1 : variables to ELIMINATE (comma-separated)
 Line 2 : field size (prime or p^k; use 0 for Q; generator defaults to 't')
-Line 3+: polynomials (comma-separated, may span multiple lines)
-         (#eliminate = #equations - 1)
+Line 3+: polynomials (comma-separated, may span multiple lines, #eliminate = #equations - 1)
 ```
 Example:
 ```bash
@@ -98,7 +97,6 @@ Run:
 ```
 Line 1 : field size
 Line 2+: polynomials (comma-separated, may span multiple lines)
-         (n equations in n variables)
 ```
 Example:
 ```bash
