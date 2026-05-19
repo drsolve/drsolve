@@ -251,7 +251,7 @@ void nmod_poly_mat_det_iter(nmod_poly_t det, nmod_poly_mat_t mat)
         if (rk < i || nmod_poly_is_zero(nmod_poly_mat_entry(view, i, i)))
         {
             nmod_poly_zero(det);
-            return;
+            goto cleanup;
         }
 
         // permute into ordered weak Popov form
@@ -260,21 +260,22 @@ void nmod_poly_mat_det_iter(nmod_poly_t det, nmod_poly_mat_t mat)
         if (_perm_parity(perm, rk)) // odd permutation, negate udet
             udet = -udet;
     }
-    flint_free(pivind);
-    flint_free(perm);
-
     // retrieve determinant as product of diagonal entries
     // use view rather than mat, since mat has not been row-permuted
     // so it is only triangular up to permutation
     _nmod_poly_mat_window_resize_columns(view, mat->r -1); // reset view->c to mat->c
     nmod_poly_set(det, nmod_poly_mat_entry(view, 0, 0)); // recall here mat->r == mat->c > 0
     if (nmod_poly_is_zero(det))
-        return; // rank deficient early exit, [0,0] had not been tested yet
+        goto cleanup; // rank deficient early exit, [0,0] had not been tested yet
     if (udet == -1)
         _nmod_vec_neg(det->coeffs, det->coeffs, det->length, det->mod);
     for (slong i = 1; i < view->r; i++)
         nmod_poly_mul(det, det, nmod_poly_mat_entry(view, i, i));
+
+cleanup:
     nmod_poly_mat_window_clear(view);
+    flint_free(pivind);
+    flint_free(perm);
 }
 
 int nmod_poly_mat_det_hnf(nmod_poly_t det,

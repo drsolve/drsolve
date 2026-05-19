@@ -225,6 +225,8 @@ int nmod_poly_mat_zls_sorted(nmod_poly_mat_t N, slong *degN, const nmod_poly_mat
         nmod_poly_mat_column_degree(degN, P1, ishift);
 
         nmod_poly_mat_clear(P1);
+        nmod_poly_mat_clear(RT);
+        nmod_poly_mat_clear(PT);
         flint_free(shift);
         return n1;
     }
@@ -254,6 +256,9 @@ int nmod_poly_mat_zls_sorted(nmod_poly_mat_t N, slong *degN, const nmod_poly_mat
     if (m==1){
 
         if (n1==0) {
+            nmod_poly_mat_clear(P2);
+            nmod_poly_mat_clear(RT);
+            nmod_poly_mat_clear(PT);
             flint_free(shift);
             return 0;
         }
@@ -263,6 +268,9 @@ int nmod_poly_mat_zls_sorted(nmod_poly_mat_t N, slong *degN, const nmod_poly_mat
             nmod_poly_mat_column_degree(degN, P1, ishift);
 
             nmod_poly_mat_clear(P1);
+            nmod_poly_mat_clear(P2);
+            nmod_poly_mat_clear(RT);
+            nmod_poly_mat_clear(PT);
             flint_free(shift);
             return n1;
         }
@@ -417,7 +425,17 @@ int nmod_poly_mat_zls_sorted(nmod_poly_mat_t N, slong *degN, const nmod_poly_mat
 
     if ((c1==0) || (c2==0)){
 
+        if (c1 != 0)
+            nmod_poly_mat_clear(N1);
+        if (c2 != 0)
+            nmod_poly_mat_clear(N2);
+        flint_free(perm);
+        nmod_poly_mat_clear(PT);
+
         if (n1==0) {
+            nmod_poly_mat_clear(P2);
+            if (n1 > 0)
+                nmod_poly_mat_clear(P1);
             flint_free(shift);
             return 0;
         }
@@ -450,6 +468,8 @@ int nmod_poly_mat_zls_sorted(nmod_poly_mat_t N, slong *degN, const nmod_poly_mat
     nmod_poly_mat_clear(N2);
     nmod_poly_mat_clear(Q1);
     nmod_poly_mat_clear(P2);
+    flint_free(perm);
+    nmod_poly_mat_clear(PT);
 
     if (n1 ==0) {
 
@@ -457,6 +477,8 @@ int nmod_poly_mat_zls_sorted(nmod_poly_mat_t N, slong *degN, const nmod_poly_mat
         nmod_poly_mat_column_degree(degN, Q, ishift);
 
         nmod_poly_mat_clear(Q);
+        if (n1 > 0)
+            nmod_poly_mat_clear(P1);
         flint_free(shift);
         return c2;
 
