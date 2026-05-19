@@ -98,13 +98,15 @@ static void print_short_usage(const char *prog_name)
     printf("OTHER OPTIONS:\n");
     printf("  --method <n>      Determinant method selection (0:Recursive, 1:HNF, 2:Interpolation, 3:Sparse, 4:Bareiss, 5:Fdixon)\n");
     printf("  --step1, --step4  Override method <n> for specific algorithm steps\n");
-    printf("  --cache <n>       Determinant memoization cache entry limit (default: 1024)\n");
+    printf("  --cache <num>     Determinant memoization cache entry limit (default: 1024)\n");
     printf("  --threads <num>   Set number of threads for parallel computation\n");
     printf("  --dixon           Use Dixon resultant (default)\n");
     printf("  --macaulay        Use Macaulay resultant\n");
     printf("  --subres          Use Subresultant (2 polys)\n");
     printf("  --field-equation  After each multiplication, reduces x^q -> x for every variable\n");
     printf("  --ideal <args>    After each multiplication, reduces using the given substitution\n");
+    printf("  --test <n>        Run built-in tests (1: Dixon matrix size, 2: Bezout bound, 3: solver correctness, 4: performance)\n");
+    printf("  --time            Print per-step timing information\n");
     printf("  -v, --verbose <n> Verbosity level (0:silent, 1:default, 2:debug, 3:trace)\n");
     printf("  -h, --help        Show full detailed help information\n");
     printf("  -V, --version     Print version and build information\n");
@@ -205,8 +207,10 @@ static void print_usage(const char *prog_name)
     printf("\n");
 
     printf("  Diagnostics:\n");
+    printf("    %s --test <n>\n", prog_name);
     printf("    %s --time <args>\n", prog_name);
     printf("    %s -v 2 <args>\n", prog_name);
+    printf("    -> --test values: 0 help, 1 matrix size, 2 Bezout bound, 3 solver correctness, 4 solver performance, 5 XHash\n");
     printf("    -> --time prints per-step timing; interpolation steps also show CPU/Wall/Threads\n");
     printf("    -> `--silent`, `--debug`, `--solve-verbose` and `--solve` remain accepted for compatibility\n");
     printf("\n");
