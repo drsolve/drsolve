@@ -6,13 +6,11 @@ Website: <https://drsolve.github.io>
 ## Features
 - Dixon resultant computation for variable elimination
 - Polynomial system solver for n×n systems
-- Dixon with triangular ideal reduction
 - Finite fields:
   - Prime fields F_p (any size): Implemented with FLINT modular arithmetic, optionally accelerated by PML.
   - Extension fields F_{p^k}: Further optimized for binary fields F_{2^n} with n in {8, 16, 32, 64, 128}.
 - Rational field ℚ: Rational reconstruction via multi-prime CRT. Set field_size = 0 to enable.
 - Complexity analysis — estimates Dixon matrix size, Bezout degree bound, and operation count before computing
-- Command line input or file input. Automatic output to solution files
 
 ---
 
@@ -246,23 +244,6 @@ Example:
 ```
 - Sets the number of threads for parallel computation
 
-### EXAMPLES
-
-```bash
-./drsolve "x+y+z, x*y+y*z+z*x, x*y*z+1" "x,y" 257
-./drsolve "x^2+y^2+z^2-1, x^2+y^2-2*z^2, x+y+z" "x,y" 0
-./drsolve "x^2+y^2+z^2-6, x+y+z-4, x*y*z-x-1" 257
-./drsolve --comp "x^2+y^2+1, x*y+z, x+y+z^2" "x,y" 257
-./drsolve --random "[3,3,2]" 257
-./drsolve --ideal "a2^3=2*a1+1, a3^3=a1*a2+3" "a1^2+a2^2+a3^2-10, a3^3-a1*a2-3" "a3" 257
-./drsolve --field-equation "x0*x2+x1, x0*x1*x2+x2+1, x1*x2+x0+1" "x0,x1" 2
-./drsolve -v 0 "x+y^2+t, x*y+t*y+1" "y" 2^8
-./drsolve "x^2 + t*y, x*y + t^2" "2^8: t^8 + t^4 + t^3 + t + 1"
-./drsolve example.dr
-./drsolve -v 2 -f in.dr -o out.dr
-./drsolve example_solve.dr
-```
-
 ---
 
 ## SageMath Interface
@@ -278,19 +259,7 @@ Example:
 - Common options include `field_size`, `verbosity`, `time`, `threads`, `debug`, `live_output`, and `timeout`.
 - `field_size` may be an integer prime, a string such as `"2^8"` or `"2^8: t^8+t^4+t^3+t+1"`, a Sage `GF(...)` object, or `0` for ℚ. If omitted, it is inferred from the Sage polynomial ring when possible.
 - Resultants are returned as strings, so iterative elimination works naturally by feeding one `DixonRes(...)` output into the next call.
-- For a fuller Sage reference with examples and options, see `index.txt` or the top docstring in `drsolve_sage_interface.sage`.
-
----
-
----
-
-## Notes
-- All computation modes generate a solution/report file by default under `out/`
-- Use `-o output.dr` to override the default output filename
-- Extension fields are slower than prime fields due to polynomial arithmetic
-- The optional PML library only accelerates well-determined systems over prime fields
-- Complexity analysis does not run any polynomial arithmetic; it parses only
-- Over Q (field_size=0), `--ideal` and `--field-equation` are not supported
+- For a fuller Sage reference with examples and options, see the top docstring in `drsolve_sage_interface.sage`.
 
 ---
 
