@@ -17,6 +17,20 @@ int _is_first_step = 0;
 int _show_progress = 0;
 int g_show_progress = 0;
 
+static fq_nmod_poly_det_method_t g_fq_nmod_poly_det_method = FQ_NMOD_POLY_DET_METHOD_AUTO;
+
+void fq_nmod_poly_mat_det_set_threads(int num_threads) {
+    (void) num_threads;
+}
+
+void fq_nmod_poly_mat_det_set_method(fq_nmod_poly_det_method_t method) {
+    g_fq_nmod_poly_det_method = method;
+}
+
+fq_nmod_poly_det_method_t fq_nmod_poly_mat_det_get_method(void) {
+    return g_fq_nmod_poly_det_method;
+}
+
 /* ============================================================================
    UNIFIED POLYNOMIAL MATRIX OPERATIONS - IMPLEMENTATIONS
    ============================================================================ */
@@ -403,6 +417,45 @@ static int dixonres_nmod_poly_mat_det_hnf_exact(nmod_poly_t det,
 
     return 1;
 }
+
+static void fq_nmod_poly_mat_convert_to_nmod(nmod_poly_mat_t nmod_mat,
+                                             fq_nmod_poly_mat_t mat,
+                                             const fq_nmod_ctx_t ctx) {
+    for (slong i = 0; i < mat->r; i++) {
+        for (slong j = 0; j < mat->c; j++) {
+            fq_nmod_poly_struct *src = fq_nmod_poly_mat_entry(mat, i, j);
+            nmod_poly_struct *dst = nmod_poly_mat_entry(nmod_mat, i, j);
+            slong len = fq_nmod_poly_length(src, ctx);
+
+            nmod_poly_fit_length(dst, len);
+            for (slong k = 0; k < len; k++) {
+                fq_nmod_t coeff;
+                fq_nmod_init(coeff, ctx);
+                fq_nmod_poly_get_coeff(coeff, src, k, ctx);
+                nmod_poly_set_coeff_ui(dst, k, nmod_poly_get_coeff_ui(coeff, 0));
+                fq_nmod_clear(coeff, ctx);
+            }
+            _nmod_poly_set_length(dst, len);
+            _nmod_poly_normalise(dst);
+        }
+    }
+}
+
+static void fq_nmod_poly_convert_from_nmod(fq_nmod_poly_t det,
+                                           nmod_poly_t nmod_det,
+                                           const fq_nmod_ctx_t ctx) {
+    fq_nmod_poly_zero(det, ctx);
+    for (slong i = 0; i < nmod_poly_length(nmod_det); i++) {
+        ulong coeff_val = nmod_poly_get_coeff_ui(nmod_det, i);
+        if (coeff_val != 0) {
+            fq_nmod_t coeff;
+            fq_nmod_init(coeff, ctx);
+            nmod_poly_set_coeff_ui(coeff, 0, coeff_val);
+            fq_nmod_poly_set_coeff(det, i, coeff, ctx);
+            fq_nmod_clear(coeff, ctx);
+        }
+    }
+}
 #endif
 
 /* ============================================================================
@@ -430,38 +483,11 @@ void fq_nmod_poly_mat_det_flint_builtin(fq_nmod_poly_t det,
         nmod_poly_mat_init(nmod_mat, mat->r, mat->c, p);
         nmod_poly_init(nmod_det, p);
 
-        for (slong i = 0; i < mat->r; i++) {
-            for (slong j = 0; j < mat->c; j++) {
-                fq_nmod_poly_struct *src = fq_nmod_poly_mat_entry(mat, i, j);
-                nmod_poly_struct *dst = nmod_poly_mat_entry(nmod_mat, i, j);
-                slong len = fq_nmod_poly_length(src, ctx);
-
-                nmod_poly_fit_length(dst, len);
-                for (slong k = 0; k < len; k++) {
-                    fq_nmod_t coeff;
-                    fq_nmod_init(coeff, ctx);
-                    fq_nmod_poly_get_coeff(coeff, src, k, ctx);
-                    nmod_poly_set_coeff_ui(dst, k, nmod_poly_get_coeff_ui(coeff, 0));
-                    fq_nmod_clear(coeff, ctx);
-                }
-                _nmod_poly_set_length(dst, len);
-                _nmod_poly_normalise(dst);
-            }
-        }
+        fq_nmod_poly_mat_convert_to_nmod(nmod_mat, mat, ctx);
 
         nmod_poly_mat_det(nmod_det, nmod_mat);
 
-        fq_nmod_poly_zero(det, ctx);
-        for (slong i = 0; i < nmod_poly_length(nmod_det); i++) {
-            ulong coeff_val = nmod_poly_get_coeff_ui(nmod_det, i);
-            if (coeff_val != 0) {
-                fq_nmod_t coeff;
-                fq_nmod_init(coeff, ctx);
-                nmod_poly_set_coeff_ui(coeff, 0, coeff_val);
-                fq_nmod_poly_set_coeff(det, i, coeff, ctx);
-                fq_nmod_clear(coeff, ctx);
-            }
-        }
+        fq_nmod_poly_convert_from_nmod(det, nmod_det, ctx);
 
         nmod_poly_mat_clear(nmod_mat);
         nmod_poly_clear(nmod_det);
@@ -471,6 +497,90 @@ void fq_nmod_poly_mat_det_flint_builtin(fq_nmod_poly_t det,
     if (g_dixon_debug_mode) {
         printf("  FLINT built-in univariate poly-mat determinant is only directly available for prime fields in the installed headers; falling back to fq_nmod_poly_mat_det_iter for extension fields.\n");
     }
+    fq_nmod_poly_mat_det_iter(det, mat, ctx);
+}
+
+void fq_nmod_poly_mat_det_hnf(fq_nmod_poly_t det,
+                              fq_nmod_poly_mat_t mat,
+                              const fq_nmod_ctx_t ctx) {
+    if (mat->r == 0) {
+        fq_nmod_poly_one(det, ctx);
+        return;
+    }
+
+    if (mat->r != mat->c) {
+        fq_nmod_poly_zero(det, ctx);
+        return;
+    }
+
+#ifdef HAVE_PML
+    if (fq_nmod_ctx_degree(ctx) == 1) {
+        nmod_poly_mat_t nmod_mat;
+        nmod_poly_t nmod_det;
+        ulong p = fq_nmod_ctx_prime(ctx);
+
+        if (g_dixon_debug_mode) {
+            printf("  Using forced HNF from PML library\n");
+        }
+
+        nmod_poly_mat_init(nmod_mat, mat->r, mat->c, p);
+        nmod_poly_init(nmod_det, p);
+
+        fq_nmod_poly_mat_convert_to_nmod(nmod_mat, mat, ctx);
+
+        if (!dixonres_nmod_poly_mat_det_hnf_exact(nmod_det, nmod_mat)) {
+            nmod_poly_mat_clear(nmod_mat);
+            nmod_poly_clear(nmod_det);
+            fq_nmod_poly_zero(det, ctx);
+            return;
+        }
+
+        fq_nmod_poly_convert_from_nmod(det, nmod_det, ctx);
+        nmod_poly_mat_clear(nmod_mat);
+        nmod_poly_clear(nmod_det);
+        return;
+    }
+#endif
+
+    fq_nmod_poly_mat_det_iter(det, mat, ctx);
+}
+
+void fq_nmod_poly_mat_det_prime_iter(fq_nmod_poly_t det,
+                                     fq_nmod_poly_mat_t mat,
+                                     const fq_nmod_ctx_t ctx) {
+    if (mat->r == 0) {
+        fq_nmod_poly_one(det, ctx);
+        return;
+    }
+
+    if (mat->r != mat->c) {
+        fq_nmod_poly_zero(det, ctx);
+        return;
+    }
+
+#ifdef HAVE_PML
+    if (fq_nmod_ctx_degree(ctx) == 1) {
+        nmod_poly_mat_t nmod_mat;
+        nmod_poly_t nmod_det;
+        ulong p = fq_nmod_ctx_prime(ctx);
+
+        if (g_dixon_debug_mode) {
+            printf("  Using forced iterative determinant over nmod_poly_mat\n");
+        }
+
+        nmod_poly_mat_init(nmod_mat, mat->r, mat->c, p);
+        nmod_poly_init(nmod_det, p);
+
+        fq_nmod_poly_mat_convert_to_nmod(nmod_mat, mat, ctx);
+        nmod_poly_mat_det_iter(nmod_det, nmod_mat);
+        fq_nmod_poly_convert_from_nmod(det, nmod_det, ctx);
+
+        nmod_poly_mat_clear(nmod_mat);
+        nmod_poly_clear(nmod_det);
+        return;
+    }
+#endif
+
     fq_nmod_poly_mat_det_iter(det, mat, ctx);
 }
 
@@ -490,9 +600,21 @@ void fq_nmod_poly_mat_det_iter(fq_nmod_poly_t det,
 #ifdef HAVE_PML
     /* Check if we're in a prime field (degree 1) */
     if (fq_nmod_ctx_degree(ctx) == 1) {
+        fq_nmod_poly_det_method_t method = fq_nmod_poly_mat_det_get_method();
+
+        if (method == FQ_NMOD_POLY_DET_METHOD_HNF) {
+            fq_nmod_poly_mat_det_hnf(det, mat, ctx);
+            return;
+        }
+
+        if (method == FQ_NMOD_POLY_DET_METHOD_ITER) {
+            fq_nmod_poly_mat_det_prime_iter(det, mat, ctx);
+            return;
+        }
+
         /* Convert to nmod_poly_mat and use the optimized prime field version */
         if (g_dixon_debug_mode) {
-            printf("  Using fast HNF from PML library\n");
+            printf("  Using auto prime-field determinant: HNF with iterative fallback\n");
         }
 
         nmod_poly_mat_t nmod_mat;
@@ -502,31 +624,7 @@ void fq_nmod_poly_mat_det_iter(fq_nmod_poly_t det,
         nmod_poly_mat_init(nmod_mat, mat->r, mat->c, p);
         nmod_poly_init(nmod_det, p);
         
-        /* Convert fq_nmod_poly_mat to nmod_poly_mat */
-        for (slong i = 0; i < mat->r; i++) {
-            for (slong j = 0; j < mat->c; j++) {
-                fq_nmod_poly_struct *src = fq_nmod_poly_mat_entry(mat, i, j);
-                nmod_poly_struct *dst = nmod_poly_mat_entry(nmod_mat, i, j);
-                
-                /* Convert each polynomial coefficient */
-                slong len = fq_nmod_poly_length(src, ctx);
-                nmod_poly_fit_length(dst, len);
-                
-                for (slong k = 0; k < len; k++) {
-                    fq_nmod_t coeff;
-                    fq_nmod_init(coeff, ctx);
-                    fq_nmod_poly_get_coeff(coeff, src, k, ctx);
-                    
-                    /* In prime field, fq_nmod element is just a polynomial of degree 0 */
-                    ulong val = nmod_poly_get_coeff_ui(coeff, 0);
-                    nmod_poly_set_coeff_ui(dst, k, val);
-                    
-                    fq_nmod_clear(coeff, ctx);
-                }
-                _nmod_poly_set_length(dst, len);
-                _nmod_poly_normalise(dst);
-            }
-        }
+        fq_nmod_poly_mat_convert_to_nmod(nmod_mat, mat, ctx);
         
         /* Call the optimized nmod version */
         clock_t nmod_start = clock();
@@ -535,20 +633,7 @@ void fq_nmod_poly_mat_det_iter(fq_nmod_poly_t det,
         }
         clock_t nmod_end = clock();
         
-        /* Convert result back to fq_nmod_poly */
-        fq_nmod_poly_zero(det, ctx);
-        slong det_len = nmod_poly_length(nmod_det);
-        
-        for (slong i = 0; i < det_len; i++) {
-            ulong coeff_val = nmod_poly_get_coeff_ui(nmod_det, i);
-            if (coeff_val != 0) {
-                fq_nmod_t coeff;
-                fq_nmod_init(coeff, ctx);
-                nmod_poly_set_coeff_ui(coeff, 0, coeff_val);
-                fq_nmod_poly_set_coeff(det, i, coeff, ctx);
-                fq_nmod_clear(coeff, ctx);
-            }
-        }
+        fq_nmod_poly_convert_from_nmod(det, nmod_det, ctx);
         
         /* Cleanup */
         nmod_poly_mat_clear(nmod_mat);

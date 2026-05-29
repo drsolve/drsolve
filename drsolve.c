@@ -227,9 +227,11 @@ static void print_usage(const char *prog_name)
 
     printf("  Method selection:\n");
     printf("    %s --method <num> <args>\n", prog_name);
+    printf("    %s --fq-det-method <auto|hnf|iter> <args>\n", prog_name);
     printf("    %s --step1 <num> --step4 <num> <args>\n", prog_name);
     printf("    -> Available methods: 0.Recursive; 1.HNF; 2.Interpolation; 3.Sparse interpolation; 4.Bareiss; 5.Recursive Dixon construction; 6.Balanced split Laplace (experimental)\n");
     printf("    -> --method sets both step 1 and step 4 for backward compatibility\n");
+    printf("    -> --fq-det-method (auto|hnf|iter) controls the prime-field univariate polynomial-matrix determinant backend used in fq_poly_mat_det\n");
     printf("    -> --cache sets the determinant memoization cache entry cap (method 0 / unified recursive path)\n");
     printf("    -> --fast-ksy enables a KSY precondition check for method 5 submatrix extraction; --no-fast-ksy disables it\n");
     printf("    -> --fast-ksy-col <idx> selects which fast-Dixon column is treated as the constant column for the KSY check (default: 0)\n");
@@ -393,6 +395,19 @@ static const char *det_method_name_cli(int method)
         case 5: return "Recursive Dixon construction";
         case 6: return "Balanced split Laplace (experimental)";
         default: return "Default";
+    }
+}
+
+static const char *fq_det_method_name_cli(fq_nmod_poly_det_method_t method)
+{
+    switch (method) {
+        case FQ_NMOD_POLY_DET_METHOD_HNF:
+            return "hnf";
+        case FQ_NMOD_POLY_DET_METHOD_ITER:
+            return "iter";
+        case FQ_NMOD_POLY_DET_METHOD_AUTO:
+        default:
+            return "auto";
     }
 }
 
@@ -2478,6 +2493,8 @@ int main(int argc, char *argv[])
     int fast_ksy_precondition = 0;
     long fast_ksy_constant_col = 0;
     int step3_verify_second = 0;
+    fq_nmod_poly_det_method_t fq_det_method = FQ_NMOD_POLY_DET_METHOD_AUTO;
+    int fq_det_method_explicit = 0;
     rational_root_scan_mode_t rational_root_scan_mode = RATIONAL_ROOT_SCAN_AUTO;
     int rational_root_scan_mode_explicit = 0;
     const char *cli_input_filename = NULL;
@@ -2607,6 +2624,25 @@ int main(int argc, char *argv[])
                                 "must be 0-6. Using default.\n", argv[i + 1]);
             }
             i++;          /* skip the value token */
+        } else if (strcmp(argv[i], "--fq-det-method") == 0 && i + 1 < argc) {
+            if (strcmp(argv[i + 1], "auto") == 0) {
+                fq_det_method = FQ_NMOD_POLY_DET_METHOD_AUTO;
+            } else if (strcmp(argv[i + 1], "hnf") == 0) {
+                fq_det_method = FQ_NMOD_POLY_DET_METHOD_HNF;
+            } else if (strcmp(argv[i + 1], "iter") == 0) {
+                fq_det_method = FQ_NMOD_POLY_DET_METHOD_ITER;
+            } else {
+                fprintf(stderr,
+                        "Error: invalid --fq-det-method value '%s'; expected auto, hnf, or iter.\n",
+                        argv[i + 1]);
+                return 1;
+            }
+            fq_det_method_explicit = 1;
+            i++;
+        } else if (strcmp(argv[i], "--fq-det-method") == 0) {
+            fprintf(stderr,
+                    "Error: --fq-det-method requires one of: auto, hnf, iter.\n");
+            return 1;
         } else if (strcmp(argv[i], "--fast-ksy") == 0 ||
                    strcmp(argv[i], "--ksy-precondition") == 0) {
             fast_ksy_precondition = 1;
@@ -3403,6 +3439,7 @@ int main(int argc, char *argv[])
     g_dixon_fast_ksy_constant_col = fast_ksy_constant_col;
     g_dixon_step3_second_verification = step3_verify_second;
     g_dixon_det_cache_limit = det_cache_limit;
+    fq_nmod_poly_mat_det_set_method(fq_det_method);
     if (det_method_step1 != -1) {
         dixon_global_method_step1 = (det_method_t)det_method_step1;
         dixon_global_method = dixon_global_method_step1;
@@ -3420,12 +3457,15 @@ int main(int argc, char *argv[])
         }
         printf("Rational root scan mode: %s\n", mode_name);
     }
+    if (!silent_mode && fq_det_method_explicit) {
+        printf("fq poly-mat det backend: %s\n", fq_det_method_name_cli(fq_det_method));
+    }
     int threads_requested_explicitly = (num_threads != -1);
     if (num_threads == -1) {
         num_threads = drsolve_default_thread_count();
     }
     fq_interpolation_set_threads(num_threads);
-    // fq_nmod_poly_mat_det_set_threads(num_threads);
+    fq_nmod_poly_mat_det_set_threads(num_threads);
     if (!silent_mode && threads_requested_explicitly && num_threads > 0) {
         printf("Using %d threads\n", num_threads);
     }

@@ -1992,8 +1992,7 @@ static void dixon_complexity_write_report_body(
         fprintf(fp, "FGLM estimate (log2): %.6f\n",
                 report->fglm_log2);
     }
-    fprintf(fp, "Bareiss determinant surrogate (log2): %.6f\n",
-            report->step1_bareiss_log2);
+    // fprintf(fp, "Bareiss determinant surrogate (log2): %.6f\n", report->step1_bareiss_log2);
 
     if (verbose_level >= 2) {
         fprintf(fp, "\n--- Space Complexity (Theoretical) ---\n");

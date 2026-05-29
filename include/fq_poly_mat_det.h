@@ -102,7 +102,25 @@ int perm_parity(const slong *perm, slong n);
    MAIN ENTRY POINT - DECLARATION
    ============================================================================ */
 
+typedef enum {
+    FQ_NMOD_POLY_DET_METHOD_AUTO = 0,
+    FQ_NMOD_POLY_DET_METHOD_HNF = 1,
+    FQ_NMOD_POLY_DET_METHOD_ITER = 2
+} fq_nmod_poly_det_method_t;
+
 void fq_nmod_poly_mat_det_set_threads(int num_threads);
+
+void fq_nmod_poly_mat_det_set_method(fq_nmod_poly_det_method_t method);
+
+fq_nmod_poly_det_method_t fq_nmod_poly_mat_det_get_method(void);
+
+void fq_nmod_poly_mat_det_hnf(fq_nmod_poly_t det,
+                              fq_nmod_poly_mat_t mat,
+                              const fq_nmod_ctx_t ctx);
+
+void fq_nmod_poly_mat_det_prime_iter(fq_nmod_poly_t det,
+                                     fq_nmod_poly_mat_t mat,
+                                     const fq_nmod_ctx_t ctx);
 
 void fq_nmod_poly_mat_det_iter_with_opts(fq_nmod_poly_t det,
                                          fq_nmod_poly_mat_t mat,
