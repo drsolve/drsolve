@@ -1255,7 +1255,7 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
         // printf("CPU time: %.3f seconds | Wall time: %.3f seconds | Threads: %d\n", cpu_elapsed, wall_elapsed, threads);
     }
 
-    if (g_field_equation_reduction) {
+    if (g_field_equation_reduction || g_field_equation_final_only) {
         fq_mvpoly_reduce_field_equation(result);
     }
 }
