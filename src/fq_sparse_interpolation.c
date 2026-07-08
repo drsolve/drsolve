@@ -1,6 +1,7 @@
 #include "fq_sparse_interpolation.h"
 #include "nmod_vec_extra.h"
 #include <flint/nmod_vec.h>
+#include <flint/nmod_poly.h>
 
 #include <limits.h>
 #include <stdarg.h>
@@ -57,7 +58,12 @@ typedef struct {
     mp_limb_t* coeffs;
     mp_limb_t* roots;
     mp_limb_t* powers;
-    ulong* exps;
+    /* OPT: packed nonzero exponents per term, pre-reduced mod p.
+       Term t touches variables nz_var[k] with exponent nz_exp[k]
+       for k in [nz_off[t], nz_off[t+1]). */
+    slong* nz_off;
+    slong* nz_var;
+    mp_limb_t* nz_exp;
 } geometric_poly_cache_t;
 
 typedef struct {
@@ -159,6 +165,7 @@ static double timer_seconds_since(clock_t start);
 static void sparse_multipoint_tree_init_empty(sparse_multipoint_tree_t* tree);
 static int sparse_bm_inner_timing_enabled(void);
 static int sparse_bm_hist_enabled(void);
+static int sparse_bm_quadratic_enabled(void);
 static inline void sparse_bm_axpy(mp_limb_t* res, const mp_limb_t* vec, slong len, mp_limb_t negcoef, nmod_t mod);
 static int sparse_bm_hist_bin(slong len);
 static void sparse_print_bm_histogram(const sparse_interpolation_timing_t* timing, const char* prefix);
@@ -609,6 +616,48 @@ static void BM_timed_incremental(nmod_poly_t C,
         return;
     }
 
+    /* OPT: HGCD-based minimal polynomial, O~(N) instead of the O(N^2)
+       iterative Berlekamp-Massey below.  Recomputing from scratch at every
+       budget escalation is now cheap, so the incremental state is only kept
+       for the (env-forced) fallback path.
+       nmod_poly_minpoly returns the monic annihilator Lambda(z) = prod(z - v_k);
+       the rest of this file expects the "relation" C(x) = x^t * Lambda(1/x)
+       (constant term 1), so we reverse it here. */
+    if (!sparse_bm_quadratic_enabled()) {
+        nmod_poly_t lambda;
+        nmod_poly_init(lambda, mod.n);
+        nmod_poly_minpoly(lambda, s, 2 * N);
+
+        slong t = nmod_poly_degree(lambda);
+        if (t < 0) t = 0;
+
+        nmod_poly_zero(C);
+        if (t == 0) {
+            nmod_poly_set_coeff_ui(C, 0, 1);
+        } else if (nmod_poly_get_coeff_ui(lambda, 0) == 0) {
+            /* Lambda(0) == 0 cannot happen for a genuine t-sparse geometric
+               sequence (all roots v_k are nonzero); it means the sequence is
+               not yet resolved at this budget.  Report saturation so the
+               adaptive driver escalates. */
+            nmod_poly_set_coeff_ui(C, 0, 1);
+            nmod_poly_set_coeff_ui(C, N, 1);
+        } else {
+            for (slong i = 0; i <= t; i++) {
+                nmod_poly_set_coeff_ui(C, i, nmod_poly_get_coeff_ui(lambda, t - i));
+            }
+        }
+        nmod_poly_clear(lambda);
+
+        if (state != NULL) {
+            state->processed_terms = 2 * N;
+        }
+        if (DETAILED_TIMING) {
+            timer_stop(&timer);
+            timer_print(&timer, "    BM algorithm (minpoly)");
+        }
+        return;
+    }
+
     if (state == NULL || !sparse_bm_state_ensure_capacity(state, N)) {
         BM_reference(C, s, N, mod);
         return;
@@ -802,27 +851,71 @@ void Vinvert(mp_limb_t* c1, const nmod_poly_t c, const mp_limb_t* v,
     }
 }
 
+static void sparse_multipoint_tree_evaluate(mp_limb_t* values,
+                                            sparse_multipoint_tree_t* tree,
+                                            const nmod_poly_t poly,
+                                            nmod_t mod);
+
+/* OPT: was O(t^2) — t Horner evaluations of a degree-t derivative plus t
+   modular inversions.  Now: one fast multipoint evaluation down the already
+   built subproduct tree, O~(t), plus a single inversion via Montgomery's
+   batch-inversion trick (1 inv + 3t muls). */
 static int precompute_locator_inverse_denominators(mp_limb_t* denom_inv,
                                                    const nmod_poly_t c,
                                                    const mp_limb_t* v,
+                                                   sparse_multipoint_tree_t* eval_tree,
                                                    slong n,
                                                    nmod_t mod)
 {
     nmod_poly_t deriv;
+    mp_limb_t* vals;
+    mp_limb_t* prefix;
+    int ok = 1;
+
+    if (n <= 0) return 1;
+
+    vals = (mp_limb_t*) malloc((size_t) n * sizeof(mp_limb_t));
+    prefix = (mp_limb_t*) malloc((size_t) n * sizeof(mp_limb_t));
+    if (vals == NULL || prefix == NULL) {
+        free(vals);
+        free(prefix);
+        return 0;
+    }
+
     nmod_poly_init(deriv, mod.n);
     nmod_poly_derivative(deriv, c);
 
-    for (slong i = 0; i < n; i++) {
-        mp_limb_t q2_val = nmod_poly_evaluate_nmod(deriv, v[i]);
-        if (q2_val == 0) {
-            nmod_poly_clear(deriv);
-            return 0;
+    if (eval_tree != NULL && eval_tree->npoints == n) {
+        sparse_multipoint_tree_evaluate(vals, eval_tree, deriv, mod);
+    } else {
+        for (slong i = 0; i < n; i++) {
+            vals[i] = nmod_poly_evaluate_nmod(deriv, v[i]);
         }
-        denom_inv[i] = nmod_inv(q2_val, mod);
+    }
+
+    /* Montgomery batch inversion */
+    prefix[0] = vals[0];
+    for (slong i = 1; i < n && ok; i++) {
+        prefix[i] = nmod_mul(prefix[i - 1], vals[i], mod);
+    }
+    for (slong i = 0; i < n; i++) {
+        if (vals[i] == 0) { ok = 0; break; }
+    }
+    if (ok && prefix[n - 1] == 0) ok = 0;
+
+    if (ok) {
+        mp_limb_t inv_running = nmod_inv(prefix[n - 1], mod);
+        for (slong i = n - 1; i > 0; i--) {
+            denom_inv[i] = nmod_mul(inv_running, prefix[i - 1], mod);
+            inv_running = nmod_mul(inv_running, vals[i], mod);
+        }
+        denom_inv[0] = inv_running;
     }
 
     nmod_poly_clear(deriv);
-    return 1;
+    free(vals);
+    free(prefix);
+    return ok;
 }
 
 static int sparse_multipoint_tree_init(sparse_multipoint_tree_t* tree,
@@ -1076,6 +1169,18 @@ static int sparse_bm_inner_timing_enabled(void)
     static int enabled = 0;
     if (!initialized) {
         enabled = (int) sparse_get_env_slong("DIXON_SPARSE_BM_INNER_TIMING", 0, 0);
+        initialized = 1;
+    }
+    return enabled;
+}
+
+/* OPT: set DIXON_SPARSE_BM_QUADRATIC=1 to force the old O(T^2) BM loop. */
+static int sparse_bm_quadratic_enabled(void)
+{
+    static int initialized = 0;
+    static int enabled = 0;
+    if (!initialized) {
+        enabled = (int) sparse_get_env_slong("DIXON_SPARSE_BM_QUADRATIC", 0, 0);
         initialized = 1;
     }
     return enabled;
@@ -1357,19 +1462,45 @@ static int sparse_extract_linear_root(mp_limb_t* root, const nmod_poly_t poly, n
     return 1;
 }
 
+/* OPT: lock-free random field element (splitmix64 on an atomic counter).
+   The previous code drew from the shared FLINT global_state, which is not
+   safe once the splitting recursion runs in parallel tasks. */
+static mp_limb_t sparse_split_rand(nmod_t mod)
+{
+    static unsigned long long sparse_split_rand_ctr = 0x243F6A8885A308D3ULL;
+    unsigned long long z;
+#if defined(_OPENMP) || defined(__GNUC__)
+    z = __atomic_add_fetch(&sparse_split_rand_ctr, 0x9E3779B97F4A7C15ULL, __ATOMIC_RELAXED);
+#else
+    z = (sparse_split_rand_ctr += 0x9E3779B97F4A7C15ULL);
+#endif
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    z ^= z >> 31;
+    return (mp_limb_t) (z % mod.n);
+}
+
+#define SPARSE_ROOT_PARALLEL_MIN_DEG 2048
+
+/* OPT: children now write into disjoint, contiguous slices of `roots`
+   (split has exactly split_deg roots, quotient the rest), which makes the
+   two recursive calls independent -> OpenMP tasks.  Output order changes,
+   but callers qsort the roots afterwards anyway. */
 static int sparse_collect_linear_roots_recursive(mp_limb_t* roots,
                                                  slong* count,
                                                  const nmod_poly_t poly,
                                                  nmod_t mod)
 {
     slong deg = nmod_poly_degree(poly);
-    slong base_count = *count;
+    *count = 0;
     if (deg <= 0) {
         return 1;
     }
 
     if (deg == 1) {
-        return sparse_extract_linear_root(roots + (*count)++, poly, mod);
+        slong ok1 = sparse_extract_linear_root(roots, poly, mod);
+        *count = ok1 ? 1 : 0;
+        return (int) ok1;
     }
 
     nmod_poly_t g, h, split, quotient;
@@ -1381,10 +1512,10 @@ static int sparse_collect_linear_roots_recursive(mp_limb_t* roots,
     nmod_poly_init(quotient, mod.n);
 
     for (slong attempt = 0; attempt < sparse_root_split_attempt_limit(deg); attempt++) {
-        *count = base_count;
+        *count = 0;
         nmod_poly_zero(g);
         nmod_poly_set_coeff_ui(g, 1, 1);
-        nmod_poly_set_coeff_ui(g, 0, n_randint(global_state, mod.n));
+        nmod_poly_set_coeff_ui(g, 0, sparse_split_rand(mod));
         nmod_poly_powmod_ui_binexp(h, g, (mod.n - 1) / 2, poly);
         nmod_poly_set_coeff_ui(h, 0, n_submod(nmod_poly_get_coeff_ui(h, 0), 1, mod.n));
         nmod_poly_gcd(split, h, poly);
@@ -1395,15 +1526,37 @@ static int sparse_collect_linear_roots_recursive(mp_limb_t* roots,
         }
 
         nmod_poly_div(quotient, poly, split);
-        ok = sparse_collect_linear_roots_recursive(roots, count, split, mod) &&
-             sparse_collect_linear_roots_recursive(roots, count, quotient, mod);
+
+        {
+            slong count_left = 0, count_right = 0;
+            int ok_left = 0, ok_right = 0;
+#ifdef _OPENMP
+            if (deg >= SPARSE_ROOT_PARALLEL_MIN_DEG) {
+                #pragma omp taskgroup
+                {
+                    #pragma omp task shared(ok_left, count_left) firstprivate(roots, split_deg, mod) untied
+                    ok_left = sparse_collect_linear_roots_recursive(roots, &count_left, split, mod);
+                    ok_right = sparse_collect_linear_roots_recursive(roots + split_deg, &count_right, quotient, mod);
+                }
+            } else
+#endif
+            {
+                ok_left = sparse_collect_linear_roots_recursive(roots, &count_left, split, mod);
+                ok_right = sparse_collect_linear_roots_recursive(roots + split_deg, &count_right, quotient, mod);
+            }
+            ok = ok_left && ok_right &&
+                 (count_left == split_deg) && (count_right == deg - split_deg);
+            if (ok) {
+                *count = deg;
+            }
+        }
         if (ok) {
             break;
         }
     }
 
     if (!ok) {
-        *count = base_count;
+        *count = 0;
     }
 
     nmod_poly_clear(g);
@@ -1460,6 +1613,13 @@ static int get_simple_roots_fast(mp_limb_t* roots,
     }
 
     stage_start = clock();
+#ifdef _OPENMP
+    if (expected_degree >= SPARSE_ROOT_PARALLEL_MIN_DEG) {
+        #pragma omp parallel
+        #pragma omp single
+        ok = sparse_collect_linear_roots_recursive(roots, &count, root_poly, mod);
+    } else
+#endif
     ok = sparse_collect_linear_roots_recursive(roots, &count, root_poly, mod);
     if (timing != NULL) {
         timing->root_split += timer_seconds_since(stage_start);
@@ -1597,7 +1757,9 @@ static int geometric_poly_cache_init(geometric_poly_cache_t* cache,
     cache->coeffs = NULL;
     cache->roots = NULL;
     cache->powers = NULL;
-    cache->exps = NULL;
+    cache->nz_off = NULL;
+    cache->nz_var = NULL;
+    cache->nz_exp = NULL;
 
     if (cache->len <= 0) {
         return 1;
@@ -1606,18 +1768,30 @@ static int geometric_poly_cache_init(geometric_poly_cache_t* cache,
     cache->coeffs = (mp_limb_t*) malloc((size_t) cache->len * sizeof(mp_limb_t));
     cache->roots = (mp_limb_t*) malloc((size_t) cache->len * sizeof(mp_limb_t));
     cache->powers = (mp_limb_t*) malloc((size_t) cache->len * sizeof(mp_limb_t));
-    cache->exps = (ulong*) malloc((size_t) cache->len * (size_t) nvars * sizeof(ulong));
-    if (cache->coeffs == NULL || cache->roots == NULL || cache->powers == NULL || cache->exps == NULL) {
+    cache->nz_off = (slong*) malloc((size_t) (cache->len + 1) * sizeof(slong));
+    cache->nz_var = (slong*) malloc((size_t) cache->len * (size_t) nvars * sizeof(slong));
+    cache->nz_exp = (mp_limb_t*) malloc((size_t) cache->len * (size_t) nvars * sizeof(mp_limb_t));
+    if (cache->coeffs == NULL || cache->roots == NULL || cache->powers == NULL ||
+        cache->nz_off == NULL || cache->nz_var == NULL || cache->nz_exp == NULL) {
         return 0;
     }
 
+    slong k = 0;
     for (slong term = 0; term < cache->len; term++) {
         nmod_mpoly_get_term_exp_ui(exp_scratch, poly, term, mctx);
         cache->coeffs[term] = nmod_mpoly_get_term_coeff_ui(poly, term, mctx);
         cache->roots[term] = evaluate_root_from_alpha(alpha, exp_scratch, nvars, mod);
         cache->powers[term] = 1;
-        memcpy(cache->exps + (size_t) term * (size_t) nvars, exp_scratch, (size_t) nvars * sizeof(ulong));
+        cache->nz_off[term] = k;
+        for (slong i = 0; i < nvars; i++) {
+            ulong e = exp_scratch[i];
+            if (e == 0) continue;
+            cache->nz_var[k] = i;
+            cache->nz_exp[k] = (mp_limb_t) (e % mod.n); /* reduce once, not per point */
+            k++;
+        }
     }
+    cache->nz_off[cache->len] = k;
 
     return 1;
 }
@@ -1628,11 +1802,15 @@ static void geometric_poly_cache_clear(geometric_poly_cache_t* cache)
     free(cache->coeffs);
     free(cache->roots);
     free(cache->powers);
-    free(cache->exps);
+    free(cache->nz_off);
+    free(cache->nz_var);
+    free(cache->nz_exp);
     cache->coeffs = NULL;
     cache->roots = NULL;
     cache->powers = NULL;
-    cache->exps = NULL;
+    cache->nz_off = NULL;
+    cache->nz_var = NULL;
+    cache->nz_exp = NULL;
     cache->len = 0;
 }
 
@@ -1647,16 +1825,16 @@ static void geometric_poly_cache_accumulate_and_advance(mp_limb_t* value,
         scaled_derivs[i] = 0;
     }
 
+    const slong* nz_off = cache->nz_off;
+    const slong* nz_var = cache->nz_var;
+    const mp_limb_t* nz_exp = cache->nz_exp;
     for (slong term = 0; term < cache->len; term++) {
         mp_limb_t term_value = nmod_mul(cache->coeffs[term], cache->powers[term], mod);
         *value = nmod_add(*value, term_value, mod);
-        ulong* exp = cache->exps + (size_t) term * (size_t) nvars;
-        for (slong i = 0; i < nvars; i++) {
-            ulong e = exp[i];
-            if (e == 0) continue;
-            scaled_derivs[i] = nmod_add(scaled_derivs[i],
-                                        nmod_mul(term_value, e % mod.n, mod),
-                                        mod);
+        for (slong k = nz_off[term]; k < nz_off[term + 1]; k++) {
+            scaled_derivs[nz_var[k]] = nmod_add(scaled_derivs[nz_var[k]],
+                                                nmod_mul(term_value, nz_exp[k], mod),
+                                                mod);
         }
         cache->powers[term] = nmod_mul(cache->powers[term], cache->roots[term], mod);
     }
@@ -2247,7 +2425,7 @@ static int SparseInterpolateFromProbes(nmod_mpoly_t result,
 
         clock_t vinvert_start = clock();
         clock_t denom_start = clock();
-        if (!precompute_locator_inverse_denominators(denom_inv, locator, roots, t, mod)) {
+        if (!precompute_locator_inverse_denominators(denom_inv, locator, roots, &eval_tree, t, mod)) {
             sparse_recovery_info_set_reason(info,
                                             "failed to precompute locator derivative inverses for %ld roots",
                                             t);
@@ -2501,7 +2679,7 @@ static int SparseInterpolateScoutBudgetReuse(nmod_mpoly_t result,
 
     clock_t vinvert_start = clock();
     clock_t denom_start = clock();
-    if (!precompute_locator_inverse_denominators(denom_inv, locator, roots, t, mod)) {
+    if (!precompute_locator_inverse_denominators(denom_inv, locator, roots, &eval_tree, t, mod)) {
         sparse_recovery_info_set_reason(info,
                                         "failed to precompute locator derivative inverses for %ld roots",
                                         t);
