@@ -1,7 +1,7 @@
 #include "fq_sparse_interpolation.h"
 #include "nmod_vec_extra.h"
 #include <flint/nmod_vec.h>
-#include <flint/nmod_poly.h>
+#include <flint/nmod_poly.h>  /* nmod_poly_divrem/mul/sub for Euclidean BM */
 
 #include <limits.h>
 #include <stdarg.h>
@@ -616,44 +616,88 @@ static void BM_timed_incremental(nmod_poly_t C,
         return;
     }
 
-    /* OPT: HGCD-based minimal polynomial, O~(N) instead of the O(N^2)
-       iterative Berlekamp-Massey below.  Recomputing from scratch at every
-       budget escalation is now cheap, so the incremental state is only kept
-       for the (env-forced) fallback path.
-       nmod_poly_minpoly returns the monic annihilator Lambda(z) = prod(z - v_k);
-       the rest of this file expects the "relation" C(x) = x^t * Lambda(1/x)
-       (constant term 1), so we reverse it here. */
+    /* Fast(er) Berlekamp-Massey via the extended-Euclidean formulation.
+       Given the 2N sequence terms s[0..2N-1], form S(x) = sum s[i] x^i and run
+       the extended Euclidean algorithm on (x^{2N}, S) until the remainder drops
+       below degree N; the accumulated cofactor is the connection polynomial.
+       This uses only nmod_poly_divrem / mul / add / sub, all of which exist in
+       every FLINT version.  With FLINT's sub-quadratic divrem it is faster than
+       the hand-rolled iterative loop, and it removes the dependency on the
+       (nonexistent) nmod_poly_minpoly.
+       Lambda(z) = prod(z - v_k) is the reverse of the connection polynomial;
+       the rest of this file expects "relation" C(x) with constant term 1, which
+       is exactly the (normalized) connection polynomial itself. */
     if (!sparse_bm_quadratic_enabled()) {
-        nmod_poly_t lambda;
-        nmod_poly_init(lambda, mod.n);
-        nmod_poly_minpoly(lambda, s, 2 * N);
+        nmod_poly_t r0, r1, v0, v1, quot, tmp, S;
+        nmod_poly_init(r0, mod.n);
+        nmod_poly_init(r1, mod.n);
+        nmod_poly_init(v0, mod.n);
+        nmod_poly_init(v1, mod.n);
+        nmod_poly_init(quot, mod.n);
+        nmod_poly_init(tmp, mod.n);
+        nmod_poly_init(S, mod.n);
 
-        slong t = nmod_poly_degree(lambda);
+        /* r0 = x^{2N} */
+        nmod_poly_set_coeff_ui(r0, 2 * N, 1);
+        /* r1 = S(x) */
+        for (slong i = 0; i < 2 * N; i++) {
+            if (s[i] != 0) nmod_poly_set_coeff_ui(S, i, s[i]);
+        }
+        nmod_poly_set(r1, S);
+
+        /* v0 = 0, v1 = 1 (Bezout cofactors of the second argument) */
+        nmod_poly_zero(v0);
+        nmod_poly_set_coeff_ui(v1, 0, 1);
+
+        /* Euclid until deg(r1) < N */
+        while (nmod_poly_degree(r1) >= N) {
+            nmod_poly_divrem(quot, tmp, r0, r1);   /* r0 = quot*r1 + tmp */
+            nmod_poly_set(r0, r1);
+            nmod_poly_set(r1, tmp);
+
+            /* v_next = v0 - quot*v1 */
+            nmod_poly_mul(tmp, quot, v1);
+            nmod_poly_sub(tmp, v0, tmp);
+            nmod_poly_set(v0, v1);
+            nmod_poly_set(v1, tmp);
+        }
+
+        /* Connection polynomial = v1, normalized to constant term 1. */
+        slong t = nmod_poly_degree(v1);
         if (t < 0) t = 0;
 
         nmod_poly_zero(C);
-        if (t == 0) {
+        mp_limb_t c0 = nmod_poly_get_coeff_ui(v1, 0);
+        if (t == 0 || c0 == 0) {
+            /* Degenerate: either no recurrence found or v1(0)=0, which cannot
+               occur for a genuine t-sparse geometric sequence (all roots v_k
+               are nonzero).  Signal saturation so the driver escalates. */
             nmod_poly_set_coeff_ui(C, 0, 1);
-        } else if (nmod_poly_get_coeff_ui(lambda, 0) == 0) {
-            /* Lambda(0) == 0 cannot happen for a genuine t-sparse geometric
-               sequence (all roots v_k are nonzero); it means the sequence is
-               not yet resolved at this budget.  Report saturation so the
-               adaptive driver escalates. */
-            nmod_poly_set_coeff_ui(C, 0, 1);
-            nmod_poly_set_coeff_ui(C, N, 1);
+            if (t != 0) nmod_poly_set_coeff_ui(C, N, 1);
         } else {
+            mp_limb_t c0_inv = nmod_inv(c0, mod);
             for (slong i = 0; i <= t; i++) {
-                nmod_poly_set_coeff_ui(C, i, nmod_poly_get_coeff_ui(lambda, t - i));
+                mp_limb_t ci = nmod_poly_get_coeff_ui(v1, i);
+                if (ci != 0) {
+                    nmod_poly_set_coeff_ui(C, i, nmod_mul(ci, c0_inv, mod));
+                }
             }
         }
-        nmod_poly_clear(lambda);
+
+        nmod_poly_clear(r0);
+        nmod_poly_clear(r1);
+        nmod_poly_clear(v0);
+        nmod_poly_clear(v1);
+        nmod_poly_clear(quot);
+        nmod_poly_clear(tmp);
+        nmod_poly_clear(S);
 
         if (state != NULL) {
             state->processed_terms = 2 * N;
         }
         if (DETAILED_TIMING) {
             timer_stop(&timer);
-            timer_print(&timer, "    BM algorithm (minpoly)");
+            timer_print(&timer, "    BM algorithm (euclid)");
         }
         return;
     }
