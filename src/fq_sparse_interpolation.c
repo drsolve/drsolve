@@ -1218,13 +1218,17 @@ static int sparse_bm_inner_timing_enabled(void)
     return enabled;
 }
 
-/* OPT: set DIXON_SPARSE_BM_QUADRATIC=1 to force the old O(T^2) BM loop. */
+/* Euclidean BM turned out ~5x SLOWER than the iterative path at N~1e5
+   (schoolbook nmod_poly_mul + full-poly copies -> huge-constant O(N^2), never
+   reaching a sub-quadratic regime).  So the iterative BM below is now the
+   DEFAULT.  Set DIXON_SPARSE_BM_EUCLID=1 to opt into the Euclidean version. */
 static int sparse_bm_quadratic_enabled(void)
 {
     static int initialized = 0;
-    static int enabled = 0;
+    static int enabled = 1; /* default: use iterative BM */
     if (!initialized) {
-        enabled = (int) sparse_get_env_slong("DIXON_SPARSE_BM_QUADRATIC", 0, 0);
+        /* opt into Euclidean only if explicitly requested */
+        enabled = (sparse_get_env_slong("DIXON_SPARSE_BM_EUCLID", 0, 0) != 0) ? 0 : 1;
         initialized = 1;
     }
     return enabled;
@@ -1506,45 +1510,22 @@ static int sparse_extract_linear_root(mp_limb_t* root, const nmod_poly_t poly, n
     return 1;
 }
 
-/* OPT: lock-free random field element (splitmix64 on an atomic counter).
-   The previous code drew from the shared FLINT global_state, which is not
-   safe once the splitting recursion runs in parallel tasks. */
-static mp_limb_t sparse_split_rand(nmod_t mod)
-{
-    static unsigned long long sparse_split_rand_ctr = 0x243F6A8885A308D3ULL;
-    unsigned long long z;
-#if defined(_OPENMP) || defined(__GNUC__)
-    z = __atomic_add_fetch(&sparse_split_rand_ctr, 0x9E3779B97F4A7C15ULL, __ATOMIC_RELAXED);
-#else
-    z = (sparse_split_rand_ctr += 0x9E3779B97F4A7C15ULL);
-#endif
-    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
-    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
-    z ^= z >> 31;
-    return (mp_limb_t) (z % mod.n);
-}
-
-#define SPARSE_ROOT_PARALLEL_MIN_DEG 2048
-
-/* OPT: children now write into disjoint, contiguous slices of `roots`
-   (split has exactly split_deg roots, quotient the rest), which makes the
-   two recursive calls independent -> OpenMP tasks.  Output order changes,
-   but callers qsort the roots afterwards anyway. */
+/* NOTE: parallelizing this recursion (OpenMP tasks + disjoint root ranges)
+   was tried and made things SLOWER at N~1e5 (task overhead + unbalanced
+   splits), so it is reverted to the original serial form. */
 static int sparse_collect_linear_roots_recursive(mp_limb_t* roots,
                                                  slong* count,
                                                  const nmod_poly_t poly,
                                                  nmod_t mod)
 {
     slong deg = nmod_poly_degree(poly);
-    *count = 0;
+    slong base_count = *count;
     if (deg <= 0) {
         return 1;
     }
 
     if (deg == 1) {
-        slong ok1 = sparse_extract_linear_root(roots, poly, mod);
-        *count = ok1 ? 1 : 0;
-        return (int) ok1;
+        return sparse_extract_linear_root(roots + (*count)++, poly, mod);
     }
 
     nmod_poly_t g, h, split, quotient;
@@ -1556,10 +1537,10 @@ static int sparse_collect_linear_roots_recursive(mp_limb_t* roots,
     nmod_poly_init(quotient, mod.n);
 
     for (slong attempt = 0; attempt < sparse_root_split_attempt_limit(deg); attempt++) {
-        *count = 0;
+        *count = base_count;
         nmod_poly_zero(g);
         nmod_poly_set_coeff_ui(g, 1, 1);
-        nmod_poly_set_coeff_ui(g, 0, sparse_split_rand(mod));
+        nmod_poly_set_coeff_ui(g, 0, n_randint(global_state, mod.n));
         nmod_poly_powmod_ui_binexp(h, g, (mod.n - 1) / 2, poly);
         nmod_poly_set_coeff_ui(h, 0, n_submod(nmod_poly_get_coeff_ui(h, 0), 1, mod.n));
         nmod_poly_gcd(split, h, poly);
@@ -1570,37 +1551,15 @@ static int sparse_collect_linear_roots_recursive(mp_limb_t* roots,
         }
 
         nmod_poly_div(quotient, poly, split);
-
-        {
-            slong count_left = 0, count_right = 0;
-            int ok_left = 0, ok_right = 0;
-#ifdef _OPENMP
-            if (deg >= SPARSE_ROOT_PARALLEL_MIN_DEG) {
-                #pragma omp taskgroup
-                {
-                    #pragma omp task shared(ok_left, count_left) firstprivate(roots, split_deg, mod) untied
-                    ok_left = sparse_collect_linear_roots_recursive(roots, &count_left, split, mod);
-                    ok_right = sparse_collect_linear_roots_recursive(roots + split_deg, &count_right, quotient, mod);
-                }
-            } else
-#endif
-            {
-                ok_left = sparse_collect_linear_roots_recursive(roots, &count_left, split, mod);
-                ok_right = sparse_collect_linear_roots_recursive(roots + split_deg, &count_right, quotient, mod);
-            }
-            ok = ok_left && ok_right &&
-                 (count_left == split_deg) && (count_right == deg - split_deg);
-            if (ok) {
-                *count = deg;
-            }
-        }
+        ok = sparse_collect_linear_roots_recursive(roots, count, split, mod) &&
+             sparse_collect_linear_roots_recursive(roots, count, quotient, mod);
         if (ok) {
             break;
         }
     }
 
     if (!ok) {
-        *count = 0;
+        *count = base_count;
     }
 
     nmod_poly_clear(g);
@@ -1657,13 +1616,6 @@ static int get_simple_roots_fast(mp_limb_t* roots,
     }
 
     stage_start = clock();
-#ifdef _OPENMP
-    if (expected_degree >= SPARSE_ROOT_PARALLEL_MIN_DEG) {
-        #pragma omp parallel
-        #pragma omp single
-        ok = sparse_collect_linear_roots_recursive(roots, &count, root_poly, mod);
-    } else
-#endif
     ok = sparse_collect_linear_roots_recursive(roots, &count, root_poly, mod);
     if (timing != NULL) {
         timing->root_split += timer_seconds_since(stage_start);
