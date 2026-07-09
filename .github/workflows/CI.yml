@@ -39,12 +39,12 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.INSTALL_PREFIX }}
-          key: linux-flint-3.5-static-${{ runner.arch }}-v1
+          key: linux-flint-3.6-static-${{ runner.arch }}-v1
 
-      - name: Build FLINT (static) - version 3.5.0
+      - name: Build FLINT (static) - version 3.6.0
         if: steps.flint-cache.outputs.cache-hit != 'true'
         run: |
-          git clone --depth=1 --branch flint-3.5 https://github.com/flintlib/flint.git
+          git clone --depth=1 --branch flint-3.6 https://github.com/flintlib/flint.git
           cd flint
           ./bootstrap.sh
           ./configure \
@@ -59,7 +59,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.INSTALL_PREFIX }}
-          key: linux-flint-3.5-static-${{ runner.arch }}-v1
+          key: linux-flint-3.6-static-${{ runner.arch }}-v1
 
       # Linux GNU ld: --allow-multiple-definition handles FLINT/PML
       # duplicate symbols at link time; no archive pre-processing needed.
@@ -102,7 +102,7 @@ jobs:
           Arch     : ${ARCH}
           Ref      : ${{ github.ref }}
           SHA      : ${{ github.sha }}
-          FLINT    : static (3.5.0)
+          FLINT    : static (3.6.0)
           PML      : static
           EOF
           cat dist/build-info-linux.txt
@@ -155,13 +155,13 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.INSTALL_PREFIX }}
-          key: macos-flint-3.5-static-renamed-${{ runner.arch }}-v1
+          key: macos-flint-3.6-static-renamed-${{ runner.arch }}-v1
 
-      - name: Build FLINT (static) - version 3.5.0
+      - name: Build FLINT (static) - version 3.6.0
         if: steps.flint-cache.outputs.cache-hit != 'true'
         run: |
           BREW=$(brew --prefix)
-          git clone --depth=1 --branch flint-3.5 https://github.com/flintlib/flint.git
+          git clone --depth=1 --branch flint-3.6 https://github.com/flintlib/flint.git
           cd flint
           # Rename the few FLINT symbols that conflict with bundled PML on macOS.
           # This keeps FLINT internally consistent while avoiding duplicate symbols
@@ -188,7 +188,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.INSTALL_PREFIX }}
-          key: macos-flint-3.5-static-renamed-${{ runner.arch }}-v1
+          key: macos-flint-3.6-static-renamed-${{ runner.arch }}-v1
 
       - name: Verify renamed FLINT symbols
         run: |
@@ -257,7 +257,7 @@ jobs:
           Arch     : ${ARCH}
           Ref      : ${{ github.ref }}
           SHA      : ${{ github.sha }}
-          FLINT    : static (3.5.0)
+          FLINT    : static (3.6.0)
           PML      : static
           EOF
           cat dist/build-info-macos.txt
