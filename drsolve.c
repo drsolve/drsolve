@@ -35,7 +35,7 @@
 #include "rational_system_solver.h"
 #include "dixon_test.h"
 
-#define PROGRAM_VERSION "0.3.5"
+#define PROGRAM_VERSION "0.4.0"
 
 #ifdef _WIN32
 #define DIXON_NULL_DEVICE "NUL"
@@ -53,7 +53,7 @@ static void print_version()
 {
     printf("===============================================\n");
     printf("DRSolve v%s\n", PROGRAM_VERSION);
-    printf("FLINT version: %s (Recommended: 3.5.0)\n", FLINT_VERSION);
+    printf("FLINT version: %s (Recommended: 3.6.0)\n", FLINT_VERSION);
 #ifdef HAVE_PML
     printf("PML support: ENABLED\n");
 #else
@@ -3708,11 +3708,10 @@ int main(int argc, char *argv[])
                 printf("Hint: detected 2 equations with 1 elimination variable; auto-enabling --subres.\n");
             }
         } else if (!rational_mode && !large_prime_mode &&
-                   (poly_count == 3) && // || poly_count == 4
+                   (poly_count == 3) &&
                    var_count == poly_count - 1) {
-            resultant_method = RESULTANT_METHOD_DIXON_RECURSIVE;
             if (!silent_mode) {
-                printf("Hint: detected %d equations; auto-enabling recursive Dixon construction (--method 5).\n",
+                printf("Hint: detected %d equations; using --method 5 may perform better than the default Dixon method.\n",
                        poly_count);
             }
         }
