@@ -41,10 +41,6 @@
 #define DEBUG_PRINT(fmt, ...)
 #endif
 
-// Dixon resultant computation function
-void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys, 
-                       slong nvars, slong npars);
-
 // Token type definitions
 typedef enum {
     TOK_NUMBER,      // number
