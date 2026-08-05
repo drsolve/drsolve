@@ -127,6 +127,12 @@ char* dixon_str(const char *poly_string,    // comma-separated polynomials
                 const char *vars_string,     // comma-separated variables
                 const fq_nmod_ctx_t ctx);
 
+/* Compute a finite-field resultant without serializing it to a string. */
+int dixon_compute_result_poly(const char *poly_string,
+                              const char *vars_string,
+                              const fq_nmod_ctx_t ctx,
+                              fq_mvpoly_t *result_poly);
+
 char* dixon_str_with_file(const char *poly_string,    // comma-separated polynomials
                           const char *vars_string,     // comma-separated variables
                           const fq_nmod_ctx_t ctx,
