@@ -4871,9 +4871,12 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
         #ifdef _OPENMP
         if (npars > 1) {
             coeff_method = DET_METHOD_INTERPOLATION;
+            if (matrix_size < 10) {
+                coeff_method = DET_METHOD_RECURSIVE;
+            }
         } else 
         #endif
-        if (matrix_size < 9) {
+        if (matrix_size < 10) {
             coeff_method = DET_METHOD_RECURSIVE;
         } else {
             coeff_method = DET_METHOD_KRONECKER;
