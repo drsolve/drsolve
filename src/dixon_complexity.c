@@ -2637,9 +2637,9 @@ static void dixon_complexity_write_report_body(
         if (verbose_level >= 2) {
             fprintf(fp, "Step 3 rank extraction (log2): %.6f\n",
                     report->step3_rank_extraction_log2);
+            fprintf(fp, "Rank-predicted overall complexity = max(step1/2, step3 extraction, rank-predicted step4 HNF) (log2): %.6f\n",
+                    report->rank_adjusted_overall_log2);
         }
-        fprintf(fp, "Rank-predicted overall complexity = max(step1/2, step3 extraction, rank-predicted step4 HNF) (log2): %.6f\n",
-                report->rank_adjusted_overall_log2);
     }
 
     fprintf(fp, "\n--- Comparison: Macaulay / Groebner ---\n");

@@ -1387,6 +1387,144 @@ void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_
     }
 }
 
+/* Cheap first deflation pass for the Step 4 coefficient matrix.
+ * For the single remaining parameter x, extract only row/column powers of x.
+ * The returned exponent is a factor of the determinant and must be retained
+ * by the caller as metadata; it is not discarded mathematically. */
+static slong fq_mvpoly_x_valuation(const fq_mvpoly_t *poly)
+{
+    slong min_exp = LONG_MAX;
+
+    if (!poly || poly->nterms == 0 || poly->npars != 1)
+        return 0;
+
+    for (slong t = 0; t < poly->nterms; t++) {
+        slong exp = poly->terms[t].par_exp ? poly->terms[t].par_exp[0] : 0;
+        if (exp < min_exp)
+            min_exp = exp;
+    }
+
+    return min_exp == LONG_MAX ? 0 : min_exp;
+}
+
+static void fq_mvpoly_divide_by_x_power_inplace(fq_mvpoly_t *poly, slong power)
+{
+    if (!poly || power <= 0 || poly->npars != 1)
+        return;
+
+    for (slong t = 0; t < poly->nterms; t++) {
+        if (poly->terms[t].par_exp)
+            poly->terms[t].par_exp[0] -= power;
+    }
+}
+
+static slong extract_fq_matrix_x_content(fq_mvpoly_t **matrix, slong size,
+                                         slong npars)
+{
+    slong extracted = 0;
+
+    if (!matrix || size <= 0 || npars != 1)
+        return 0;
+
+    /* Row content. */
+    for (slong i = 0; i < size; i++) {
+        slong row_power = 0;
+        int have_nonzero = 0;
+
+        for (slong j = 0; j < size; j++) {
+            if (matrix[i][j].nterms > 0) {
+                slong power = fq_mvpoly_x_valuation(&matrix[i][j]);
+                if (!have_nonzero || power < row_power)
+                    row_power = power;
+                have_nonzero = 1;
+            }
+        }
+
+        if (have_nonzero && row_power > 0) {
+            for (slong j = 0; j < size; j++)
+                fq_mvpoly_divide_by_x_power_inplace(&matrix[i][j], row_power);
+            extracted += row_power;
+        }
+    }
+
+    /* Column content after row normalization. */
+    for (slong j = 0; j < size; j++) {
+        slong col_power = 0;
+        int have_nonzero = 0;
+
+        for (slong i = 0; i < size; i++) {
+            if (matrix[i][j].nterms > 0) {
+                slong power = fq_mvpoly_x_valuation(&matrix[i][j]);
+                if (!have_nonzero || power < col_power)
+                    col_power = power;
+                have_nonzero = 1;
+            }
+        }
+
+        if (have_nonzero && col_power > 0) {
+            for (slong i = 0; i < size; i++)
+                fq_mvpoly_divide_by_x_power_inplace(&matrix[i][j], col_power);
+            extracted += col_power;
+        }
+    }
+
+    return extracted;
+}
+
+/* Same deflation pass for the full sparse coefficient matrix, before
+ * maximal-rank row/column selection. */
+static slong extract_fq_full_matrix_x_content(fq_mvpoly_t ***matrix,
+                                              slong nrows, slong ncols,
+                                              slong npars)
+{
+    slong extracted = 0;
+
+    if (!matrix || nrows <= 0 || ncols <= 0 || npars != 1)
+        return 0;
+
+    for (slong i = 0; i < nrows; i++) {
+        slong row_power = 0;
+        int have_nonzero = 0;
+
+        for (slong j = 0; j < ncols; j++) {
+            if (matrix[i][j] && matrix[i][j]->nterms > 0) {
+                slong power = fq_mvpoly_x_valuation(matrix[i][j]);
+                if (!have_nonzero || power < row_power)
+                    row_power = power;
+                have_nonzero = 1;
+            }
+        }
+
+        if (have_nonzero && row_power > 0) {
+            for (slong j = 0; j < ncols; j++)
+                fq_mvpoly_divide_by_x_power_inplace(matrix[i][j], row_power);
+            extracted += row_power;
+        }
+    }
+
+    for (slong j = 0; j < ncols; j++) {
+        slong col_power = 0;
+        int have_nonzero = 0;
+
+        for (slong i = 0; i < nrows; i++) {
+            if (matrix[i][j] && matrix[i][j]->nterms > 0) {
+                slong power = fq_mvpoly_x_valuation(matrix[i][j]);
+                if (!have_nonzero || power < col_power)
+                    col_power = power;
+                have_nonzero = 1;
+            }
+        }
+
+        if (have_nonzero && col_power > 0) {
+            for (slong i = 0; i < nrows; i++)
+                fq_mvpoly_divide_by_x_power_inplace(matrix[i][j], col_power);
+            extracted += col_power;
+        }
+    }
+
+    return extracted;
+}
+
 // Extended tracker structure with pre-allocated workspace
 // Initialize optimized tracker
 static void unified_row_basis_tracker_init(unified_row_basis_tracker_t *tracker, 
@@ -4042,13 +4180,21 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
 
     phase_start = get_wall_time();
     dixon_debug_log("  Filling Dixon coefficient matrix...\n");
-    fill_coefficient_matrix_optimized(full_matrix, x_monoms, nx_monoms, 
-                                     dual_monoms, ndual_monoms, dixon_poly, 
+    fill_coefficient_matrix_optimized(full_matrix, x_monoms, nx_monoms,
+                                     dual_monoms, ndual_monoms, dixon_poly,
                                      d0, d1, nvars, npars,
                                      x_index, x_hash_size,
                                      dual_index, dual_hash_size);
     dixon_debug_log("  Coefficient matrix filled in %.3f seconds\n",
                     get_wall_time() - phase_start);
+    slong preselection_x_power = extract_fq_full_matrix_x_content(full_matrix,
+                                                                  nx_monoms,
+                                                                  ndual_monoms,
+                                                                  npars);
+    if (preselection_x_power > 0) {
+        dixon_info_log("  Pre-selection full-matrix x-content: x^%ld\n",
+                       preselection_x_power);
+    }
     dixon_print_small_sparse_matrix("Dixon matrix", full_matrix, nx_monoms, ndual_monoms,
                                     x_monoms, dual_monoms, nvars,
                                     var_names, par_names, gen_name);
@@ -4732,8 +4878,15 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
                                             &matrix_size, &d_poly, nvars, npars,
                                             NULL, NULL, NULL, rank_degrees, nvars + 1);
     flint_free(rank_degrees);
-    
+
     if (matrix_size > 0) {
+        slong extracted_x_power = extract_fq_matrix_x_content(coeff_matrix,
+                                                               matrix_size,
+                                                               npars);
+        if (extracted_x_power > 0) {
+            dixon_info_log("  Pre-determinant row/column x-content: x^%ld\n",
+                           extracted_x_power);
+        }
         dixon_info_log("\nStep 4: Compute resultant\n");
         clock_t step4_cpu_start = clock();
         double step4_wall_start = get_wall_time();
@@ -4858,8 +5011,15 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
                                             var_names, par_names, gen_name,
                                             rank_degrees, nvars + 1);
     flint_free(rank_degrees);
-    
+
     if (matrix_size > 0) {
+        slong extracted_x_power = extract_fq_matrix_x_content(coeff_matrix,
+                                                               matrix_size,
+                                                               npars);
+        if (extracted_x_power > 0) {
+            dixon_info_log("  Pre-determinant row/column x-content: x^%ld\n",
+                           extracted_x_power);
+        }
         dixon_info_log("\nStep 4: Compute resultant\n");
         clock_t step4_cpu_start = clock();
         double step4_wall_start = get_wall_time();

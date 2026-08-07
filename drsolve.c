@@ -7,7 +7,7 @@
 
 #include "drsolve_cli.h"
 
-#define PROGRAM_VERSION "0.4.5"
+#define PROGRAM_VERSION "0.5.0-dev"
 #define DEFAULT_OUTPUT_DIR "out"
 
 /* =========================================================================
