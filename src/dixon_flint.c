@@ -4192,8 +4192,9 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
                                                                   ndual_monoms,
                                                                   npars);
     if (preselection_x_power > 0) {
-        dixon_info_log("  Pre-selection full-matrix x-content: x^%ld\n",
-                       preselection_x_power);
+        const char *content_var = (par_names && par_names[0]) ? par_names[0] : "x";
+        dixon_info_log("  Pre-selection full-matrix %s-content: %s^%ld\n",
+                       content_var, content_var, preselection_x_power);
     }
     dixon_print_small_sparse_matrix("Dixon matrix", full_matrix, nx_monoms, ndual_monoms,
                                     x_monoms, dual_monoms, nvars,
@@ -5017,8 +5018,9 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
                                                                matrix_size,
                                                                npars);
         if (extracted_x_power > 0) {
-            dixon_info_log("  Pre-determinant row/column x-content: x^%ld\n",
-                           extracted_x_power);
+            const char *content_var = (par_names && par_names[0]) ? par_names[0] : "x";
+            dixon_info_log("  Pre-determinant row/column %s-content: %s^%ld\n",
+                           content_var, content_var, extracted_x_power);
         }
         dixon_info_log("\nStep 4: Compute resultant\n");
         clock_t step4_cpu_start = clock();
