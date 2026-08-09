@@ -401,6 +401,58 @@ static slong saturated_binomial_slong(slong n, slong k) {
     return result;
 }
 
+/* Exact binomial coefficient with an fmpz upper argument.  The report used
+   to store these values in slong and consequently saturated at WORD_MAX. */
+static void binomial_fmpz_slong(fmpz_t out, const fmpz_t n, slong k) {
+    fmpz_t term;
+    fmpz_set_ui(out, 1);
+    if (k < 0 || fmpz_sgn(n) < 0 || (fmpz_fits_si(n) && k > fmpz_get_si(n))) {
+        fmpz_zero(out);
+        return;
+    }
+    if (fmpz_fits_si(n) && k > fmpz_get_si(n) - k) {
+        k = fmpz_get_si(n) - k;
+    }
+    fmpz_init(term);
+    for (slong i = 1; i <= k; i++) {
+        fmpz_sub_ui(term, n, (ulong) (k - i));
+        fmpz_mul(out, out, term);
+        fmpz_divexact_ui(out, out, (ulong) i);
+    }
+    fmpz_clear(term);
+}
+
+static void macaulay_sizes_fmpz(fmpz_t degree_out, fmpz_t rows_out,
+                                fmpz_t cols_out, fmpz_t square_out,
+                                const long *degrees, slong num_polys,
+                                slong num_elim_vars) {
+    fmpz_t degree, n, value, multiplier;
+    fmpz_zero(degree_out); fmpz_zero(rows_out); fmpz_zero(cols_out);
+    fmpz_zero(square_out);
+    fmpz_init(degree); fmpz_init(n); fmpz_init(value); fmpz_init(multiplier);
+    for (slong i = 0; i < num_polys; i++) {
+        if (degrees[i] > 0) fmpz_add_si(degree, degree, degrees[i]);
+    }
+    fmpz_sub_si(degree, degree, num_elim_vars);
+    if (fmpz_sgn(degree) < 0) fmpz_zero(degree);
+    fmpz_set(degree_out, degree);
+    if (num_elim_vars > 0) {
+        fmpz_add_si(n, degree, num_elim_vars);
+        binomial_fmpz_slong(cols_out, n, num_elim_vars);
+        for (slong i = 0; i < num_polys; i++) {
+            fmpz_set(multiplier, degree);
+            if (degrees[i] > 0) fmpz_sub_si(multiplier, multiplier, degrees[i]);
+            if (fmpz_sgn(multiplier) < 0) fmpz_zero(multiplier);
+            fmpz_add_si(n, multiplier, num_elim_vars);
+            binomial_fmpz_slong(value, n, num_elim_vars);
+            fmpz_add(rows_out, rows_out, value);
+        }
+        if (fmpz_cmp(rows_out, cols_out) < 0) fmpz_set(square_out, rows_out);
+        else fmpz_set(square_out, cols_out);
+    }
+    fmpz_clear(degree); fmpz_clear(n); fmpz_clear(value); fmpz_clear(multiplier);
+}
+
 static double log2_soft_fft_multiply_from_degree_log2(double log2_degree_bound) {
     if (!(log2_degree_bound > 0.0) || !isfinite(log2_degree_bound)) {
         return 0.0;
@@ -1685,11 +1737,26 @@ void dixon_complexity_report_from_degrees(dixon_complexity_report_t *report,
             entry_param_log2 =
                 ((double) num_parameter_vars) * log2((double) max_degree + 1.0);
         }
-        report->macaulay_log2 =
-            (report->macaulay_square_size > 1
-                ? omega * log2((double) report->macaulay_square_size)
-                : 0.0) +
-            entry_param_log2;
+        {
+            fmpz_t exact_degree, exact_rows, exact_cols, exact_square;
+            double exact_square_log2;
+            fmpz_init(exact_degree);
+            fmpz_init(exact_rows);
+            fmpz_init(exact_cols);
+            fmpz_init(exact_square);
+            macaulay_sizes_fmpz(exact_degree, exact_rows, exact_cols,
+                                exact_square, degrees, num_polys,
+                                num_elim_vars);
+            exact_square_log2 = log2_fmpz_upper_bound(exact_square);
+            report->macaulay_log2 =
+                ((isfinite(exact_square_log2) && exact_square_log2 > 0.0)
+                    ? omega * exact_square_log2
+                    : 0.0) + entry_param_log2;
+            fmpz_clear(exact_degree);
+            fmpz_clear(exact_rows);
+            fmpz_clear(exact_cols);
+            fmpz_clear(exact_square);
+        }
 
         {
             slong gb_n = num_all_vars > 0 ? num_all_vars : num_elim_vars;
@@ -2507,12 +2574,25 @@ static void dixon_complexity_write_report_body(
     fprintf(fp, "\n--- Step 4 ---\n");
     fprintf(fp, "Dixon matrix size: ");
     fmpz_fprint(fp, matrix_size);
-    fprintf(fp, "\n");
+    fprintf(fp, " (log2: %.6f)\n", report->det_size_log2);
     fprintf(fp, "Step 4 parameter variable count r: %ld\n", num_parameter_vars);
     {
         long step4_entry_degree_bound = 0;
         int step4_entry_bound_saturated = 0;
         slong printed_params = 0;
+        fmpz_t exact_rank_size;
+        int exact_rank_available = 0;
+
+        fmpz_init(exact_rank_size);
+        if (report->step4_rank_model_applicable) {
+            long uniform_d = 0;
+            exact_rank_available = report->step4_rank_model_is_mixed
+                ? dixon_rank_model_mixed(exact_rank_size, degrees,
+                                         num_polys, num_elim)
+                : (uniform_positive_degree(degrees, num_polys, &uniform_d) &&
+                   dixon_rank_model_uniform(exact_rank_size, num_polys,
+                                            num_elim, uniform_d));
+        }
 
         for (slong i = 0; i < num_polys; i++) {
             long di = degrees[i] > 0 ? degrees[i] : 0;
@@ -2534,10 +2614,11 @@ static void dixon_complexity_write_report_body(
                 (num_parameter_vars == 1) ? "HNF" : "Kronecker + HNF",
                 omega, report->step4_hnf_log2);
         if (report->step4_rank_model_applicable) {
-            fprintf(fp, "Step 4 rank prediction%s matrix size: %ld (log2: %.6f)\n",
-                    report->step4_rank_model_is_mixed ? " (mixed)" : " (uniform)",
-                    report->step4_rank_size,
-                    report->step4_rank_size_log2);
+            fprintf(fp, "Step 4 rank prediction%s matrix size: ",
+                    report->step4_rank_model_is_mixed ? " (mixed)" : " (uniform)");
+            if (exact_rank_available) fmpz_fprint(fp, exact_rank_size);
+            else fprintf(fp, "%ld", report->step4_rank_size);
+            fprintf(fp, " (log2: %.6f)\n", report->step4_rank_size_log2);
             fprintf(fp, "Step 4 rank-predicted HNF estimate (heuristic/conjectural, log2): %.6f\n",
                     report->step4_rank_hnf_log2);
         } else {
@@ -2566,8 +2647,10 @@ static void dixon_complexity_write_report_body(
                         report->step4_rank_model_is_mixed
                         ? "mixed degrees: R_q from Dixon tail degrees, H_e from all equation degrees, sigma=sum_i(d_i-1)+1"
                         : "uniform degrees");
-                fprintf(fp, "  Rank prediction values : r_D=%ld, omega*log2(r_D)=%.6f, log2(s_4(r_D))=%.6f\n",
-                        report->step4_rank_size,
+                fprintf(fp, "  Rank prediction values : r_D=");
+                if (exact_rank_available) fmpz_fprint(fp, exact_rank_size);
+                else fprintf(fp, "%ld", report->step4_rank_size);
+                fprintf(fp, ", omega*log2(r_D)=%.6f, log2(s_4(r_D))=%.6f\n",
                         omega * report->step4_rank_size_log2,
                         report->step4_rank_hnf_degree_density_log2);
                 fprintf(fp, "  Rank prediction status: experimental/conjectural; the original M-based estimate remains the rigorous upper-bound template.\n");
@@ -2622,6 +2705,7 @@ static void dixon_complexity_write_report_body(
             fprintf(fp, "  Value   : log2(T_4) = %.6f\n",
                     report->step4_sparse_term_bound_log2);
         }
+        fmpz_clear(exact_rank_size);
     }
 
     fprintf(fp, "\n--- Overall ---\n");
@@ -2643,9 +2727,30 @@ static void dixon_complexity_write_report_body(
     }
 
     fprintf(fp, "\n--- Comparison: Macaulay / Groebner ---\n");
-    fprintf(fp, "Macaulay degree: %ld\n", report->macaulay_degree);
-    fprintf(fp, "Macaulay matrix size upper bound: %ld x %ld (square <= %ld)\n",
-            report->macaulay_rows, report->macaulay_cols, report->macaulay_square_size);
+    {
+        fmpz_t exact_macaulay_degree, exact_macaulay_rows;
+        fmpz_t exact_macaulay_cols, exact_macaulay_square;
+        fmpz_init(exact_macaulay_degree);
+        fmpz_init(exact_macaulay_rows);
+        fmpz_init(exact_macaulay_cols);
+        fmpz_init(exact_macaulay_square);
+        macaulay_sizes_fmpz(exact_macaulay_degree, exact_macaulay_rows,
+                            exact_macaulay_cols, exact_macaulay_square,
+                            degrees, num_polys, num_elim);
+        fprintf(fp, "Macaulay degree: ");
+        fmpz_fprint(fp, exact_macaulay_degree);
+        fprintf(fp, "\nMacaulay matrix size upper bound: ");
+        fmpz_fprint(fp, exact_macaulay_rows);
+        fprintf(fp, " x ");
+        fmpz_fprint(fp, exact_macaulay_cols);
+        fprintf(fp, " (square <= ");
+        fmpz_fprint(fp, exact_macaulay_square);
+        fprintf(fp, ")\n");
+        fmpz_clear(exact_macaulay_degree);
+        fmpz_clear(exact_macaulay_rows);
+        fmpz_clear(exact_macaulay_cols);
+        fmpz_clear(exact_macaulay_square);
+    }
     fprintf(fp, "Macaulay resultant + HNF estimate (log2): %.6f\n",
             report->macaulay_log2);
     fprintf(fp, "Groebner degree of regularity estimate: %ld\n",
