@@ -2166,11 +2166,13 @@ static void dixon_complexity_write_report_body(
                 report->step1_best_method ? report->step1_best_method : "unknown",
                 report->step4_best_method ? report->step4_best_method : "unknown",
                 dixon_complexity_best_total_log2(report));
+        /*
         if (report->step4_rank_model_applicable) {
             fprintf(fp,
                     "Rank prediction Dixon complexity (heuristic, log2): %.6f\n",
                     report->rank_adjusted_overall_log2);
         }
+        */
         return;
     }
 
