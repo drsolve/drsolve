@@ -36,6 +36,7 @@ static void print_short_usage(const char *prog_name)
     printf("  %s \"polynomials\" field_size\n", prog_name);
     printf("  %s input_file -o output_file\n", prog_name);
     printf("FILE FORMAT:\n");
+    printf("  Optional comment: # options: --method 5 --fq-det-method iter\n");
     printf("  Dixon resultant elimination:\n");
     printf("    Line 1 : variables TO ELIMINATE (comma-separated)\n");
     printf("    Line 2 : field size (prime or p^k, 0 means rational)\n");
@@ -133,6 +134,7 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("\n");
 
     printf("FILE FORMAT (auto-detected for input_file):\n");
+    printf("  Optional comment line: # options: --method 5 --fq-det-method iter\n");
     printf("  Solver mode (line 1 starts with a digit):\n");
     printf("    Line 1 : field size\n");
     printf("    Line 2+: polynomials (one per line or comma-separated)\n");

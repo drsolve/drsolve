@@ -1648,6 +1648,84 @@ static void free_input_lines(char **lines, int line_count)
     free(lines);
 }
 
+typedef struct {
+    int method;
+    int method_seen;
+    int step1;
+    int step1_seen;
+    int step4;
+    int step4_seen;
+    fq_nmod_poly_det_method_t fq_det_method;
+    int fq_det_method_seen;
+} dr_file_options_t;
+
+/* Read optional settings without changing the historical .dr data format. */
+static int read_dr_file_options(const char *filename, dr_file_options_t *out)
+{
+    FILE *fp;
+    char *line;
+
+    memset(out, 0, sizeof(*out));
+    out->fq_det_method = FQ_NMOD_POLY_DET_METHOD_AUTO;
+    if (!filename) return 1;
+    fp = fopen(filename, "r");
+    if (!fp) return 0;
+
+    while ((line = read_entire_line(fp)) != NULL) {
+        char *p = trim(line);
+        if (strncmp(p, "# options:", 10) == 0) {
+            char *saveptr = NULL;
+            char *token = strtok_r(trim(p + 10), " \t", &saveptr);
+            while (token) {
+                char *value = NULL;
+                char *endptr = NULL;
+                long parsed;
+                if (strcmp(token, "--method") == 0 ||
+                    strcmp(token, "--step1") == 0 || strcmp(token, "--step4") == 0 ||
+                    strcmp(token, "--fq-det-method") == 0) {
+                    value = strtok_r(NULL, " \t", &saveptr);
+                    if (!value) {
+                        fprintf(stderr, "Error: %s in '# options:' requires a value.\n", token);
+                        free(line); fclose(fp); return 0;
+                    }
+                }
+                if (strcmp(token, "--method") == 0 || strcmp(token, "--step1") == 0 ||
+                    strcmp(token, "--step4") == 0) {
+                    parsed = strtol(value, &endptr, 10);
+                    if (*endptr != '\0' || parsed < 0 || parsed > 6) {
+                        fprintf(stderr, "Error: invalid %s value '%s' in '# options:'; expected 0-6.\n",
+                                token, value);
+                        free(line); fclose(fp); return 0;
+                    }
+                    if (strcmp(token, "--method") == 0) {
+                        out->method = (int) parsed; out->method_seen = 1;
+                    } else if (strcmp(token, "--step1") == 0) {
+                        out->step1 = (int) parsed; out->step1_seen = 1;
+                    } else {
+                        out->step4 = (int) parsed; out->step4_seen = 1;
+                    }
+                } else if (strcmp(token, "--fq-det-method") == 0) {
+                    if (strcmp(value, "auto") == 0) out->fq_det_method = FQ_NMOD_POLY_DET_METHOD_AUTO;
+                    else if (strcmp(value, "hnf") == 0) out->fq_det_method = FQ_NMOD_POLY_DET_METHOD_HNF;
+                    else if (strcmp(value, "iter") == 0) out->fq_det_method = FQ_NMOD_POLY_DET_METHOD_ITER;
+                    else {
+                        fprintf(stderr, "Error: invalid --fq-det-method value '%s' in '# options:'; expected auto, hnf, or iter.\n", value);
+                        free(line); fclose(fp); return 0;
+                    }
+                    out->fq_det_method_seen = 1;
+                } else {
+                    fprintf(stderr, "Error: unsupported option '%s' in '# options:'.\n", token);
+                    free(line); fclose(fp); return 0;
+                }
+                token = strtok_r(NULL, " \t", &saveptr);
+            }
+        }
+        free(line);
+    }
+    fclose(fp);
+    return 1;
+}
+
 static int collect_input_lines(FILE *fp, char ***lines_out, int *line_count_out)
 {
     char **lines = NULL;
@@ -3171,6 +3249,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     long *rand_comp_degrees = NULL;
     slong rand_comp_npolys = 0;
     slong rand_comp_nvars = 0;
+    dr_file_options_t file_options;
 
     /* ---- determine input mode ---- */
     if (rand_mode) {
@@ -3413,6 +3492,40 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         } else {
             if (!silent_mode) drsolve_cli_print_usage(prog_name);
             return 1;
+        }
+    }
+
+    /* File-local computation options are defaults; explicit CLI options win. */
+    if (input_filename && !read_dr_file_options(input_filename, &file_options)) {
+        goto cleanup_fail;
+    }
+    if (input_filename) {
+        if (file_options.method_seen && !determinant_method_explicit &&
+            !resultant_method_explicit) {
+            determinant_method_explicit = 1;
+            if (file_options.method == 5) {
+                resultant_method = RESULTANT_METHOD_DIXON_RECURSIVE;
+                resultant_method_explicit = 1;
+                det_method_step1 = -1;
+                det_method_step4 = -1;
+            } else {
+                det_method_step1 = file_options.method;
+                det_method_step4 = file_options.method;
+            }
+        }
+        if (file_options.step1_seen && !determinant_method_explicit &&
+            !resultant_method_explicit) {
+            det_method_step1 = file_options.step1;
+            determinant_method_explicit = 1;
+        }
+        if (file_options.step4_seen && !determinant_method_explicit &&
+            !resultant_method_explicit) {
+            det_method_step4 = file_options.step4;
+            determinant_method_explicit = 1;
+        }
+        if (file_options.fq_det_method_seen && !fq_det_method_explicit) {
+            fq_det_method = file_options.fq_det_method;
+            fq_det_method_explicit = 1;
         }
     }
 
