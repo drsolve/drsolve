@@ -40,8 +40,12 @@ make check                         # optional
 make install                       # optional
 ```
 For more options, run `./configure --help` or `make help`.
-We also provide a Windows GUI at [drsolve-cross](https://github.com/drsolve/drsolve-cross).
-
+We also provide a Windows GUI, which can be built with CMake.
+```bash
+cmake -B build-win \
+      -DCMAKE_TOOLCHAIN_FILE="$(pwd)/cmake/toolchain-mingw64.cmake"
+cmake --build build-win -j$(nproc)
+```
 ---
 
 ## Usage
