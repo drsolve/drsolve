@@ -22,7 +22,6 @@ nppBackup/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
-dixon
 drsolve
 *.mk
 
