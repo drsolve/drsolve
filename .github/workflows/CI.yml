@@ -7,13 +7,14 @@ on:
       - main
 
 jobs:
+
   # ──────────────────────────────────────────────────────────────
-  # Linux: static build + test + artifact
+  # Linux: build FLINT + PML from source → static binary + test
   # ──────────────────────────────────────────────────────────────
-  build-linux-static:
+  build-linux:
     runs-on: ubuntu-22.04
     env:
-      INSTALL_PREFIX: ${{ github.workspace }}/deps-static
+      INSTALL_PREFIX: ${{ github.workspace }}/deps
 
     steps:
       - uses: actions/checkout@v4
@@ -24,25 +25,25 @@ jobs:
           sudo apt-get install -y \
             libgmp-dev libmpfr-dev \
             autoconf automake libtool pkg-config \
-            make gcc g++ binutils
+            make gcc g++ binutils cmake
 
       - name: Set build environment
         run: |
-          echo "INSTALL_PREFIX=$INSTALL_PREFIX"               >> $GITHUB_ENV
-          echo "C_INCLUDE_PATH=$INSTALL_PREFIX/include"       >> $GITHUB_ENV
-          echo "LIBRARY_PATH=$INSTALL_PREFIX/lib"             >> $GITHUB_ENV
+          echo "INSTALL_PREFIX=$INSTALL_PREFIX"                >> $GITHUB_ENV
+          echo "C_INCLUDE_PATH=$INSTALL_PREFIX/include"        >> $GITHUB_ENV
+          echo "LIBRARY_PATH=$INSTALL_PREFIX/lib"              >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=$INSTALL_PREFIX/lib/pkgconfig" >> $GITHUB_ENV
           mkdir -p "$INSTALL_PREFIX"
 
       - name: Restore FLINT static install cache
-        id: flint-cache
+        id: linux-flint-cache
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.INSTALL_PREFIX }}
           key: linux-flint-3.6-static-${{ runner.arch }}-v1
 
-      - name: Build FLINT (static) - version 3.6.0
-        if: steps.flint-cache.outputs.cache-hit != 'true'
+      - name: Build FLINT 3.6.0 (static)
+        if: steps.linux-flint-cache.outputs.cache-hit != 'true'
         run: |
           git clone --depth=1 --branch flint-3.6 https://github.com/flintlib/flint.git
           cd flint
@@ -55,34 +56,32 @@ jobs:
           make install
 
       - name: Save FLINT static install cache
-        if: steps.flint-cache.outputs.cache-hit != 'true'
+        if: steps.linux-flint-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.INSTALL_PREFIX }}
           key: linux-flint-3.6-static-${{ runner.arch }}-v1
-
-      # Linux GNU ld: --allow-multiple-definition handles FLINT/PML
-      # duplicate symbols at link time; no archive pre-processing needed.
-
-      - name: Configure project (static)
+          
+      - name: Configure (CMake, static)
         run: |
-          ./configure \
-            --enable-static \
-            --flint-include="$INSTALL_PREFIX/include" \
-            --flint-lib="$INSTALL_PREFIX/lib"
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDRSOLVE_STATIC=ON \
+            -DFLINT_ROOT="$INSTALL_PREFIX" \
+            -DPML_ROOT="$INSTALL_PREFIX"
 
       - name: Build
-        run: make -j$(nproc)
+        run: cmake --build build -j$(nproc)
 
       - name: Run tests
-        run: make check
+        run: ctest --test-dir build --output-on-failure
 
       - name: Verify static linkage
         run: |
-          echo "=== ldd drsolve ==="
-          ldd ./drsolve || true
-          if ldd ./drsolve 2>/dev/null | grep -E 'libflint|libpml'; then
-            echo "ERROR: binary is dynamically linked against FLINT or PML"
+          echo "=== ldd build/drsolve ==="
+          ldd ./build/drsolve || true
+          if ldd ./build/drsolve 2>/dev/null | grep -E 'libflint|libpml'; then
+            echo "ERROR: binary dynamically linked against FLINT or PML"
             exit 1
           fi
           echo "OK: FLINT and PML are statically linked"
@@ -91,12 +90,13 @@ jobs:
         run: |
           ARCH=$(uname -m)
           TAG="${{ github.ref_name }}"
-          strip ./drsolve
+          strip ./build/drsolve
           ARTIFACT_NAME="drsolve-${TAG}-linux-${ARCH}"
           mkdir -p dist
-          cp ./drsolve "dist/${ARTIFACT_NAME}"
+          cp ./build/drsolve "dist/drsolve"
+          cp ./drsolve_sage_interface.sage "dist/"
           cat > dist/build-info-linux.txt <<EOF
-          Binary   : ${ARTIFACT_NAME}
+          Binary   : drsolve
           Built on : $(date -u +"%Y-%m-%d %H:%M UTC")
           OS       : $(lsb_release -ds 2>/dev/null || uname -sr)
           Arch     : ${ARCH}
@@ -108,7 +108,7 @@ jobs:
           cat dist/build-info-linux.txt
           echo "ARTIFACT_NAME=${ARTIFACT_NAME}" >> $GITHUB_ENV
 
-      - name: Upload binary artifact
+      - name: Upload CI artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
@@ -119,19 +119,21 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/${{ env.ARTIFACT_NAME }}
-          body_path: dist/build-info-linux.txt
+          files: |
+            dist/drsolve
+            dist/drsolve_sage_interface.sage
+            dist/build-info-linux.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 
   # ──────────────────────────────────────────────────────────────
-  # macOS: static build + test + artifact
+  # macOS: build FLINT + PML from source → static binary + test
   # ──────────────────────────────────────────────────────────────
-  build-macos-static:
+  build-macos:
     runs-on: macos-latest
     env:
-      INSTALL_PREFIX: ${{ github.workspace }}/deps-static
+      INSTALL_PREFIX: ${{ github.workspace }}/deps
 
     steps:
       - uses: actions/checkout@v4
@@ -139,15 +141,15 @@ jobs:
       - name: Install build tools
         run: |
           brew update
-          brew install gmp mpfr autoconf automake libtool pkg-config binutils
+          brew install gmp mpfr autoconf automake libtool pkg-config cmake binutils
 
       - name: Set build environment
         run: |
           BREW=$(brew --prefix)
-          echo "INSTALL_PREFIX=$INSTALL_PREFIX"                                      >> $GITHUB_ENV
-          echo "CPATH=$INSTALL_PREFIX/include:$BREW/include"                         >> $GITHUB_ENV
-          echo "LIBRARY_PATH=$INSTALL_PREFIX/lib:$BREW/lib"                          >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=$INSTALL_PREFIX/lib/pkgconfig:$BREW/lib/pkgconfig"   >> $GITHUB_ENV
+          echo "INSTALL_PREFIX=$INSTALL_PREFIX"                                       >> $GITHUB_ENV
+          echo "CPATH=$INSTALL_PREFIX/include:$BREW/include"                          >> $GITHUB_ENV
+          echo "LIBRARY_PATH=$INSTALL_PREFIX/lib:$BREW/lib"                           >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$INSTALL_PREFIX/lib/pkgconfig:$BREW/lib/pkgconfig"    >> $GITHUB_ENV
           mkdir -p "$INSTALL_PREFIX"
 
       - name: Restore FLINT static install cache
@@ -157,15 +159,12 @@ jobs:
           path: ${{ env.INSTALL_PREFIX }}
           key: macos-flint-3.6-static-renamed-${{ runner.arch }}-v1
 
-      - name: Build FLINT (static) - version 3.6.0
+      - name: Build FLINT 3.6.0 (static)
         if: steps.flint-cache.outputs.cache-hit != 'true'
         run: |
           BREW=$(brew --prefix)
           git clone --depth=1 --branch flint-3.6 https://github.com/flintlib/flint.git
           cd flint
-          # Rename the few FLINT symbols that conflict with bundled PML on macOS.
-          # This keeps FLINT internally consistent while avoiding duplicate symbols
-          # at final link time.
           find . -type f \( -name '*.c' -o -name '*.h' \) -print0 | xargs -0 perl -pi -e '
             s/\bnmod_mat_left_nullspace\b/flint_nmod_mat_left_nullspace/g;
             s/\bnmod_mat_nullspace\b/flint_nmod_mat_nullspace/g;
@@ -192,7 +191,6 @@ jobs:
 
       - name: Verify renamed FLINT symbols
         run: |
-          set -eu
           FLINT_A="$INSTALL_PREFIX/lib/libflint.a"
           for sym in \
             _nmod_mat_left_nullspace \
@@ -209,34 +207,27 @@ jobs:
           done
           echo "Success: FLINT no longer exports the original conflicting symbols."
 
-      - name: Configure project (static)
+      - name: Configure (CMake, static)
         run: |
-          export LDFLAGS="-L$INSTALL_PREFIX/lib -Wl,-no_compact_unwind"
-          ./configure \
-            --enable-static \
-            --flint-include="$INSTALL_PREFIX/include" \
-            --flint-lib="$INSTALL_PREFIX/lib"
-
-      - name: Adjust macOS static link settings
-        run: |
-          perl -0pi -e 's/^LTO_CFLAGS = .*$/LTO_CFLAGS = /m; s/^LTO_LDFLAGS = .*$/LTO_LDFLAGS = /m; s#^FLINT_STATIC_LIBS = .*$#FLINT_STATIC_LIBS = '"$INSTALL_PREFIX"'/lib/libflint.a#m; s#^FLINT_FLAGS = .*$#FLINT_FLAGS = -DHAVE_FLINT -Dnmod_mat_nullspace=flint_nmod_mat_nullspace -Dfmpz_mat_nullspace=flint_fmpz_mat_nullspace -Dfmpz_mat_rank=flint_fmpz_mat_rank -Dfmpz_mat_solve=flint_fmpz_mat_solve#m' config.mk
-          echo "=== config.mk overrides ==="
-          grep -E '^(LTO_CFLAGS|LTO_LDFLAGS|FLINT_STATIC_LIBS|FLINT_FLAGS) =' config.mk
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDRSOLVE_STATIC=ON \
+            -DCMAKE_C_FLAGS="-Dnmod_mat_nullspace=flint_nmod_mat_nullspace -Dfmpz_mat_nullspace=flint_fmpz_mat_nullspace -Dfmpz_mat_rank=flint_fmpz_mat_rank -Dfmpz_mat_solve=flint_fmpz_mat_solve" \
+            -DFLINT_ROOT="$INSTALL_PREFIX" \
+            -DPML_ROOT="$INSTALL_PREFIX"
 
       - name: Build
-        run: |
-          export LDFLAGS="-L$INSTALL_PREFIX/lib -Wl,-no_compact_unwind"
-          make static-all -j$(sysctl -n hw.ncpu)
+        run: cmake --build build -j$(sysctl -n hw.ncpu)
 
       - name: Run tests
-        run: make check
+        run: ctest --test-dir build --output-on-failure
 
       - name: Verify static linkage
         run: |
-          echo "=== otool -L drsolve ==="
-          otool -L ./drsolve
-          if otool -L ./drsolve | grep -E 'libflint|libpml'; then
-            echo "ERROR: binary is dynamically linked against FLINT or PML"
+          echo "=== otool -L build/drsolve ==="
+          otool -L ./build/drsolve
+          if otool -L ./build/drsolve | grep -E 'libflint|libpml'; then
+            echo "ERROR: binary dynamically linked against FLINT or PML"
             exit 1
           fi
           echo "OK: FLINT and PML are statically linked"
@@ -246,12 +237,13 @@ jobs:
           MACOS_VER=$(sw_vers -productVersion | cut -d. -f1-2)
           ARCH=$(uname -m)
           TAG="${{ github.ref_name }}"
-          strip ./drsolve
+          strip ./build/drsolve
           ARTIFACT_NAME="drsolve-${TAG}-macos${MACOS_VER}-${ARCH}"
           mkdir -p dist
-          cp ./drsolve "dist/${ARTIFACT_NAME}"
+          cp ./build/drsolve "dist/drsolve"
+          cp ./drsolve_sage_interface.sage "dist/"
           cat > dist/build-info-macos.txt <<EOF
-          Binary   : ${ARTIFACT_NAME}
+          Binary   : drsolve
           Built on : $(date -u +"%Y-%m-%d %H:%M UTC")
           macOS    : $(sw_vers -productVersion)
           Arch     : ${ARCH}
@@ -263,7 +255,7 @@ jobs:
           cat dist/build-info-macos.txt
           echo "ARTIFACT_NAME=${ARTIFACT_NAME}" >> $GITHUB_ENV
 
-      - name: Upload binary artifact
+      - name: Upload CI artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
@@ -274,7 +266,60 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/${{ env.ARTIFACT_NAME }}
-          body_path: dist/build-info-macos.txt
+          files: |
+            dist/drsolve
+            dist/drsolve_sage_interface.sage
+            dist/build-info-macos.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+  # ──────────────────────────────────────────────────────────────
+  # Windows: cross-compile from Linux via MinGW-w64
+  # Downloads MSYS2 dependencies into the build directory; does not use
+  # repository-local mingw/ headers.
+  # No binary upload (Windows installer handled separately)
+  # ──────────────────────────────────────────────────────────────
+  build-windows:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MinGW-w64 cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-mingw-w64-x86-64 \
+            g++-mingw-w64-x86-64 \
+            cmake make
+
+      - name: Configure (CMake, MinGW cross-compile)
+        run: |
+          cmake -B build-win \
+            -DCMAKE_TOOLCHAIN_FILE="$(pwd)/cmake/toolchain-mingw64.cmake" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDRSOLVE_USE_BUNDLED_DEPS=OFF
+
+      - name: Build
+        run: cmake --build build-win -j$(nproc)
+
+      - name: Verify executables exist
+        run: |
+          echo "=== build-win layout ==="
+          find build-win -name "*.exe" -o -name "*.dll" | sort
+          test -f build-win/drsolve.exe            || test -f build-win/bin/drsolve_cli_real.exe
+          echo "OK: Windows build succeeded"
+
+      - name: Upload Windows build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: drsolve-windows-x86_64
+          path: |
+            build-win/drsolve.exe
+            build-win/drsolve_win_gui.exe
+            build-win/bin/drsolve_cli_real.exe
+            build-win/dll/
+            build-win/lib/libdrsolve-1.a
+            build-win/lib/libdrsolve-1.dll.a
+          retention-days: 30
