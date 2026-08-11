@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* gf2n_field.h - GF(2^n) field operations with native PCLMUL support */
 #ifndef GF2N_FIELD_H
 #define GF2N_FIELD_H

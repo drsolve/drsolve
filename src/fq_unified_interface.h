@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* fq_unified_interface.h - Unified field operations header with Zech logarithm support */
 #ifndef FQ_UNIFIED_INTERFACE_H
 #define FQ_UNIFIED_INTERFACE_H

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* gf2n_mpoly.h - Unified GF(2^n) Multivariate Polynomial Header */
 #ifndef GF2N_MPOLY_H
 #define GF2N_MPOLY_H

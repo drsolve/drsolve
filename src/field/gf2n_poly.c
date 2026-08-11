@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* gf2n_poly.c - Implementation of polynomial operations over GF(2^n) fields */
 #include "gf2n_poly.h"
 

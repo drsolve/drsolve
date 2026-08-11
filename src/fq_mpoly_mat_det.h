@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Optimized polynomial matrix determinant computation for small matrices
  * Supports multiple algorithms including recursive, interpolation, and Kronecker+HNF

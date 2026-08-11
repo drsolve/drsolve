@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef DIXON_FLINT_H
 #define DIXON_FLINT_H
 

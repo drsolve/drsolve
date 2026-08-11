@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "resultant_with_ideal_reduction.h"
 
 // Bivariate resultant with ideal reduction - completely rewritten

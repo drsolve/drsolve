@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef RATIONAL_SYSTEM_SOLVER_H
 #define RATIONAL_SYSTEM_SOLVER_H
 #ifndef _GNU_SOURCE

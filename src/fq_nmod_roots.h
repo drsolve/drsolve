@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef FQ_NMOD_ROOTS_H
 #define FQ_NMOD_ROOTS_H
 

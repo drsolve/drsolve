@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* unified_mpoly_interface.h - Complete single-file implementation with Zech logarithm support */
 
 /*

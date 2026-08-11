@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef LARGE_PRIME_SYSTEM_SOLVER_H
 #define LARGE_PRIME_SYSTEM_SOLVER_H
 

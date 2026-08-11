@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef DRSOLVE_CLI_H
 #define DRSOLVE_CLI_H
 #include <stdio.h>

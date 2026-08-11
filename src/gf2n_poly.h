@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* gf2n_poly.h - Polynomial operations over GF(2^n) fields */
 #ifndef GF2N_POLY_H
 #define GF2N_POLY_H

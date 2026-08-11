@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "large_prime_system_solver.h"
 
 typedef struct {

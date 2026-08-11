@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 // Complete fixed Dixon resultant string interface header
 #ifndef DIXON_INTERFACE_FLINT_H
 #define DIXON_INTERFACE_FLINT_H

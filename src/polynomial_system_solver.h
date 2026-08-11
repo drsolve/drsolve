@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef POLYNOMIAL_SYSTEM_SOLVER_H
 #define POLYNOMIAL_SYSTEM_SOLVER_H
 

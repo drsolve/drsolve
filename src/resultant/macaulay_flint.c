@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * macaulay_flint.c - Macaulay resultant construction for finite extension fields
  */

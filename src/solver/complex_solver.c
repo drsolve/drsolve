@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "complex_solver.h"
 
 static int complex_solver_roots_reserve(complex_solver_roots_t *roots, slong need)

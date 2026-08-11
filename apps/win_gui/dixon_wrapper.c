@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "dixon_wrapper.h"
 
 #include <windows.h>

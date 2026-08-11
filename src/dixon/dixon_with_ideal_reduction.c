@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "dixon_with_ideal_reduction.h"
 
 /* Find variable index by name in the current context */

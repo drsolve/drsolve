@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef DIXON_TEST_H
 #define DIXON_TEST_H
 

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* unified_mpoly_det.h - Unified polynomial matrix determinant computation */
 
 #ifndef UNIFIED_MPOLY_DET_H

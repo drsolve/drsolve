@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef COMPLEX_SOLVER_H
 #define COMPLEX_SOLVER_H
 

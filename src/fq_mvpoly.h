@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef FQ_MVPOLY_H
 #define FQ_MVPOLY_H
 

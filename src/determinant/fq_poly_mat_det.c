@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* fq_poly_mat_det.c - Fixed Matrix determinant implementation */
 
 #include "fq_poly_mat_det.h"

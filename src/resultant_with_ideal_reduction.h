@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef RESULTANT_WITH_IDEAL_REDUCTION_H
 #define RESULTANT_WITH_IDEAL_REDUCTION_H
 

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 // dixon_test.c
 
 #include "dixon_test.h"

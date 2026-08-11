@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* gf2n_field.c - Implementation of GF(2^n) field operations */
 #include "gf2n_field.h"
 

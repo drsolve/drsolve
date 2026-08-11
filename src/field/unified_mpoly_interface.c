@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* unified_mpoly_interface.c - Implementation of unified multivariate polynomial interface */
 
 #include "unified_mpoly_interface.h"

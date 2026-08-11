@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "polynomial_system_solver.h"
 
 static int solver_realtime_progress_enabled = 0;

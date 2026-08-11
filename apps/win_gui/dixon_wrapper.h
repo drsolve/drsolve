@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef DIXON_WIN_GUI_WRAPPER_H
 #define DIXON_WIN_GUI_WRAPPER_H
 

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef MACAULAY_FLINT_H
 #define MACAULAY_FLINT_H
 

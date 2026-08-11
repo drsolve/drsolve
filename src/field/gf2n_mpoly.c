@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* gf2n_mpoly.c - Unified GF(2^n) Multivariate Polynomial Implementation
  * Up to ~9+ variables with 8-bit exponent packing under LEX ordering
  */

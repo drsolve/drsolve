@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 // dixon_complexity.c - Modified to use Hessenberg method
 
 #include "dixon_complexity.h"

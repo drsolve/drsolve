@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* unified_mpoly_det.c - Implementation of unified polynomial matrix determinant computation */
 
 #include "unified_mpoly_det.h"

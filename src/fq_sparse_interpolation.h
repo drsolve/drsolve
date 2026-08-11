@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef FQ_SPARSE_INTERPOLATION_H
 #define FQ_SPARSE_INTERPOLATION_H
 

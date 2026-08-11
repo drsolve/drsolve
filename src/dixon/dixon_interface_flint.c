@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 // Complete fixed Dixon resultant string interface implementation
 #include "dixon_interface_flint.h"
 #include <stdint.h>

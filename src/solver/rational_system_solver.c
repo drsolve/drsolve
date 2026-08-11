@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "rational_system_solver.h"
 
 static int rational_solver_realtime_progress_enabled = 0;

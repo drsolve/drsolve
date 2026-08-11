@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* fq_unified_interface.c - Unified field operations implementation */
 
 #include "fq_unified_interface.h"

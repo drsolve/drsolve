@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /**
  * fq_multivariate_interpolation.h - Header file for multivariate polynomial interpolation
  * 

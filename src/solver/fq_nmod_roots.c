@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "fq_nmod_roots.h"
 
 // nmod_roots structure management

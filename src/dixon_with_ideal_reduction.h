@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef DIXON_WITH_IDEAL_REDUCTION_H
 #define DIXON_WITH_IDEAL_REDUCTION_H
 

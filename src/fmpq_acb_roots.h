@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef FMPQ_ACB_ROOTS_H
 #define FMPQ_ACB_ROOTS_H
 

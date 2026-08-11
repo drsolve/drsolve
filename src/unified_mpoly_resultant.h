@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* unified_mpoly_resultant.h - Resultant computation using generic ring interface with Zech support */
 
 #ifndef UNIFIED_MPOLY_RESULTANT_H

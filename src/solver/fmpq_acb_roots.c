@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "fmpq_acb_roots.h"
 
 extern int g_dixon_verbose_level;
