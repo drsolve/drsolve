@@ -58,6 +58,8 @@ LDFLAGS = $(LTO_LDFLAGS) $(OPENMP_LDFLAGS) $(ASAN_LDFLAGS)
 SRC_DIR = src
 APPS_DIR = apps
 BUILD_DIR = build
+VERSION_FILE = VERSION
+DRSOLVE_VERSION = $(shell sed -n '1p' $(VERSION_FILE))
 
 # ============================================================
 # Bundled PML determinant subset (force use of pml_det over any system PML)
@@ -132,7 +134,7 @@ INSTALL_DIR     ?= $(INSTALL) -d -m 755
 # ============================================================
 # Combined CFLAGS
 # ============================================================
-ALL_CFLAGS = $(CFLAGS) $(INCLUDE_FLAGS) $(FLINT_FLAGS) $(PML_FLAGS) -I$(SRC_DIR) -I$(APPS_DIR)
+ALL_CFLAGS = $(CFLAGS) $(INCLUDE_FLAGS) $(FLINT_FLAGS) $(PML_FLAGS) -I$(SRC_DIR) -I$(APPS_DIR) -DPROGRAM_VERSION=\"$(DRSOLVE_VERSION)\"
 
 # ============================================================
 # External library sets

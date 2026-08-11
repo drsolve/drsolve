@@ -7,7 +7,9 @@
 
 #include "drsolve_cli.h"
 
-#define PROGRAM_VERSION "0.5.0-dev"
+#ifndef PROGRAM_VERSION
+#define PROGRAM_VERSION "unknown"
+#endif
 #define DEFAULT_OUTPUT_DIR "out"
 
 /* =========================================================================
@@ -59,8 +61,8 @@ static void print_short_usage(const char *prog_name)
     printf("    %s -c \"x^2+y^2+1, x*y+z, x+y+z^2\" \"x,y\" 257\n", prog_name);
     printf("    %s -c -r \"[10]*10\" 257\n", prog_name);
     printf("  File input:\n");
-    printf("    %s example.dr\n", prog_name);
-    printf("    %s example_solve.dr -o solution.dr\n", prog_name);
+    printf("    %s examples/example.dr\n", prog_name);
+    printf("    %s examples/example_solve.dr -o solution.dr\n", prog_name);
     printf("OTHER OPTIONS:\n");
     printf("  --method <n>      Determinant method selection (0:Expansion, 1:HNF, 2:Interpolation, 3:Sparse, 4:Bareiss, 5:Fdixon)\n");
     printf("  --step1, --step4  Override method <n> for specific algorithm steps\n");

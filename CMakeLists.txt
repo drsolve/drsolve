@@ -1,7 +1,15 @@
 cmake_minimum_required(VERSION 3.16)
 
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" DRSOLVE_VERSION
+  LIMIT_COUNT 1)
+string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" DRSOLVE_PROJECT_VERSION
+  "${DRSOLVE_VERSION}")
+if(NOT DRSOLVE_PROJECT_VERSION)
+  message(FATAL_ERROR "VERSION must start with MAJOR.MINOR.PATCH")
+endif()
+
 project(drsolve
-  VERSION 0.4.5
+  VERSION ${DRSOLVE_PROJECT_VERSION}
   DESCRIPTION "DRsolve: Dixon Resultant & Polynomial System Solver"
   LANGUAGES C
 )
@@ -703,6 +711,9 @@ add_executable(drsolve_exe
 )
 drsolve_target_common(drsolve_exe)
 target_include_directories(drsolve_exe PRIVATE ${CMAKE_SOURCE_DIR}/apps)
+target_compile_definitions(drsolve_exe PRIVATE
+  PROGRAM_VERSION="${DRSOLVE_VERSION}"
+)
 
 if(DRSOLVE_WINDOWS)
   set_target_properties(drsolve_exe PROPERTIES
