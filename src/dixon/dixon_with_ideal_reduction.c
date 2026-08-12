@@ -2325,7 +2325,8 @@ char* dixon_with_ideal_reduction(const char **poly_strings, slong num_polys,
     slong *col_indices = (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
     slong matrix_size = 0;
     
-    extract_fq_coefficient_matrix_from_dixon(&coeff_matrix, row_indices, col_indices,
+    extract_fq_coefficient_matrix_from_dixon(&coeff_matrix, NULL,
+                                            row_indices, col_indices,
                                             &matrix_size, NULL, &d_poly, num_elim_vars, state.npars,
                                             state.var_names, state.par_names,
                                             state.generator_name, NULL, 0);

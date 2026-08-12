@@ -2487,6 +2487,43 @@ static FILE *save_result_to_file(const char *filename,
     return out_fp;
 }
 
+static void insert_random_seed_before_polynomials(const char *filename, ulong seed)
+{
+    FILE *fp = NULL;
+    char *text = NULL;
+    char *marker = NULL;
+    long size;
+    size_t prefix_len;
+    char seed_line[64];
+
+    if (!filename) return;
+    fp = fopen(filename, "rb");
+    if (!fp) return;
+    if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); return; }
+    size = ftell(fp);
+    if (size < 0 || fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); return; }
+    text = (char *) malloc((size_t) size + 1);
+    if (!text || fread(text, 1, (size_t) size, fp) != (size_t) size) {
+        free(text); fclose(fp); return;
+    }
+    text[size] = '\0';
+    fclose(fp);
+
+    marker = strstr(text, "Polynomials:");
+    if (!marker) { free(text); return; }
+    prefix_len = (size_t) (marker - text);
+    snprintf(seed_line, sizeof(seed_line), "Random seed: %lu\n", seed);
+
+    fp = fopen(filename, "wb");
+    if (fp) {
+        fwrite(text, 1, prefix_len, fp);
+        fputs(seed_line, fp);
+        fwrite(text + prefix_len, 1, (size_t) size - prefix_len, fp);
+        fclose(fp);
+    }
+    free(text);
+}
+
 static int count_comma_separated_items(const char *str)
 {
     if (!str || strlen(str) == 0) return 0;
@@ -3268,6 +3305,12 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
 
         output_filename = choose_output_filename(cli_output_filename, NULL,
                                                  comp_mode ? "comp" : "solution", NULL);
+
+        /* Complexity analysis does not generate a random system. */
+        if (!comp_mode && !random_seed_given) {
+            random_seed = (ulong) (time(NULL) ^ clock());
+            random_seed_given = 1;
+        }
     /*  --ideal mode */
     } else if (ideal_mode) {
         if (file_input_arg && positional_count > 0) {
@@ -4384,6 +4427,11 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         } else {
             printf("Time: %.3f seconds\n", wall_time);
         }
+    }
+
+    /* Keep the seed used to generate random input next to its polynomial data. */
+    if (rand_mode && !comp_mode && random_seed_given && output_filename) {
+        insert_random_seed_before_polynomials(output_filename, random_seed);
     }
 
     /* ---- cleanup ---- */

@@ -363,6 +363,22 @@ static ulong dixonres_nmod_poly_mat_eval_det_at(const nmod_poly_mat_t mat, ulong
     return det_eval;
 }
 
+static int dixonres_nmod_poly_mat_is_sparse(const nmod_poly_mat_t mat) {
+    slong nonzero = 0;
+    const slong total = mat->r * mat->c;
+
+    if (total == 0)
+        return 0;
+
+    for (slong i = 0; i < mat->r; i++)
+        for (slong j = 0; j < mat->c; j++)
+            if (!nmod_poly_is_zero(nmod_poly_mat_entry(mat, i, j)))
+                nonzero++;
+
+    /* Auto-select the iterative path at <= 8% nonzero polynomial entries. */
+    return nonzero * 100 <= total * 8;
+}
+
 static int dixonres_nmod_poly_mat_det_hnf_exact(nmod_poly_t det,
                                                 const nmod_poly_mat_t mat) {
     if (!nmod_poly_mat_det_hnf(det, mat))
@@ -610,10 +626,6 @@ void fq_nmod_poly_mat_det_iter(fq_nmod_poly_t det,
         }
 
         /* Convert to nmod_poly_mat and use the optimized prime field version */
-        if (g_dixon_debug_mode) {
-            printf("  Using auto prime-field determinant: HNF with iterative fallback\n");
-        }
-
         nmod_poly_mat_t nmod_mat;
         nmod_poly_t nmod_det;
         
@@ -622,22 +634,27 @@ void fq_nmod_poly_mat_det_iter(fq_nmod_poly_t det,
         nmod_poly_init(nmod_det, p);
         
         fq_nmod_poly_mat_convert_to_nmod(nmod_mat, mat, ctx);
-        
-        /* Call the optimized nmod version */
-        clock_t nmod_start = clock();
-        if (!dixonres_nmod_poly_mat_det_hnf_exact(nmod_det, nmod_mat)) {
+
+        if (dixonres_nmod_poly_mat_is_sparse(nmod_mat)) {
+            if (g_dixon_debug_mode) {
+                printf("  Using auto prime-field determinant: iterative (entry density <= 8%%)\n");
+            }
             nmod_poly_mat_det_iter(nmod_det, nmod_mat);
+        } else {
+            if (g_dixon_debug_mode) {
+                printf("  Using auto prime-field determinant: HNF with iterative fallback\n");
+            }
+
+            if (!dixonres_nmod_poly_mat_det_hnf_exact(nmod_det, nmod_mat)) {
+                nmod_poly_mat_det_iter(nmod_det, nmod_mat);
+            }
         }
-        clock_t nmod_end = clock();
         
         fq_nmod_poly_convert_from_nmod(det, nmod_det, ctx);
         
         /* Cleanup */
         nmod_poly_mat_clear(nmod_mat);
         nmod_poly_clear(nmod_det);
-        
-        double nmod_time = ((double)(nmod_end - nmod_start)) / CLOCKS_PER_SEC;
-        (void) nmod_time;
         
         return;
     }

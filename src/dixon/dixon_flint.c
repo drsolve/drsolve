@@ -4113,6 +4113,7 @@ fail:
 }
 
 void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
+                                              fq_nmod_poly_mat_t *poly_matrix_out,
                                               slong *row_indices, slong *col_indices,
                                               slong *matrix_size,
                                               slong *extracted_x_power,
@@ -4574,6 +4575,69 @@ coefficient_matrix_selected: ;
 
     clock_t copy_cpu_start = clock();
     double copy_wall_start = get_wall_time();
+
+    /* The selected minor is copied into a second dense array below.  Release
+       every unselected row before allocating that array; otherwise the full
+       Dixon matrix and the (potentially multi-GB) coefficient matrix coexist
+       at the peak.  Selected rows are released one-by-one after their
+       selected polynomial objects have been moved below. */
+    if (full_matrix && submat_rank > 0) {
+        unsigned char *row_keep = (unsigned char *) flint_calloc((size_t) nx_monoms, 1);
+        if (row_keep) {
+            for (slong i = 0; i < submat_rank; i++) {
+                if (row_idx_array[i] >= 0 && row_idx_array[i] < nx_monoms)
+                    row_keep[row_idx_array[i]] = 1;
+            }
+            for (slong i = 0; i < nx_monoms; i++) {
+                if (!full_matrix[i] || row_keep[i]) continue;
+                for (slong j = 0; j < ndual_monoms; j++) {
+                    if (full_matrix[i][j]) {
+                        fq_mvpoly_clear(full_matrix[i][j]);
+                        flint_free(full_matrix[i][j]);
+                        full_matrix[i][j] = NULL;
+                    }
+                }
+                flint_free(full_matrix[i]);
+                full_matrix[i] = NULL;
+            }
+        }
+        if (row_keep) flint_free(row_keep);
+    }
+
+    if (poly_matrix_out != NULL && npars == 1) {
+        fq_nmod_poly_mat_init(*poly_matrix_out, submat_rank, submat_rank,
+                              dixon_poly->ctx);
+        for (slong i = 0; i < submat_rank; i++) {
+            slong src_row = row_idx_array[i];
+            for (slong j = 0; j < submat_rank; j++) {
+                fq_mvpoly_t *source = full_matrix[src_row][col_idx_array[j]];
+                if (source != NULL) {
+                    fq_nmod_poly_struct *dst = fq_nmod_poly_mat_entry(
+                        *poly_matrix_out, i, j);
+                    for (slong t = 0; t < source->nterms; t++) {
+                        slong degree = source->terms[t].par_exp
+                            ? source->terms[t].par_exp[0] : 0;
+                        fq_nmod_poly_set_coeff(dst, degree,
+                                               source->terms[t].coeff,
+                                               dixon_poly->ctx);
+                    }
+                }
+            }
+            /* Conversion is complete for this source row; release its
+               multivariate entries before processing the next row. */
+            if (full_matrix[src_row] != NULL) {
+                for (slong j = 0; j < ndual_monoms; j++) {
+                    if (full_matrix[src_row][j] != NULL) {
+                        fq_mvpoly_clear(full_matrix[src_row][j]);
+                        flint_free(full_matrix[src_row][j]);
+                    }
+                }
+                flint_free(full_matrix[src_row]);
+                full_matrix[src_row] = NULL;
+            }
+        }
+        *coeff_matrix = NULL;
+    } else {
     *coeff_matrix = (fq_mvpoly_t**) flint_malloc(submat_rank * sizeof(fq_mvpoly_t*));
     for (slong i = 0; i < submat_rank; i++) {
         slong src_row = row_idx_array[i];
@@ -4589,6 +4653,16 @@ coefficient_matrix_selected: ;
                 fq_mvpoly_init(&(*coeff_matrix)[i][j], 0, npars, dixon_poly->ctx);
             }
         }
+        /* All selected entries in this source row have been moved. */
+        for (slong j = 0; j < ndual_monoms; j++) {
+            if (full_matrix[src_row][j]) {
+                fq_mvpoly_clear(full_matrix[src_row][j]);
+                flint_free(full_matrix[src_row][j]);
+            }
+        }
+        flint_free(full_matrix[src_row]);
+        full_matrix[src_row] = NULL;
+    }
     }
     dixon_maybe_print_step_detail_time("Step 3 submatrix copy",
                                        copy_cpu_start,
@@ -4605,11 +4679,12 @@ coefficient_matrix_selected: ;
         }
     }
     *matrix_size = submat_rank;
-    dixon_print_small_dense_submatrix("Maximal Rank Submatrix", *coeff_matrix,
-                                      submat_rank, submat_rank,
-                                      row_idx_array, col_idx_array,
-                                      x_monoms, dual_monoms, nvars,
-                                      var_names, par_names, gen_name);
+    if (poly_matrix_out == NULL)
+        dixon_print_small_dense_submatrix("Maximal Rank Submatrix", *coeff_matrix,
+                                          submat_rank, submat_rank,
+                                          row_idx_array, col_idx_array,
+                                          x_monoms, dual_monoms, nvars,
+                                          var_names, par_names, gen_name);
 
     if (full_matrix) {
         for (slong i = 0; i < nx_monoms; i++) {
@@ -4908,19 +4983,59 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     flint_free(M_mvpoly);
     flint_free(modified_M_mvpoly);
     
-    fq_mvpoly_t **coeff_matrix;
+    fq_mvpoly_t **coeff_matrix = NULL;
+    fq_nmod_poly_mat_t poly_matrix;
+    int use_poly_matrix = (npars == 1);
     slong *row_indices = (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
     slong *col_indices = (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
     slong matrix_size;
     slong extracted_x_power = 0;
     
     long *rank_degrees = dixon_polynomial_degrees(polys, nvars + 1, nvars);
-    extract_fq_coefficient_matrix_from_dixon(&coeff_matrix, row_indices, col_indices,
+    extract_fq_coefficient_matrix_from_dixon(&coeff_matrix,
+                                            use_poly_matrix ? &poly_matrix : NULL,
+                                            row_indices, col_indices,
                                             &matrix_size, &extracted_x_power, &d_poly, nvars, npars,
                                             NULL, NULL, NULL, rank_degrees, nvars + 1);
     flint_free(rank_degrees);
 
-    if (matrix_size > 0) {
+    if (matrix_size > 0 && use_poly_matrix) {
+        dixon_info_log("\nStep 4: Compute resultant\n");
+        det_method_t coeff_method = dixon_global_method_step4 != -1
+            ? dixon_global_method_step4 : DET_METHOD_KRONECKER;
+        clock_t step4_cpu_start = clock();
+        double step4_wall_start = get_wall_time();
+        dixon_info_log("  Determinant method: %s\n",
+                       dixon_det_method_name(coeff_method));
+        fq_nmod_poly_t det_poly;
+        fq_nmod_poly_init(det_poly, polys[0].ctx);
+        fq_nmod_poly_mat_det_iter(det_poly, poly_matrix, polys[0].ctx);
+        fq_mvpoly_init(result, 0, 1, polys[0].ctx);
+        for (slong i = 0; i <= fq_nmod_poly_degree(det_poly, polys[0].ctx); i++) {
+            fq_nmod_t coeff;
+            fq_nmod_init(coeff, polys[0].ctx);
+            fq_nmod_poly_get_coeff(coeff, det_poly, i, polys[0].ctx);
+            if (!fq_nmod_is_zero(coeff, polys[0].ctx)) {
+                slong par_exp[1] = {i + extracted_x_power};
+                fq_mvpoly_add_term_fast(result, NULL, par_exp, coeff);
+            }
+            fq_nmod_clear(coeff, polys[0].ctx);
+        }
+        fq_nmod_poly_clear(det_poly, polys[0].ctx);
+        fq_nmod_poly_mat_clear(poly_matrix, polys[0].ctx);
+        dixon_maybe_print_step_method_time("Step 4", coeff_method,
+                                           (double) (clock() - step4_cpu_start) / CLOCKS_PER_SEC,
+                                           get_wall_time() - step4_wall_start);
+        if (g_dixon_verbose_level >= 1 && result->nterms < 100) {
+            fq_mvpoly_print(result, "  Final Resultant");
+        } else {
+            dixon_info_log("  Final resultant too large to display (%ld terms)\n",
+                           result->nterms);
+        }
+        fq_mvpoly_make_monic(result);
+        if (g_dixon_verbose_level >= 1)
+            print_resultant_summary(result, NULL, 0);
+    } else if (matrix_size > 0) {
         slong postselection_x_power =
             extract_fq_matrix_x_content(coeff_matrix, matrix_size, npars);
         extracted_x_power += postselection_x_power;
@@ -5043,7 +5158,9 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
                                        ((double)(clock() - step1_cpu_start) / CLOCKS_PER_SEC),
                                        get_wall_time() - step1_wall_start);
     
-    fq_mvpoly_t **coeff_matrix;
+    fq_mvpoly_t **coeff_matrix = NULL;
+    fq_nmod_poly_mat_t poly_matrix;
+    int use_poly_matrix = (npars == 1);
     slong max_indices = d_poly.nterms > 0 ? d_poly.nterms : 1;
     slong *row_indices = (slong*) flint_malloc(max_indices * sizeof(slong));
     slong *col_indices = (slong*) flint_malloc(max_indices * sizeof(slong));
@@ -5051,13 +5168,52 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     slong extracted_x_power = 0;
     
     long *rank_degrees = dixon_polynomial_degrees(polys, nvars + 1, nvars);
-    extract_fq_coefficient_matrix_from_dixon(&coeff_matrix, row_indices, col_indices,
+    extract_fq_coefficient_matrix_from_dixon(&coeff_matrix,
+                                            use_poly_matrix ? &poly_matrix : NULL,
+                                            row_indices, col_indices,
                                             &matrix_size, &extracted_x_power, &d_poly, nvars, npars,
                                             var_names, par_names, gen_name,
                                             rank_degrees, nvars + 1);
     flint_free(rank_degrees);
 
-    if (matrix_size > 0) {
+    if (matrix_size > 0 && use_poly_matrix) {
+        dixon_info_log("\nStep 4: Compute resultant\n");
+        det_method_t coeff_method = dixon_global_method_step4 != -1
+            ? dixon_global_method_step4 : DET_METHOD_KRONECKER;
+        clock_t step4_cpu_start = clock();
+        double step4_wall_start = get_wall_time();
+        dixon_info_log("  Determinant method: %s\n",
+                       dixon_det_method_name(coeff_method));
+        fq_nmod_poly_t det_poly;
+        fq_nmod_poly_init(det_poly, polys[0].ctx);
+        fq_nmod_poly_mat_det_iter(det_poly, poly_matrix, polys[0].ctx);
+        fq_mvpoly_init(result, 0, 1, polys[0].ctx);
+        for (slong i = 0; i <= fq_nmod_poly_degree(det_poly, polys[0].ctx); i++) {
+            fq_nmod_t coeff;
+            fq_nmod_init(coeff, polys[0].ctx);
+            fq_nmod_poly_get_coeff(coeff, det_poly, i, polys[0].ctx);
+            if (!fq_nmod_is_zero(coeff, polys[0].ctx)) {
+                slong par_exp[1] = {i + extracted_x_power};
+                fq_mvpoly_add_term_fast(result, NULL, par_exp, coeff);
+            }
+            fq_nmod_clear(coeff, polys[0].ctx);
+        }
+        fq_nmod_poly_clear(det_poly, polys[0].ctx);
+        fq_nmod_poly_mat_clear(poly_matrix, polys[0].ctx);
+        dixon_maybe_print_step_method_time("Step 4", coeff_method,
+                                           (double) (clock() - step4_cpu_start) / CLOCKS_PER_SEC,
+                                           get_wall_time() - step4_wall_start);
+        if (g_dixon_verbose_level >= 1 && result->nterms < 100) {
+            fq_mvpoly_print_with_names(result, "  Final Resultant", NULL,
+                                       par_names, gen_name, 0);
+        } else {
+            dixon_info_log("  Final resultant too large to display (%ld terms)\n",
+                           result->nterms);
+        }
+        fq_mvpoly_make_monic(result);
+        if (g_dixon_verbose_level >= 1)
+            print_resultant_summary(result, par_names, npars);
+    } else if (matrix_size > 0) {
         slong postselection_x_power =
             extract_fq_matrix_x_content(coeff_matrix, matrix_size, npars);
         extracted_x_power += postselection_x_power;

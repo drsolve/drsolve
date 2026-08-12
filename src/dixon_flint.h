@@ -148,7 +148,8 @@ fq_mvpoly_t* get_matrix_entry_lazy(fq_mvpoly_t ***matrix, slong i, slong j,
 
 // Extract coefficient matrix from Dixon polynomial
 void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
-                                             slong *row_indices, slong *col_indices,
+                                              fq_nmod_poly_mat_t *poly_matrix_out,
+                                              slong *row_indices, slong *col_indices,
                                              slong *matrix_size,
                                              slong *extracted_x_power,
                                              const fq_mvpoly_t *dixon_poly,
