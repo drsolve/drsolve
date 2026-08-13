@@ -47,6 +47,12 @@ slong g_dixon_fast_ksy_constant_col = 0;
 int g_dixon_step3_second_verification = 0;
 slong g_dixon_det_cache_limit = 1024;
 
+/* One-shot hybrid seed passed from the predicted Step 3 path into the
+   degree-aware selector without changing its public API. */
+static const slong *g_step3_seed_rows = NULL;
+static const slong *g_step3_seed_cols = NULL;
+static slong g_step3_seed_size = 0;
+
 static const char *dixon_det_method_name(det_method_t method)
 {
     switch (method) {
@@ -2696,7 +2702,10 @@ static void find_fq_optimal_maximal_rank_submatrix_nmod(fq_mvpoly_t ***full_matr
                                                         slong npars,
                                                         slong ksy_constant_col,
                                                         const fq_nmod_ctx_t ctx,
-                                                        slong max_selection_attempts)
+                                                        slong max_selection_attempts,
+                                                        const slong *seed_rows,
+                                                        const slong *seed_cols,
+                                                        slong seed_size)
 {
     slong accepted_size = 0;
     slong *accepted_rows = NULL;
@@ -2773,6 +2782,17 @@ static void find_fq_optimal_maximal_rank_submatrix_nmod(fq_mvpoly_t ***full_matr
         dixon_maybe_print_step_detail_time("Step 3 unified matrix build",
                                            unified_mat_cpu_start,
                                            unified_mat_wall_start);
+
+        if (seed_rows && seed_cols && seed_size > 0) {
+            current_size = FLINT_MIN(seed_size, FLINT_MIN(nrows, ncols));
+            current_row_indices = (slong *) flint_malloc((size_t) current_size * sizeof(slong));
+            current_col_indices = (slong *) flint_malloc((size_t) current_size * sizeof(slong));
+            memcpy(current_row_indices, seed_rows, (size_t) current_size * sizeof(slong));
+            memcpy(current_col_indices, seed_cols, (size_t) current_size * sizeof(slong));
+            iteration = 1;
+            dixon_debug_log("  Step 3 hybrid selector: using predicted minor as seed (%ld x %ld)\n",
+                            current_size, current_size);
+        }
 
         while (iteration < MAX_ITERATIONS && !converged) {
             slong row_rank_selected = 0;
@@ -3109,7 +3129,7 @@ static void find_fq_optimal_maximal_rank_submatrix_nmod(fq_mvpoly_t ***full_matr
     *num_cols = accepted_size;
 }
 
-void find_fq_optimal_maximal_rank_submatrix(fq_mvpoly_t ***full_matrix, 
+void find_fq_optimal_maximal_rank_submatrix(fq_mvpoly_t ***full_matrix,
                                            slong nrows, slong ncols,
                                            slong **row_indices_out, 
                                            slong **col_indices_out,
@@ -3148,7 +3168,13 @@ void find_fq_optimal_maximal_rank_submatrix(fq_mvpoly_t ***full_matrix,
                                                     row_indices_out, col_indices_out,
                                                     num_rows, num_cols,
                                                     npars, ksy_constant_col,
-                                                    ctx, MAX_SELECTION_ATTEMPTS);
+                                                    ctx, MAX_SELECTION_ATTEMPTS,
+                                                    g_step3_seed_rows,
+                                                    g_step3_seed_cols,
+                                                    g_step3_seed_size);
+        g_step3_seed_rows = NULL;
+        g_step3_seed_cols = NULL;
+        g_step3_seed_size = 0;
         field_ctx_clear(&selection_ctx);
         if (use_extension_specialization) {
             fq_nmod_ctx_clear(extension_eval_ctx);
@@ -4358,6 +4384,7 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
                                                prediction_wall_start);
         }
         int candidate_constructed = candidate_ok;
+        int schur_repaired = 0;
         clock_t verification_cpu_start = clock();
         double verification_wall_start = get_wall_time();
         if (candidate_ok) {
@@ -4410,6 +4437,129 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
                 fq_nmod_clear(value, dixon_poly->ctx);
 #endif
                 rank = nmod_mat_lu(perm, candidate, 0);
+                /* A failed predicted minor usually contains the maximal
+                   rank block plus a few redundant rows/columns.  Extend
+                   its LU rank profile with a small Schur complement before
+                   falling back to the expensive degree-aware scan. */
+                if (rank < predicted && rank > 0) {
+                    slong delta = predicted - rank;
+                    slong avail_r = nx_monoms - rank, avail_c = ndual_monoms - rank;
+                    slong k = FLINT_MIN(8 * delta, FLINT_MIN(avail_r, avail_c));
+                    if (k >= delta) {
+                        slong *r0 = (slong *) flint_malloc((size_t) rank * sizeof(slong));
+                        slong *c0 = (slong *) flint_malloc((size_t) rank * sizeof(slong));
+                        slong *rx = (slong *) flint_malloc((size_t) k * sizeof(slong));
+                        slong *cx = (slong *) flint_malloc((size_t) k * sizeof(slong));
+                        unsigned char *used_r = (unsigned char *) flint_calloc((size_t) nx_monoms, 1);
+                        unsigned char *used_c = (unsigned char *) flint_calloc((size_t) ndual_monoms, 1);
+                        /* Row pivots are returned through P.  Column pivots
+                           are the first nonzero entries of the echelon U. */
+                        slong gotc = 0, next_pivot_col = 0;
+                        for (slong i = 0; i < rank; i++) {
+                            r0[i] = row_idx_array[perm[i]]; used_r[r0[i]] = 1;
+                            for (slong j = next_pivot_col; j < predicted; j++)
+                                if (nmod_mat_entry(candidate, i, j) != 0) {
+                                    c0[gotc++] = col_idx_array[j]; used_c[col_idx_array[j]] = 1;
+                                    next_pivot_col = j + 1;
+                                    break;
+                                }
+                        }
+                        if (gotc == rank) {
+                            slong ir = 0, ic = 0;
+                            unsigned char *avail_row_deg = (unsigned char *) flint_calloc((size_t) (sigma + 1), 1);
+                            unsigned char *avail_col_deg = (unsigned char *) flint_calloc((size_t) (sigma + 1), 1);
+                            for (slong z = 0; z < nx_monoms; z++) {
+                                slong i = row_order[z].index;
+                                if (!used_r[i] && row_order[z].degree <= sigma) avail_row_deg[row_order[z].degree] = 1;
+                            }
+                            for (slong z = 0; z < ndual_monoms; z++) {
+                                slong j = col_order[z].index;
+                                if (!used_c[j] && col_order[z].degree <= sigma) avail_col_deg[col_order[z].degree] = 1;
+                            }
+                            /* Build the reserve pool in two passes.  Pass one
+                               prefers unused entries on the Dixon
+                               anti-diagonal (row degree + column degree =
+                               sigma); pass two preserves the degree-aware
+                               ascending order for any remaining slots. */
+                            for (slong z = 0; z < nx_monoms && ir < k; z++) {
+                                slong i = row_order[z].index;
+                                if (used_r[i]) continue;
+                                slong rd = row_order[z].degree;
+                                if (rd <= sigma && avail_col_deg[sigma - rd]) rx[ir++] = i;
+                            }
+                            for (slong z = 0; z < ndual_monoms && ic < k; z++) {
+                                slong j = col_order[z].index;
+                                if (used_c[j]) continue;
+                                slong cd = col_order[z].degree;
+                                if (cd <= sigma && avail_row_deg[sigma - cd]) cx[ic++] = j;
+                            }
+                            for (slong z = 0; z < nx_monoms && ir < k; z++) {
+                                slong i = row_order[z].index;
+                                if (!used_r[i]) {
+                                    int already = 0;
+                                    for (slong t = 0; t < ir; t++) if (rx[t] == i) { already = 1; break; }
+                                    if (!already) rx[ir++] = i;
+                                }
+                            }
+                            for (slong z = 0; z < ndual_monoms && ic < k; z++) {
+                                slong j = col_order[z].index;
+                                if (!used_c[j]) {
+                                    int already = 0;
+                                    for (slong t = 0; t < ic; t++) if (cx[t] == j) { already = 1; break; }
+                                    if (!already) cx[ic++] = j;
+                                }
+                            }
+                            flint_free(avail_row_deg);
+                            flint_free(avail_col_deg);
+                            nmod_mat_t A, B, X, V, W, T, S;
+                            mp_limb_t mod = fq_nmod_ctx_prime(dixon_poly->ctx);
+                            nmod_mat_init(A, rank, rank, mod); nmod_mat_init(B, rank, k, mod);
+                            nmod_mat_init(X, rank, k, mod); nmod_mat_init(V, k, rank, mod);
+                            nmod_mat_init(W, k, k, mod); nmod_mat_init(T, k, k, mod); nmod_mat_init(S, k, k, mod);
+                            fq_nmod_t value; fq_nmod_init(value, dixon_poly->ctx);
+                            for (slong i = 0; i < rank; i++) for (slong j = 0; j < rank; j++) {
+                                fq_mvpoly_t *e = full_matrix[r0[i]][c0[j]];
+                                nmod_mat_entry(A,i,j) = (e && e->nterms) ? (evaluate_fq_mvpoly_at_params(value,e,eval_params), nmod_poly_get_coeff_ui(value,0)) : 0;
+                            }
+                            for (slong i = 0; i < rank; i++) for (slong j = 0; j < k; j++) {
+                                fq_mvpoly_t *e = full_matrix[r0[i]][cx[j]];
+                                nmod_mat_entry(B,i,j) = (e && e->nterms) ? (evaluate_fq_mvpoly_at_params(value,e,eval_params), nmod_poly_get_coeff_ui(value,0)) : 0;
+                            }
+                            for (slong i = 0; i < k; i++) for (slong j = 0; j < rank; j++) {
+                                fq_mvpoly_t *e = full_matrix[rx[i]][c0[j]];
+                                nmod_mat_entry(V,i,j) = (e && e->nterms) ? (evaluate_fq_mvpoly_at_params(value,e,eval_params), nmod_poly_get_coeff_ui(value,0)) : 0;
+                            }
+                            for (slong i = 0; i < k; i++) for (slong j = 0; j < k; j++) {
+                                fq_mvpoly_t *e = full_matrix[rx[i]][cx[j]];
+                                nmod_mat_entry(W,i,j) = (e && e->nterms) ? (evaluate_fq_mvpoly_at_params(value,e,eval_params), nmod_poly_get_coeff_ui(value,0)) : 0;
+                            }
+                            if (nmod_mat_solve(X, A, B)) {
+                                nmod_mat_mul(T, V, X); nmod_mat_sub(S, W, T);
+                                slong *sp = (slong *) flint_malloc((size_t) k * sizeof(slong));
+                                slong sr = nmod_mat_lu(sp, S, 0);
+                                if (sr >= delta) {
+                                    slong *scp = (slong *) flint_malloc((size_t) delta * sizeof(slong));
+                                    slong next_s_col = 0;
+                                    for (slong i = 0; i < delta; i++) {
+                                        for (slong j = next_s_col; j < k; j++)
+                                            if (nmod_mat_entry(S, i, j) != 0) {
+                                                scp[i] = j; next_s_col = j + 1; break;
+                                            }
+                                    }
+                                    for (slong i = 0; i < rank; i++) row_idx_array[i] = r0[i], col_idx_array[i] = c0[i];
+                                    for (slong i = 0; i < delta; i++) row_idx_array[rank+i] = rx[sp[i]], col_idx_array[rank+i] = cx[scp[i]];
+                                    num_rows = num_cols = predicted; schur_repaired = candidate_ok = 1;
+                                    dixon_debug_log("  Schur repair succeeded: base rank=%ld, added=%ld\n", rank, delta);
+                                    flint_free(scp);
+                                }
+                                flint_free(sp);
+                            }
+                            fq_nmod_clear(value, dixon_poly->ctx); nmod_mat_clear(A); nmod_mat_clear(B); nmod_mat_clear(X);
+                            nmod_mat_clear(V); nmod_mat_clear(W); nmod_mat_clear(T); nmod_mat_clear(S);
+                        }
+                        flint_free(r0); flint_free(c0); flint_free(rx); flint_free(cx); flint_free(used_r); flint_free(used_c);
+                    }
+                }
                 nmod_mat_clear(candidate);
                 flint_free(perm);
             } else {
@@ -4432,8 +4582,10 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
                 rank = fq_nmod_mat_rank(candidate, dixon_poly->ctx);
                 fq_nmod_mat_clear(candidate, dixon_poly->ctx);
             }
-            if (rank == predicted) num_rows = num_cols = predicted;
-            else candidate_ok = 0;
+            if (!schur_repaired) {
+                if (rank == predicted) num_rows = num_cols = predicted;
+                else candidate_ok = 0;
+            }
         }
         if (use_predicted_candidate) {
             const char *verification_label = candidate_ok
@@ -4454,6 +4606,27 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
         flint_free(col_order);
         flint_free(row_counts);
         flint_free(col_counts);
+        if (use_predicted_candidate && candidate_constructed) {
+            /* Prediction (and any Schur completion) is a seed only.  Let the
+               degree-aware alternating selector refine the index sets before
+               the determinant stage. */
+            slong *seed_rows = row_idx_array;
+            slong *seed_cols = col_idx_array;
+            slong seed_size = predicted;
+            row_idx_array = NULL;
+            col_idx_array = NULL;
+            if (eval_mat_ready) fq_nmod_mat_clear(eval_mat, dixon_poly->ctx);
+            if (eval_params) clear_evaluation_parameters(eval_params, 1, dixon_poly->ctx);
+            g_step3_seed_rows = seed_rows;
+            g_step3_seed_cols = seed_cols;
+            g_step3_seed_size = seed_size;
+            find_fq_optimal_maximal_rank_submatrix(full_matrix, nx_monoms, ndual_monoms,
+                                                   &row_idx_array, &col_idx_array,
+                                                   &num_rows, &num_cols, npars, -1);
+            flint_free(seed_rows);
+            flint_free(seed_cols);
+            goto coefficient_matrix_selected;
+        }
         if (use_predicted_candidate && !candidate_ok) {
             if (candidate_constructed) {
                 dixon_debug_log("  Predicted candidate failed: size=%ld x %ld, "
@@ -4475,8 +4648,8 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
             goto coefficient_matrix_selected;
         }
         if (candidate_ok) {
-            dixon_debug_log("  Step 3 heuristic candidate accepted: %ld x %ld\n",
-                            predicted, predicted);
+            dixon_debug_log("  Step 3 heuristic candidate accepted: %ld x %ld%s\n",
+                            predicted, predicted, schur_repaired ? " (Schur repair)" : "");
             const char *reorder_env = getenv("DRSOLVE_PREDICT_REORDER");
             if (reorder_env == NULL || strcmp(reorder_env, "0") != 0)
                 reorder_fq_selected_minor_by_degree(full_matrix,
