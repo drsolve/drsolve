@@ -2726,7 +2726,11 @@ static void find_fq_optimal_maximal_rank_submatrix_nmod(fq_mvpoly_t ***full_matr
         slong *prev_col_indices = NULL;
         slong current_size = 0;
         slong prev_size = 0;
-        const slong MAX_ITERATIONS = 10;
+        const int has_seed = seed_rows && seed_cols && seed_size > 0;
+        /* A repaired predicted minor is already full rank.  Two alternating
+           passes are enough to replace expensive rows/columns without turning
+           the hybrid path back into the full selector. */
+        const slong MAX_ITERATIONS = has_seed ? 2 : 3;
         slong iteration = 0;
         int converged = 0;
         int ksy_condition_met = 0;
@@ -2783,14 +2787,15 @@ static void find_fq_optimal_maximal_rank_submatrix_nmod(fq_mvpoly_t ***full_matr
                                            unified_mat_cpu_start,
                                            unified_mat_wall_start);
 
-        if (seed_rows && seed_cols && seed_size > 0) {
+        if (has_seed) {
             current_size = FLINT_MIN(seed_size, FLINT_MIN(nrows, ncols));
             current_row_indices = (slong *) flint_malloc((size_t) current_size * sizeof(slong));
             current_col_indices = (slong *) flint_malloc((size_t) current_size * sizeof(slong));
             memcpy(current_row_indices, seed_rows, (size_t) current_size * sizeof(slong));
             memcpy(current_col_indices, seed_cols, (size_t) current_size * sizeof(slong));
             iteration = 1;
-            dixon_debug_log("  Step 3 hybrid selector: using predicted minor as seed (%ld x %ld)\n",
+            dixon_debug_log("  Step 3 hybrid selector: using repaired predicted minor as seed "
+                            "(%ld x %ld, max alternating passes=2)\n",
                             current_size, current_size);
         }
 
@@ -4606,10 +4611,10 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
         flint_free(col_order);
         flint_free(row_counts);
         flint_free(col_counts);
-        if (use_predicted_candidate && candidate_constructed) {
-            /* Prediction (and any Schur completion) is a seed only.  Let the
-               degree-aware alternating selector refine the index sets before
-               the determinant stage. */
+        if (use_predicted_candidate && candidate_ok && schur_repaired) {
+            /* Schur completion proves full rank but may splice high-degree
+               directions into the Hilbert-prefix minor.  Use that repaired
+               minor as a seed for a short degree-aware refinement. */
             slong *seed_rows = row_idx_array;
             slong *seed_cols = col_idx_array;
             slong seed_size = predicted;
