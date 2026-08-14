@@ -167,6 +167,38 @@ void nmod_extract_linear_factors(nmod_roots_t roots, const nmod_poly_t poly, fli
     nmod_poly_clear(r);
 }
 
+/* Recover the algebraic multiplicity from the original polynomial.  The
+   Cantor-Zassenhaus path factors the squarefree part, so its factor list
+   alone cannot report powers such as x^2048 correctly. */
+static slong nmod_root_multiplicity(const nmod_poly_t poly, mp_limb_t root)
+{
+    nmod_poly_t work, factor, quotient, remainder;
+    slong multiplicity = 0;
+
+    nmod_poly_init(work, poly->mod.n);
+    nmod_poly_init(factor, poly->mod.n);
+    nmod_poly_init(quotient, poly->mod.n);
+    nmod_poly_init(remainder, poly->mod.n);
+    nmod_poly_set(work, poly);
+    nmod_poly_set_coeff_ui(factor, 1, 1);
+    nmod_poly_set_coeff_ui(factor, 0, root == 0 ? 0 : poly->mod.n - root);
+
+    while (nmod_poly_degree(work) > 0 &&
+           nmod_poly_evaluate_nmod(work, root) == 0) {
+        nmod_poly_divrem(quotient, remainder, work, factor);
+        if (nmod_poly_degree(remainder) >= 0)
+            break;
+        multiplicity++;
+        nmod_poly_set(work, quotient);
+    }
+
+    nmod_poly_clear(remainder);
+    nmod_poly_clear(quotient);
+    nmod_poly_clear(factor);
+    nmod_poly_clear(work);
+    return multiplicity;
+}
+
 static slong nmod_poly_roots_gf2(nmod_roots_t roots, const nmod_poly_t poly, int with_multiplicity) {
     nmod_poly_t work, factor, quotient, remainder;
 
@@ -246,6 +278,13 @@ slong our_nmod_poly_roots(nmod_roots_t roots, const nmod_poly_t poly, int with_m
         flint_rand_init(state);
         nmod_extract_linear_factors(roots, root_poly, state);
         flint_rand_clear(state);
+
+        if (with_multiplicity) {
+            for (slong i = 0; i < roots->num; i++) {
+                slong multiplicity = nmod_root_multiplicity(poly, roots->roots[i]);
+                roots->mult[i] = multiplicity > 0 ? multiplicity : 1;
+            }
+        }
     }
     
     nmod_poly_clear(x_to_p);

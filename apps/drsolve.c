@@ -37,7 +37,6 @@ static void print_short_usage(const char *prog_name)
     printf("  %s \"polynomials\" field_size\n", prog_name);
     printf("  %s input_file -o output_file\n", prog_name);
     printf("FILE FORMAT:\n");
-    printf("  Optional comment: # options: --method 5 --fq-det-method iter\n");
     printf("  Dixon resultant elimination:\n");
     printf("    Line 1 : variables TO ELIMINATE (comma-separated)\n");
     printf("    Line 2 : field size (prime or p^k, 0 means rational)\n");
