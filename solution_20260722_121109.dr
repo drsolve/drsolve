@@ -1,0 +1,19 @@
+Dixon Resultant Computation
+==========================
+Field: Q
+Mode: Basic Dixon resultant
+Variables eliminated: x,y
+Polynomials: x^2+y^2+z^2-1, x^2+y^2-2*z^2, x+y+z
+Computation time: 0.015 seconds
+
+Resultant:
+1/9 - 2/3*z^2 + z^4
+
+Roots in z (degree 4):
+
+Approximate complex roots:
+Found 4 approximate complex roots:
+  Root 1: (0.577350173832332 - 1.19142203201494e-7j)  +/-  (3.05e-7, 3.05e-7j) (Multiplicity: 1)
+  Root 2: (-0.577350228804208 + 1.31402048186403e-7j)  +/-  (2.75e-7, 2.75e-7j) (Multiplicity: 1)
+  Root 3: (0.577350328123645 + 7.36339718925876e-8j)  +/-  (1.89e-7, 1.89e-7j) (Multiplicity: 1)
+  Root 4: (-0.577350294149188 - 8.12109461893586e-8j)  +/-  (1.70e-7, 1.70e-7j) (Multiplicity: 1)
