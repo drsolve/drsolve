@@ -2046,11 +2046,10 @@ void print_rational_solutions(const rational_solutions_t *sols) {
         }
         return;
     }
-
+    /*
     if (sols->num_candidate_solution_lines > 0) {
         if (sols->num_candidate_solution_lines > rational_candidate_print_limit) {
-            /* Detailed candidate rows are intentionally suppressed for large
-               systems; the complete solution rows below are verified. */
+            // Detailed candidate rows are intentionally suppressed for large systems; the complete solution rows below are verified.
         } else {
             printf("Candidate sets:\n");
             for (slong i = 0; i < sols->num_candidate_solution_lines; i++) {
@@ -2061,7 +2060,7 @@ void print_rational_solutions(const rational_solutions_t *sols) {
             }
         }
     }
-
+    */
     if (sols->num_solution_sets > 0) {
         printf("Found %ld exact rational solution set(s):\n", sols->num_solution_sets);
         for (slong set = 0; set < sols->num_solution_sets; set++) {
