@@ -1,4 +1,4 @@
-# Cyclic-9 over F_65537: large Dixon elimination benchmark; use iterative determinant method.
+# Cyclic-9 over F_65537: large Dixon elimination benchmark; use iterative determinant method. (takes about 30 minutes)
 # options: --fq-det-method iter
 x1,x2,x3,x4,x5,x6,x7,x8
 65537
