@@ -3,6 +3,8 @@ A C implementation for computing Dixon resultants and solving polynomial systems
 
 Website: <https://drsolve.github.io>
 
+Author: Haohai Suo (<haohai.suo@mail.sdu.edu.cn>)
+
 ## Features
 - Dixon resultant computation for variable elimination
 - Polynomial system solver
@@ -40,10 +42,10 @@ make check                         # optional
 make install                       # optional
 ```
 For more options, run `./configure --help` or `make help`.
+
 We also provide a Windows GUI, which can be built with CMake.
 ```bash
-cmake -B build-win \
-      -DCMAKE_TOOLCHAIN_FILE="$(pwd)/cmake/toolchain-mingw64.cmake"
+cmake -B build-win -DCMAKE_TOOLCHAIN_FILE="$(pwd)/cmake/toolchain-mingw64.cmake"
 cmake --build build-win -j$(nproc)
 ```
 ---
@@ -78,22 +80,21 @@ Example:
 ./drsolve -f input_file -o output_file
 ```
 #### Dixon resultant elimination (multiline)
-```
+``` 
 Line 1 : variables to ELIMINATE (comma-separated)
 Line 2 : field size (prime or p^k; use 0 for Q; generator defaults to 't')
 Line 3+: polynomials (comma-separated, may span multiple lines, #eliminate = #equations - 1)
 ```
 Example:
 ```bash
-# example.dr
 x0,x1
 257
 x0^3+x1^3+x2^3, x0*x1+x1*x2+x2*x1, x1*x2*x0+1
 ```
 Run:
 ```bash
-./drsolve example.dr
-./drsolve -f example.dr -o my_result.dr
+./drsolve examples/example.dr
+./drsolve -f examples/example.dr -o out/my_result.dr
 ```
 - If line 1 lists `n` variables for `n` equations, compatibility mode uses the first `n-1` variables
 
@@ -104,14 +105,13 @@ Line 2+: polynomials (comma-separated, may span multiple lines)
 ```
 Example:
 ```bash
-# example_solve.dr
 0
 x^2+y^2+z^2-6, x+y+z-4, x*y*z-x-1
 ```
 Run:
 ```bash
-./drsolve example_solve.dr
-./drsolve -f example_solve.dr -o my_solutions.dr
+./drsolve examples/example_solve.dr
+./drsolve -f examples/example_solve.dr -o out/my_solutions.dr
 ```
 
 ### OTHER MODES
@@ -220,25 +220,16 @@ Example:
 #### Verbosity
 ```bash
 ./drsolve -v 0 <arguments>
-./drsolve -v 1 <arguments>
 ./drsolve -v 2 <arguments>
-./drsolve -v 3 <arguments>
+./drsolve --time <args>
+
 ```
-`-v 0` prints nothing but still writes the output file. `-v 1` is the default. `-v 2` restores the debug-level console output and timing. `-v 3` additionally dumps small intermediate matrices.
+`-v 0` prints nothing but still writes the output file. `-v 1` is the default. `-v 2` restores the debug-level console output and timing. `-v 3` prints detailed profiling for Dixon construction. `-v 4` additionally prints the cancellation matrix, Dixon matrix, maximal-rank submatrix when each is <= 100 x 100. `--time` prints per-step timing
 
 Example:
 ```bash
 ./drsolve -v 2 -f in.dr -o out.dr
 ```
-
-#### Diagnostics
-```bash
-./drsolve --time <args>
-./drsolve -v 2 <args>
-```
-- `--time` prints per-step timing
-- Compatibility flags `--silent`, `--debug`, `--solve-verbose`, and `--solve` are still accepted
-
 
 #### Parallelism
 ```bash
@@ -266,19 +257,8 @@ Example:
 
 ---
 
-## Feature Support by Field
-
-| Feature | F_p (p<2^63) | F_p (p>2^63) | F_{p^k} (p<2^63) | Q |
-|---|---|---|---|---|
-| Dixon resultant | ✅ | ✅ | ✅ | ✅ |
-| Complexity analysis (`--comp`) | ✅ | ✅ | ✅ | ✅ |
-| Random mode (`-r`) | ✅ | ✅ | ✅ | ✅ |
-| Polynomial solver (`-s` / `--solve`) | ✅ | ✅ | ✅ | ✅ |
-| Ideal reduction (`--ideal`) | ✅ | ❌ | ✅ | ❌ |
-| Field-equation reduction | ✅ | ❌ | ✅ | ❌ |
-| PML acceleration | ✅ | ✅ | ❌ | ✅ |
-
----
+## Development Notes
+Parts of this project were developed with the assistance of AI-based coding tools. All AI-assisted contributions were reviewed and tested by the project author.
 
 ## License
 DRSolve is distributed under the GNU General Public License version 2.0 (GPL-2.0-or-later). See the file COPYING.
