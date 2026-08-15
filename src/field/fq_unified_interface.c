@@ -2,6 +2,7 @@
 /* fq_unified_interface.c - Unified field operations implementation */
 
 #include "fq_unified_interface.h"
+#include <limits.h>
 extern int g_field_equation_reduction;
 extern int g_dixon_verbose_level;
 
@@ -243,7 +244,11 @@ ulong field_ctx_get_size(const field_ctx_t *ctx) {
         case FIELD_ID_GF216:
             return 65536;
         case FIELD_ID_GF232:
+#if ULONG_MAX > 0xffffffffUL
             return 1UL << 32;
+#else
+            return 0; /* 2^32 is not representable by ulong */
+#endif
         case FIELD_ID_GF264:
             return 0; /* Too large for ulong */
         case FIELD_ID_GF2128:

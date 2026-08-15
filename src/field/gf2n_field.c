@@ -1220,10 +1220,14 @@ int gf2128_from_hex(gf2128_t *a, const char *hex) {
    
    size_t len = strlen(hex);
    if (len > 16) {
-       strncpy(high_str, hex, len - 16);
-       strncpy(low_str, hex + len - 16, 16);
+       size_t high_len = len - 16;
+       memcpy(high_str, hex, high_len);
+       high_str[high_len] = '\0';
+       memcpy(low_str, hex + high_len, 16);
+       low_str[16] = '\0';
    } else {
-       strncpy(low_str, hex, len);
+       memcpy(low_str, hex, len);
+       low_str[len] = '\0';
    }
    
    uint64_t high = strtoull(high_str, NULL, 16);
