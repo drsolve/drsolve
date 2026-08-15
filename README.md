@@ -3,8 +3,6 @@ A C implementation for computing Dixon resultants and solving polynomial systems
 
 Website: <https://drsolve.github.io>
 
-Author: Haohai Suo (<haohai.suo@mail.sdu.edu.cn>)
-
 ## Features
 - Dixon resultant computation for variable elimination
 - Polynomial system solver
