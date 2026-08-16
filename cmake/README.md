@@ -16,7 +16,7 @@ DRSolve uses **CMake** (≥ 3.16) as its primary build system.
 ### Linux / macOS
 
 ```bash
-git clone https://github.com/drsolve/drsolve-cross.git && cd drsolve-cross
+git clone https://github.com/drsolve/drsolve.git && cd drsolve
 cmake -B build
 cmake --build build -j$(nproc)
 ctest --test-dir build          # optional: run tests
@@ -34,10 +34,7 @@ cmake --build build -j$(nproc)
 
 ### Windows
 
-**Option A — GUI installer (recommended)**  
-Download from [drsolve/drsolve-win](https://github.com/drsolve/drsolve-win).
-
-**Option B — MSYS2/UCRT64**
+**Option A — MSYS2/UCRT64**
 
 ```bash
 pacman -S mingw-w64-ucrt-x86_64-cmake \
@@ -47,7 +44,7 @@ cmake -B build -G "MinGW Makefiles"
 cmake --build build -j$(nproc)
 ```
 
-**Option C — cross-compile from Linux/macOS (MinGW-w64)**  
+**Option B — cross-compile from Linux/macOS (MinGW-w64)**  
 Bundled `mingw/` and `pml_det/` dependencies are used automatically:
 
 ```bash
@@ -125,93 +122,6 @@ build-win/
   lib/libdrsolve-1.a           ← static archive
   lib/libdrsolve-1.dll.a       ← import library
 ```
-
----
-
-## Windows — cross-compile from Linux/macOS (MinGW-w64)
-
-Install the cross-compiler first:
-
-```bash
-# Ubuntu/Debian
-sudo apt install gcc-mingw-w64-x86-64
-
-# Homebrew (macOS)
-brew install mingw-w64
-```
-
-### Option A: Use bundled third-party dependencies (default)
-
-The bundled `mingw/`, `pml_det/`, and `runtime/` directories are used automatically:
-
-```bash
-cmake -B build-win \
-      -DCMAKE_TOOLCHAIN_FILE="$(pwd)/cmake/toolchain-mingw64.cmake"
-cmake --build build-win -j$(nproc)
-```
-
-### Option B: Auto-download from MSYS2 (recommended for clean Git repos)
-
-CMake will automatically download required DLLs and libraries directly from MSYS2
-during the build:
-
-```bash
-cmake -B build-win \
-      -DCMAKE_TOOLCHAIN_FILE="$(pwd)/cmake/toolchain-mingw64.cmake" \
-      -DDRSOLVE_USE_BUNDLED_DEPS=OFF
-cmake --build build-win -j$(nproc)
-```
-
-**How it works:**
-- Packages are downloaded from https://packages.msys2.org/
-- DLLs are automatically extracted and copied to `build-win/dll/`
-- No need to commit large binary files in Git
-
-**Updating package versions/SHA256:**
-
-1. Visit https://packages.msys2.org/ and find the latest versions:
-   - FLINT: https://packages.msys2.org/package/mingw-w64-ucrt-x86_64-flint
-   - GMP: https://packages.msys2.org/package/mingw-w64-ucrt-x86_64-gmp
-   - MPFR: https://packages.msys2.org/package/mingw-w64-ucrt-x86_64-mpfr
-   - OpenBLAS: https://packages.msys2.org/package/mingw-w64-ucrt-x86_64-openblas
-   - GCC Libs: https://packages.msys2.org/package/mingw-w64-ucrt-x86_64-gcc-libs
-   - WinPthread: https://packages.msys2.org/package/mingw-w64-ucrt-x86_64-libwinpthread
-
-2. Copy the "Version" and "SHA256" values from each page and update them in `CMakeLists.txt` (lines 94-138)
-
-**Note about PML:**
-PML library is not available in MSYS2 repositories. You still need to provide `PML_ROOT` explicitly or use the bundled determinant subset in `pml_det/`.
-
-### Option C: Use system cross-compiler libraries
-
-If you have MinGW-w64 libraries installed system-wide via your package manager:
-
-```bash
-cmake -B build-win \
-      -DCMAKE_TOOLCHAIN_FILE="$(pwd)/cmake/toolchain-mingw64.cmake" \
-      -DDRSOLVE_USE_BUNDLED_DEPS=OFF
-cmake --build build-win -j$(nproc)
-```
-
-Note: Ensure FLINT and other dependencies are installed for the MinGW-w64 cross-compiler.
-
----
-
-## Windows — native build (MSYS2/UCRT64 or Visual Studio)
-
-For MSYS2/UCRT64:
-
-```bash
-pacman -S mingw-w64-ucrt-x86_64-cmake \
-          mingw-w64-ucrt-x86_64-gcc \
-          mingw-w64-ucrt-x86_64-flint
-
-cmake -B build -G "MinGW Makefiles"
-cmake --build build -j$(nproc)
-```
-
-For Visual Studio: FLINT does not currently ship MSVC-compatible libs;
-use the MinGW approach above.
 
 ---
 
