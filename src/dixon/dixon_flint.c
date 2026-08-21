@@ -5163,7 +5163,7 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     
     fq_mvpoly_t **coeff_matrix = NULL;
     fq_nmod_poly_mat_t poly_matrix;
-    int use_poly_matrix = (npars == 1);
+    int use_poly_matrix = (npars == 1 && dixon_global_method_step4 == -1);
     slong *row_indices = (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
     slong *col_indices = (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
     slong matrix_size;
@@ -5338,7 +5338,7 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     
     fq_mvpoly_t **coeff_matrix = NULL;
     fq_nmod_poly_mat_t poly_matrix;
-    int use_poly_matrix = (npars == 1);
+    int use_poly_matrix = (npars == 1 && dixon_global_method_step4 == -1);
     slong max_indices = d_poly.nterms > 0 ? d_poly.nterms : 1;
     slong *row_indices = (slong*) flint_malloc(max_indices * sizeof(slong));
     slong *col_indices = (slong*) flint_malloc(max_indices * sizeof(slong));
