@@ -1087,6 +1087,92 @@ static long *parse_degree_list(const char *deg_str, slong *count_out)
     return degs;
 }
 
+static void free_enumerated_monomials(monomial_t *monomials, slong count);
+static int append_signed_monomial_text(char **buffer, size_t *capacity,
+                                       size_t *length, int coeff,
+                                       const slong *exp, slong nvars,
+                                       int *first_term);
+
+static int enumerate_box_monomials_rec(monomial_t **out, slong *count,
+                                       slong *cap, const long *bounds,
+                                       slong nvars, slong pos, slong *exp)
+{
+    if (pos == nvars) {
+        monomial_t *grown;
+        if (*count >= *cap) {
+            *cap *= 2;
+            grown = (monomial_t *) realloc(*out, (size_t) *cap * sizeof(**out));
+            if (!grown) return 0;
+            *out = grown;
+        }
+        (*out)[*count].exponents = (slong *) malloc((size_t) nvars * sizeof(slong));
+        if (!(*out)[*count].exponents) return 0;
+        memcpy((*out)[*count].exponents, exp, (size_t) nvars * sizeof(slong));
+        (*out)[*count].total_degree = 0;
+        for (slong j = 0; j < nvars; j++) (*out)[*count].total_degree += exp[j];
+        (*count)++;
+        return 1;
+    }
+    for (long e = 0; e <= bounds[pos]; e++) {
+        exp[pos] = (slong) e;
+        if (!enumerate_box_monomials_rec(out, count, cap, bounds, nvars, pos + 1, exp)) return 0;
+    }
+    return 1;
+}
+
+static int enumerate_box_monomials(monomial_t **out, slong *count,
+                                   const long *bounds, slong nvars)
+{
+    slong cap = 32, *exp;
+    if (!out || !count || !bounds || nvars <= 0) return 0;
+    *out = (monomial_t *) malloc((size_t) cap * sizeof(**out));
+    if (!*out) return 0;
+    *count = 0;
+    exp = (slong *) calloc((size_t) nvars, sizeof(slong));
+    if (!exp || !enumerate_box_monomials_rec(out, count, &cap, bounds, nvars, 0, exp)) {
+        free(exp); free_enumerated_monomials(*out, *count); *out = NULL; *count = 0; return 0;
+    }
+    free(exp);
+    return 1;
+}
+
+static int generate_random_verdeg_strings(const long *bounds, slong nvars,
+                                          slong npolys,
+                                          double density_ratio, int seed_given,
+                                          ulong seed, int silent_mode,
+                                          char **polys_out, char **elim_out,
+                                          char **all_out)
+{
+    monomial_t *monomials = NULL; slong mcount = 0;
+    char *polys = NULL, *elim = NULL, *all = NULL, *remaining = NULL;
+    size_t pcap = 0, plen = 0; unsigned int rng;
+    if (npolys <= 0) return 0;
+    if (!enumerate_box_monomials(&monomials, &mcount, bounds, nvars) || mcount <= 0) return 0;
+    if (!build_random_system_strings(nvars, nvars, &elim, &all, &remaining)) goto fail;
+    rng = (unsigned int) (seed_given ? seed : (ulong) (time(NULL) ^ clock()));
+    for (slong i = 0; i < npolys; i++) {
+        slong target = (slong) (density_ratio * mcount); if (target < 1) target = 1; if (target > mcount) target = mcount;
+        slong *idx = (slong *) malloc((size_t) mcount * sizeof(slong));
+        char *buf = NULL; size_t cap = 0, len = 0; int first = 1;
+        if (!idx) goto fail;
+        for (slong j = 0; j < mcount; j++) idx[j] = j;
+        for (slong j = mcount - 1; j > 0; j--) { slong k = (slong) (rand_r(&rng) % (unsigned long)(j + 1)); slong t = idx[j]; idx[j] = idx[k]; idx[k] = t; }
+        for (slong j = 0; j < target; j++) {
+            int c = (int)(rand_r(&rng) % 4) + 1;
+            if (!append_signed_monomial_text(&buf, &cap, &len, c, monomials[idx[j]].exponents, nvars, &first)) { free(idx); free(buf); goto fail; }
+        }
+        if (i && !append_text(&polys, &pcap, &plen, ", ")) { free(idx); free(buf); goto fail; }
+        if (!append_text(&polys, &pcap, &plen, buf ? buf : "0")) { free(idx); free(buf); goto fail; }
+        free(idx); free(buf);
+    }
+    if (!silent_mode) printf("Variable-degree bounds: [" );
+    if (!silent_mode) { for (slong j = 0; j < nvars; j++) printf("%s%ld", j ? ", " : "", bounds[j]); printf("]\nSystem: %ld equations, %ld variables\n", npolys, nvars); }
+    free(remaining); free_enumerated_monomials(monomials, mcount);
+    *polys_out = polys; *elim_out = elim; *all_out = all; return 1;
+fail:
+    free(polys); free(all); free(elim); free(remaining); free_enumerated_monomials(monomials, mcount); return 0;
+}
+
 
 /*
  * Generate a random polynomial system and return it as strings.
@@ -2867,6 +2953,9 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int    solve_rational_only_mode = 0;
     int    comp_mode   = 0;
     int    rand_mode   = 0;   /* --random / -r */
+    int    random_verdeg = 0; /* --verdeg: per-variable bounds */
+    slong  random_npolys = 0;
+    int    random_npolys_given = 0;
     int    ideal_mode  = 0;   /*  --ideal flag */
     int    field_eq_mode = 0; /* --field-equation */
     int    field_eq_final_only_mode = 0; /* --field-equation-s */
@@ -2945,6 +3034,19 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         } else if (strcmp(argv[i], "--random") == 0 ||
                    strcmp(argv[i], "-r")       == 0) {
             rand_mode = 1;
+        } else if (strcmp(argv[i], "--verdeg") == 0) {
+            rand_mode = 1;
+            random_verdeg = 1;
+        } else if ((strcmp(argv[i], "-m") == 0 || strcmp(argv[i], "--m") == 0 || strcmp(argv[i], "--num-equations") == 0) && i + 1 < argc) {
+            if (!parse_positive_slong_option(argv[i + 1], &random_npolys)) {
+                fprintf(stderr, "Error: invalid equation count '%s'.\n", argv[i + 1]);
+                return 1;
+            }
+            random_npolys_given = 1;
+            i++;
+        } else if (strcmp(argv[i], "-m") == 0 || strcmp(argv[i], "--m") == 0 || strcmp(argv[i], "--num-equations") == 0) {
+            fprintf(stderr, "Error: %s requires a positive integer argument.\n", argv[i]);
+            return 1;
         } else if (strcmp(argv[i], "--rank-pred") == 0 ||
                    strcmp(argv[i], "--rank-prediction") == 0) {
             rank_prediction = 1;
@@ -3229,8 +3331,16 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int solve_verbose_mode = (verbose_level >= 2);
     int debug_mode = (verbose_level >= 2);
 
+    if (random_verdeg && random_homogeneous) {
+        fprintf(stderr, "Error: --verdeg and --homogeneous are mutually exclusive.\n");
+        return 1;
+    }
+    if (random_npolys_given && !random_verdeg) {
+        fprintf(stderr, "Error: -m/--num-equations is only supported with --verdeg.\n");
+        return 1;
+    }
     if (!rand_mode && (random_nvars_given || random_density_given ||
-                       random_seed_given || random_homogeneous)) {
+                       random_seed_given || random_homogeneous || random_npolys_given)) {
         fprintf(stderr, "Error: -n/--nvars, --density, --seed, and --homogeneous may only be used together with --random.\n");
         return 1;
     }
@@ -3749,6 +3859,41 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             goto cleanup_fail;
         }
 
+        if (random_verdeg) {
+            slong n = npolys_rand;
+            slong m = random_npolys_given ? random_npolys : n;
+            if (random_nvars_given || random_homogeneous) {
+                fprintf(stderr, "Error: --verdeg is incompatible with -n and --homogeneous.\n");
+                free(degrees_rand);
+                goto cleanup_fail;
+            }
+            if (comp_mode) {
+                fmpz_t box, dixon;
+                fmpz_init(box); fmpz_init(dixon); fmpz_one(box); fmpz_one(dixon);
+                for (slong j = 0; j < n; j++) {
+                    fmpz_mul_ui(box, box, (ulong) (degrees_rand[j] + 1));
+                    fmpz_mul_ui(dixon, dixon, (ulong) (m * degrees_rand[j] + 1));
+                }
+                if (!silent_mode) {
+                    printf("Variable-degree bounds: [");
+                    for (slong j = 0; j < n; j++) printf("%s%ld", j ? ", " : "", degrees_rand[j]);
+                    printf("]\nBox monomials per polynomial: "); fmpz_print(box);
+                    printf("\nDixon matrix support upper bound: "); fmpz_print(dixon); printf("\n");
+                }
+                fmpz_clear(box); fmpz_clear(dixon); free(degrees_rand);
+                goto cleanup_success;
+            } else {
+                char *gp = NULL, *ge = NULL, *ga = NULL;
+                int ok = generate_random_verdeg_strings(degrees_rand, n, m, random_density,
+                                                         random_seed_given, random_seed,
+                                                         silent_mode, &gp, &ge, &ga);
+                free(degrees_rand);
+                if (!ok) { fprintf(stderr, "Error: variable-degree random generation failed\n"); goto cleanup_fail; }
+                polys_str = gp; vars_str = ge; allvars_str = ga; rand_generated = 1;
+                goto random_done;
+            }
+        }
+
         if (nvars_rand < npolys_rand - 1) {
             if (!silent_mode)
                 fprintf(stderr, "Error: random mode requires -n/--nvars >= #equations-1 = %ld (got %ld).\n",
@@ -3868,6 +4013,8 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             allvars_str = gen_allvars;
             rand_generated = 1;
         }
+random_done:
+        ;
     }
 
     if (rand_generated && !comp_mode && !solve_mode && !ideal_str &&
@@ -4440,6 +4587,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         insert_random_seed_before_polynomials(output_filename, random_seed);
     }
 
+cleanup_success:
     /* ---- cleanup ---- */
     cleanup_unified_workspace();
     if (ctx_initialized) fq_nmod_ctx_clear(ctx);

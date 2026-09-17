@@ -207,6 +207,8 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    -> Add --density <ratio> with 0 <= ratio <= 1 to choose the fraction of all monomials used (default: 0.5 over F2, otherwise 1)\n");
     printf("    -> Add --homogeneous (alias --hom) to use only monomials whose total degree equals the requested degree\n");
     printf("    -> Add --seed <num> to generate the same random system reproducibly across runs\n");
+    printf("    -> Add --verdeg to interpret the list as one exponent bound per variable; generates n equations for n variables by default\n");
+    printf("    -> Add -m/--num-equations <m> with --verdeg to choose the equation count (mutually exclusive with --homogeneous)\n");
     printf("    -> Mixed degree specs such as \"[2]*5+[3]*6\" are supported\n");
     printf("\n");
 
@@ -322,6 +324,7 @@ static int validate_cli_options(int argc, char *argv[])
         {"rank-pred", no_argument, NULL, OPT_FLAG},
         {"rank-prediction", no_argument, NULL, OPT_FLAG},
         {"random", no_argument, NULL, 'r'},
+        {"verdeg", no_argument, NULL, OPT_FLAG},
         {"homogeneous", no_argument, NULL, OPT_FLAG},
         {"hom", no_argument, NULL, OPT_FLAG},
         {"ideal", no_argument, NULL, OPT_FLAG},
@@ -355,6 +358,8 @@ static int validate_cli_options(int argc, char *argv[])
         {"array-limit-k", required_argument, NULL, OPT_FLAG},
         {"nvars", required_argument, NULL, 'n'},
         {"num-vars", required_argument, NULL, 'n'},
+        {"m", required_argument, NULL, OPT_FLAG},
+        {"num-equations", required_argument, NULL, OPT_FLAG},
         {"density", required_argument, NULL, OPT_FLAG},
         {"seed", required_argument, NULL, OPT_FLAG},
         {"specialize-vars", required_argument, NULL, OPT_FLAG},
@@ -373,7 +378,7 @@ static int validate_cli_options(int argc, char *argv[])
     optind = 1;
     opterr = 0;
 
-    while ((parsed = getopt_long(argc, args, "-scrv:w:n:f:o:hV", options,
+    while ((parsed = getopt_long(argc, args, "-scrv:w:n:m:f:o:hV", options,
                                   &option_index)) != -1) {
         if (parsed == '?') {
             const char *bad = (optind > 0 && optind <= argc) ? args[optind - 1] : "";
