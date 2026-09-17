@@ -1145,20 +1145,20 @@ static int generate_random_verdeg_strings(const long *bounds, slong nvars,
 {
     monomial_t *monomials = NULL; slong mcount = 0;
     char *polys = NULL, *elim = NULL, *all = NULL, *remaining = NULL;
-    size_t pcap = 0, plen = 0; unsigned int rng;
+    size_t pcap = 0, plen = 0;
     if (npolys <= 0) return 0;
     if (!enumerate_box_monomials(&monomials, &mcount, bounds, nvars) || mcount <= 0) return 0;
     if (!build_random_system_strings(nvars, nvars, &elim, &all, &remaining)) goto fail;
-    rng = (unsigned int) (seed_given ? seed : (ulong) (time(NULL) ^ clock()));
+    srand((unsigned int) (seed_given ? seed : (ulong) (time(NULL) ^ clock())));
     for (slong i = 0; i < npolys; i++) {
         slong target = (slong) (density_ratio * mcount); if (target < 1) target = 1; if (target > mcount) target = mcount;
         slong *idx = (slong *) malloc((size_t) mcount * sizeof(slong));
         char *buf = NULL; size_t cap = 0, len = 0; int first = 1;
         if (!idx) goto fail;
         for (slong j = 0; j < mcount; j++) idx[j] = j;
-        for (slong j = mcount - 1; j > 0; j--) { slong k = (slong) (rand_r(&rng) % (unsigned long)(j + 1)); slong t = idx[j]; idx[j] = idx[k]; idx[k] = t; }
+        for (slong j = mcount - 1; j > 0; j--) { slong k = (slong) (rand() % (j + 1)); slong t = idx[j]; idx[j] = idx[k]; idx[k] = t; }
         for (slong j = 0; j < target; j++) {
-            int c = (int)(rand_r(&rng) % 4) + 1;
+            int c = (int)(rand() % 4) + 1;
             if (!append_signed_monomial_text(&buf, &cap, &len, c, monomials[idx[j]].exponents, nvars, &first)) { free(idx); free(buf); goto fail; }
         }
         if (i && !append_text(&polys, &pcap, &plen, ", ")) { free(idx); free(buf); goto fail; }
