@@ -3916,68 +3916,318 @@ static slong dixon_minor_degree_bound(fq_mvpoly_t ***matrix,
     return FLINT_MIN(row_sum, col_sum);
 }
 
-/* Keep the LU core fixed and improve only the added directions.  Independence
-   is checked on cached Schur entries; no further polynomial evaluation or
-   full-size factorization is needed. */
-static void dixon_refine_schur_minor(fq_mvpoly_t ***matrix,
-                                    slong *rows, slong *cols, slong s, slong delta,
-                                    const slong *rx, const slong *cx,
-                                    slong nr, slong nc, const nmod_mat_t schur,
-                                    slong *chosen_r, slong *chosen_c)
+/* Sparse, per-specialization value cache shared by Schur completion and basis
+   exchange.  Zero values are cached too; untouched matrix entries cost no space. */
+typedef struct {
+    size_t key;
+    mp_limb_t value;
+} dixon_eval_slot_t;
+
+typedef struct {
+    fq_mvpoly_t ***matrix;
+    slong ncols;
+    fq_nmod_t *params;
+    fq_nmod_t scratch;
+    const fq_nmod_ctx_struct *ctx;
+    dixon_eval_slot_t *slots;
+    size_t capacity, count;
+} dixon_eval_cache_t;
+
+static size_t dixon_eval_hash(size_t key, size_t capacity)
 {
-    slong size = s + delta, bound = dixon_minor_degree_bound(matrix, rows, cols, size);
-    slong capacity = FLINT_MAX(nr, nc);
-    fq_index_degree_pair *order = flint_malloc((size_t) capacity * sizeof(*order));
-    mp_limb_t *vectors = flint_malloc((size_t) capacity * delta * sizeof(*vectors));
-    slong *trial = flint_malloc((size_t) size * sizeof(*trial));
-    for (int pass = 0; pass < 2; pass++) {
-        for (int columns = 0; columns < 2; columns++) {
-            slong count = columns ? nc : nr;
-            slong *indices = columns ? cols : rows;
-            for (slong i = 0; i < count; i++) {
-                order[i].index = i;
-                order[i].degree = columns
-                    ? compute_fq_selected_rows_col_max_total_degree(matrix, rows, size, cx[i], 1)
-                    : compute_fq_selected_cols_row_max_total_degree(matrix, rx[i], cols, size, 1);
-                for (slong j = 0; j < delta; j++)
-                    vectors[i * delta + j] = columns
-                        ? nmod_mat_entry(schur, chosen_r[j], i)
-                        : nmod_mat_entry(schur, i, chosen_c[j]);
-            }
-            qsort(order, (size_t) count, sizeof(*order), compare_fq_degrees);
-            nmod_row_basis_tracker_t tracker;
-            nmod_row_basis_tracker_init(&tracker, delta, delta, &schur->mod);
-            for (slong i = 0; i < count && tracker.current_rank < delta; i++)
-                nmod_try_add_row_to_basis_raw(&tracker, vectors, order[i].index);
-            if (tracker.current_rank == delta) {
-                memcpy(trial, indices, (size_t) s * sizeof(*trial));
-                for (slong i = 0; i < delta; i++)
-                    trial[s + i] = columns ? cx[tracker.selected_indices[i]]
-                                           : rx[tracker.selected_indices[i]];
-                slong new_bound = dixon_minor_degree_bound(matrix,
-                    columns ? rows : trial, columns ? trial : cols, size);
-                if (new_bound < bound) {
-                    memcpy(indices, trial, (size_t) size * sizeof(*trial));
-                    memcpy(columns ? chosen_c : chosen_r, tracker.selected_indices,
-                           (size_t) delta * sizeof(slong));
-                    bound = new_bound;
-                }
-            }
-            nmod_row_basis_tracker_clear(&tracker);
-        }
-    }
-    flint_free(trial);
-    flint_free(vectors);
-    flint_free(order);
+    key ^= key >> 16;
+    key *= (size_t) 0x45d9f3b;
+    key ^= key >> 16;
+    return key & (capacity - 1);
 }
 
-static mp_limb_t dixon_repair_value(fq_mvpoly_t ***matrix, slong row, slong col,
-                                   fq_nmod_t value, fq_nmod_t *params)
+static void dixon_eval_cache_init(dixon_eval_cache_t *cache,
+                                  fq_mvpoly_t ***matrix, slong ncols,
+                                  fq_nmod_t *params, const fq_nmod_ctx_t ctx)
 {
-    fq_mvpoly_t *entry = matrix[row][col];
-    if (!entry || !entry->nterms) return 0;
-    evaluate_fq_mvpoly_at_params(value, entry, params);
-    return nmod_poly_get_coeff_ui(value, 0);
+    cache->matrix = matrix;
+    cache->ncols = ncols;
+    cache->params = params;
+    cache->ctx = ctx;
+    cache->capacity = 1024;
+    cache->count = 0;
+    cache->slots = flint_calloc(cache->capacity, sizeof(*cache->slots));
+    fq_nmod_init(cache->scratch, ctx);
+}
+
+static mp_limb_t dixon_eval_cached(dixon_eval_cache_t *cache, slong row, slong col)
+{
+    size_t key = (size_t) row * cache->ncols + col + 1;
+    size_t pos = dixon_eval_hash(key, cache->capacity);
+    while (cache->slots[pos].key && cache->slots[pos].key != key)
+        pos = (pos + 1) & (cache->capacity - 1);
+    if (cache->slots[pos].key) return cache->slots[pos].value;
+    if (cache->count >= cache->capacity / 2) {
+        size_t old_capacity = cache->capacity;
+        dixon_eval_slot_t *old = cache->slots;
+        cache->capacity *= 2;
+        cache->slots = flint_calloc(cache->capacity, sizeof(*cache->slots));
+        for (size_t i = 0; i < old_capacity; i++) if (old[i].key) {
+            size_t p = dixon_eval_hash(old[i].key, cache->capacity);
+            while (cache->slots[p].key) p = (p + 1) & (cache->capacity - 1);
+            cache->slots[p] = old[i];
+        }
+        flint_free(old);
+        pos = dixon_eval_hash(key, cache->capacity);
+        while (cache->slots[pos].key) pos = (pos + 1) & (cache->capacity - 1);
+    }
+    fq_mvpoly_t *entry = cache->matrix[row][col];
+    mp_limb_t value = 0;
+    if (entry && entry->nterms) {
+        evaluate_fq_mvpoly_at_params(cache->scratch, entry, cache->params);
+        value = nmod_poly_get_coeff_ui(cache->scratch, 0);
+    }
+    cache->slots[pos].key = key;
+    cache->slots[pos].value = value;
+    cache->count++;
+    return value;
+}
+
+static void dixon_eval_cache_clear(dixon_eval_cache_t *cache)
+{
+    fq_nmod_clear(cache->scratch, cache->ctx);
+    flint_free(cache->slots);
+}
+
+/* H = E_k ... E_1 H0 F_1 ... F_l.  Each E replaces one row, each F one
+   column.  Store inverse updates I + e_p h (row) or I + h e_p^T (column).
+   After r exchanges, rebase on the current r x r minor to bound storage and
+   the cost of applying the update chain. */
+typedef struct {
+    nmod_mat_t lu, transposed, rhs, tmp, answer, updates;
+    slong *perm, *positions;
+    unsigned char *columns;
+    slong size, count, rebases;
+} dixon_exchange_solver_t;
+
+static void dixon_exchange_solver_init(dixon_exchange_solver_t *solver,
+                                       slong size, mp_limb_t prime)
+{
+    solver->size = size;
+    solver->count = solver->rebases = 0;
+    nmod_mat_init(solver->lu, size, size, prime);
+    nmod_mat_init(solver->transposed, size, size, prime);
+    nmod_mat_init(solver->rhs, size, 1, prime);
+    nmod_mat_init(solver->tmp, size, 1, prime);
+    nmod_mat_init(solver->answer, size, 1, prime);
+    nmod_mat_init(solver->updates, size, size, prime);
+    solver->perm = flint_malloc((size_t) size * sizeof(slong));
+    solver->positions = flint_malloc((size_t) size * sizeof(slong));
+    solver->columns = flint_malloc((size_t) size);
+}
+
+static void dixon_exchange_solver_clear(dixon_exchange_solver_t *solver)
+{
+    flint_free(solver->columns);
+    flint_free(solver->positions);
+    flint_free(solver->perm);
+    nmod_mat_clear(solver->updates);
+    nmod_mat_clear(solver->answer);
+    nmod_mat_clear(solver->tmp);
+    nmod_mat_clear(solver->rhs);
+    nmod_mat_clear(solver->transposed);
+    nmod_mat_clear(solver->lu);
+}
+
+/* Assemble a full LU from the existing core LU and only a delta x delta LU.
+   [A B; V W] = [L 0; V U^-1 Ls] [U L^-1 B; 0 Us], with the Schur row
+   permutation applied to the bottom rows.  No new size x size factorization. */
+static void dixon_exchange_seed(dixon_exchange_solver_t *solver,
+                                const nmod_mat_t lower, const nmod_mat_t upper,
+                                const nmod_mat_t x, const nmod_mat_t v,
+                                const nmod_mat_t schur,
+                                const slong *chosen_r, const slong *chosen_c)
+{
+    slong s = upper->r, delta = solver->size - s;
+    mp_limb_t prime = upper->mod.n;
+    nmod_mat_t small, ut, vt, bottom, xs, top;
+    nmod_mat_init(small, delta, delta, prime);
+    nmod_mat_init(ut, s, s, prime);
+    nmod_mat_init(vt, s, delta, prime);
+    nmod_mat_init(bottom, s, delta, prime);
+    nmod_mat_init(xs, s, delta, prime);
+    nmod_mat_init(top, s, delta, prime);
+    slong *sp = flint_malloc((size_t) delta * sizeof(slong));
+    for (slong i = 0; i < delta; i++) {
+        for (slong j = 0; j < delta; j++)
+            nmod_mat_entry(small, i, j) = nmod_mat_entry(schur, chosen_r[i], chosen_c[j]);
+        for (slong j = 0; j < s; j++) {
+            nmod_mat_entry(vt, j, i) = nmod_mat_entry(v, chosen_r[i], j);
+            nmod_mat_entry(xs, j, i) = nmod_mat_entry(x, j, chosen_c[i]);
+        }
+    }
+    if (nmod_mat_lu(sp, small, 0) != delta)
+        flint_throw(FLINT_ERROR, "Dixon Schur seed lost rank\n");
+    nmod_mat_transpose(ut, upper);
+    nmod_mat_solve_tril(bottom, ut, vt, 0);
+    nmod_mat_mul(top, upper, xs);
+    for (slong i = 0; i < s; i++) {
+        solver->perm[i] = i;
+        for (slong j = 0; j < s; j++)
+            nmod_mat_entry(solver->lu, i, j) = i > j
+                ? nmod_mat_entry(lower, i, j) : nmod_mat_entry(upper, i, j);
+        for (slong j = 0; j < delta; j++)
+            nmod_mat_entry(solver->lu, i, s + j) = nmod_mat_entry(top, i, j);
+    }
+    for (slong i = 0; i < delta; i++) {
+        solver->perm[s + i] = s + sp[i];
+        for (slong j = 0; j < s; j++)
+            nmod_mat_entry(solver->lu, s + i, j) = nmod_mat_entry(bottom, j, sp[i]);
+        for (slong j = 0; j < delta; j++)
+            nmod_mat_entry(solver->lu, s + i, s + j) = nmod_mat_entry(small, i, j);
+    }
+    nmod_mat_transpose(solver->transposed, solver->lu);
+    flint_free(sp);
+    nmod_mat_clear(top); nmod_mat_clear(xs); nmod_mat_clear(bottom);
+    nmod_mat_clear(vt); nmod_mat_clear(ut); nmod_mat_clear(small);
+}
+
+static void dixon_exchange_apply(dixon_exchange_solver_t *solver,
+                                 mp_limb_t *vector, slong update, int scatter)
+{
+    slong size = solver->size, p = solver->positions[update];
+    nmod_t mod = solver->lu->mod;
+    if (scatter) {
+        mp_limb_t factor = vector[p];
+        for (slong i = 0; i < size; i++)
+            vector[i] = nmod_add(vector[i], nmod_mul(factor,
+                                nmod_mat_entry(solver->updates, update, i), mod), mod);
+    } else {
+        mp_limb_t sum = 0;
+        for (slong i = 0; i < size; i++)
+            sum = nmod_add(sum, nmod_mul(vector[i],
+                           nmod_mat_entry(solver->updates, update, i), mod), mod);
+        vector[p] = nmod_add(vector[p], sum, mod);
+    }
+}
+
+/* columns=0 solves lambda H = a; columns=1 solves H lambda = a. */
+static void dixon_exchange_solve(dixon_exchange_solver_t *solver,
+                                 mp_limb_t *vector, int columns)
+{
+    for (slong k = solver->count; k-- > 0;)
+        if (solver->columns[k] != columns)
+            dixon_exchange_apply(solver, vector, k, 0);
+    for (slong i = 0; i < solver->size; i++)
+        nmod_mat_entry(solver->rhs, i, 0) = vector[columns ? solver->perm[i] : i];
+    if (columns) {
+        nmod_mat_solve_tril(solver->tmp, solver->lu, solver->rhs, 1);
+        nmod_mat_solve_triu(solver->answer, solver->lu, solver->tmp, 0);
+    } else {
+        nmod_mat_solve_tril(solver->tmp, solver->transposed, solver->rhs, 0);
+        nmod_mat_solve_triu(solver->answer, solver->transposed, solver->tmp, 1);
+    }
+    for (slong i = 0; i < solver->size; i++)
+        vector[columns ? i : solver->perm[i]] = nmod_mat_entry(solver->answer, i, 0);
+    for (slong k = 0; k < solver->count; k++)
+        if (solver->columns[k] == columns)
+            dixon_exchange_apply(solver, vector, k, 1);
+}
+
+static void dixon_exchange_record(dixon_exchange_solver_t *solver,
+                                  const mp_limb_t *coeff, slong position, int columns,
+                                  dixon_eval_cache_t *cache, slong *rows, slong *cols)
+{
+    slong k = solver->count++, size = solver->size;
+    nmod_t mod = solver->lu->mod;
+    mp_limb_t inv = nmod_inv(coeff[position], mod);
+    solver->positions[k] = position;
+    solver->columns[k] = columns;
+    for (slong i = 0; i < size; i++)
+        nmod_mat_entry(solver->updates, k, i) =
+            nmod_mul(nmod_sub(i == position, coeff[i], mod), inv, mod);
+    if (solver->count == size) {
+        for (slong i = 0; i < size; i++)
+            for (slong j = 0; j < size; j++)
+                nmod_mat_entry(solver->lu, i, j) = dixon_eval_cached(cache, rows[i], cols[j]);
+        if (nmod_mat_lu(solver->perm, solver->lu, 0) != size)
+            flint_throw(FLINT_ERROR, "Dixon basis exchange lost rank\n");
+        nmod_mat_transpose(solver->transposed, solver->lu);
+        solver->count = 0;
+        solver->rebases++;
+    }
+}
+
+/* Incremental minimum-weight basis selection over ALL candidates.  Weights
+   are exactly the original selector's maximum parameter degree on the fixed
+   opposite set, with the same index tie-break.  Circuit exchange removes the
+   worst eligible basis element.  Unlike a determinant-bound filter, this also
+   permits equal-degree exchanges needed to reproduce the greedy basis. */
+static slong dixon_exchange_axis(dixon_exchange_solver_t *solver,
+                                 dixon_eval_cache_t *cache, slong nrows, slong ncols,
+                                 slong *rows, slong *cols, int columns)
+{
+    slong size = solver->size, count = columns ? ncols : nrows, exchanges = 0;
+    slong *indices = columns ? cols : rows;
+    fq_index_degree_pair *weights = flint_malloc((size_t) count * sizeof(*weights));
+    fq_index_degree_pair *order = flint_malloc((size_t) count * sizeof(*order));
+    slong *present = flint_malloc((size_t) count * sizeof(*present));
+    mp_limb_t *coeff = flint_malloc((size_t) size * sizeof(*coeff));
+    for (slong i = 0; i < count; i++) {
+        weights[i].index = i;
+        weights[i].degree = columns
+            ? compute_fq_selected_rows_col_max_total_degree(cache->matrix, rows, size, i, 1)
+            : compute_fq_selected_cols_row_max_total_degree(cache->matrix, i, cols, size, 1);
+        present[i] = -1;
+    }
+    memcpy(order, weights, (size_t) count * sizeof(*order));
+    qsort(order, (size_t) count, sizeof(*order), compare_fq_degrees);
+    for (slong i = 0; i < size; i++) present[indices[i]] = i;
+    for (slong k = 0; k < count; k++) {
+        slong candidate = order[k].index, worst = 0;
+        if (present[candidate] >= 0 || order[k].degree < 0) continue;
+        for (slong j = 1; j < size; j++)
+            if (compare_fq_degrees(&weights[indices[j]], &weights[indices[worst]]) > 0) worst = j;
+        if (compare_fq_degrees(&weights[candidate], &weights[indices[worst]]) >= 0) break;
+        for (slong j = 0; j < size; j++)
+            coeff[j] = columns ? dixon_eval_cached(cache, rows[j], candidate)
+                               : dixon_eval_cached(cache, candidate, cols[j]);
+        dixon_exchange_solve(solver, coeff, columns);
+        worst = -1;
+        for (slong j = 0; j < size; j++) if (coeff[j] &&
+            (worst < 0 || compare_fq_degrees(&weights[indices[j]], &weights[indices[worst]]) > 0))
+            worst = j;
+        if (worst < 0 || compare_fq_degrees(&weights[candidate], &weights[indices[worst]]) >= 0)
+            continue;
+        present[indices[worst]] = -1;
+        indices[worst] = candidate;
+        present[candidate] = worst;
+        dixon_exchange_record(solver, coeff, worst, columns, cache, rows, cols);
+        exchanges++;
+    }
+    flint_free(coeff); flint_free(present); flint_free(order); flint_free(weights);
+    return exchanges;
+}
+
+static void dixon_refine_schur_minor(dixon_eval_cache_t *cache,
+                                    slong nrows, slong ncols, slong *rows, slong *cols,
+                                    const nmod_mat_t lower, const nmod_mat_t upper,
+                                    const nmod_mat_t x, const nmod_mat_t v,
+                                    const nmod_mat_t schur, slong delta,
+                                    const slong *chosen_r, const slong *chosen_c)
+{
+    dixon_exchange_solver_t solver;
+    slong size = upper->r + delta;
+    slong before = dixon_minor_degree_bound(cache->matrix, rows, cols, size);
+    clock_t cpu_start = clock();
+    double wall_start = get_wall_time();
+    dixon_exchange_solver_init(&solver, size, upper->mod.n);
+    dixon_exchange_seed(&solver, lower, upper, x, v, schur, chosen_r, chosen_c);
+    for (int pass = 0; pass < 3; pass++) {
+        slong nr = dixon_exchange_axis(&solver, cache, nrows, ncols, rows, cols, 0);
+        slong nc = dixon_exchange_axis(&solver, cache, nrows, ncols, rows, cols, 1);
+        dixon_debug_log("  Degree-aware exchange pass %d: rows=%ld, columns=%ld\n", pass + 1, nr, nc);
+        if (!nr && !nc) break;
+    }
+    dixon_debug_log("  Degree-aware exchange: degree bound %ld -> %ld, rebases=%ld\n",
+                    before, dixon_minor_degree_bound(cache->matrix, rows, cols, size), solver.rebases);
+    dixon_exchange_solver_clear(&solver);
+    dixon_maybe_print_step_detail_time("Step 3 degree-aware basis exchange", cpu_start, wall_start);
 }
 
 /* Reuse the rank-deficient candidate's packed LU.  The core consists of the
@@ -4052,8 +4302,8 @@ static int dixon_repair_predicted_minor(fq_mvpoly_t ***matrix,
         for (slong j = i; j < s; j++)
             nmod_mat_entry(upper, i, j) = nmod_mat_entry(lu, i, pivots[j]);
     }
-    fq_nmod_t value;
-    fq_nmod_init(value, ctx);
+    dixon_eval_cache_t cache;
+    dixon_eval_cache_init(&cache, matrix, ncols, params, ctx);
     slong old_r = 0, old_c = 0;
     slong nr = FLINT_MIN(2 * delta, max_r), nc = FLINT_MIN(2 * delta, max_c);
     for (;;) {
@@ -4065,7 +4315,7 @@ static int dixon_repair_predicted_minor(fq_mvpoly_t ***matrix,
             for (slong i = 0; i < s; i++)
                 for (slong j = old_c; j < nc; j++)
                     nmod_mat_entry(b, i, j - old_c) =
-                        dixon_repair_value(matrix, r0[i], cx[j], value, params);
+                        dixon_eval_cached(&cache, r0[i], cx[j]);
             nmod_mat_solve_tril(y, lower, b, 1);
             nmod_mat_solve_triu(new_x, upper, y, 0);
             nmod_mat_window_clear(new_x);
@@ -4074,7 +4324,7 @@ static int dixon_repair_predicted_minor(fq_mvpoly_t ***matrix,
         }
         for (slong i = old_r; i < nr; i++)
             for (slong j = 0; j < s; j++)
-                nmod_mat_entry(v, i, j) = dixon_repair_value(matrix, rx[i], c0[j], value, params);
+                nmod_mat_entry(v, i, j) = dixon_eval_cached(&cache, rx[i], c0[j]);
         /* Only the two new borders need evaluation and multiplication. */
         for (int border = 0; border < 2; border++) {
             slong rbegin = border ? old_r : 0, rend = border ? nr : old_r;
@@ -4088,7 +4338,7 @@ static int dixon_repair_predicted_minor(fq_mvpoly_t ***matrix,
             for (slong i = rbegin; i < rend; i++)
                 for (slong j = cbegin; j < nc; j++)
                     nmod_mat_entry(schur, i, j) = nmod_sub(
-                        dixon_repair_value(matrix, rx[i], cx[j], value, params),
+                        dixon_eval_cached(&cache, rx[i], cx[j]),
                         nmod_mat_entry(product, i - rbegin, j - cbegin), schur->mod);
             nmod_mat_clear(product);
             nmod_mat_window_clear(xx);
@@ -4116,8 +4366,8 @@ static int dixon_repair_predicted_minor(fq_mvpoly_t ***matrix,
                 rows[s + i] = rx[chosen_r[i]];
                 cols[s + i] = cx[chosen_c[i]];
             }
-            dixon_refine_schur_minor(matrix, rows, cols, s, delta,
-                                     rx, cx, nr, nc, schur, chosen_r, chosen_c);
+            dixon_refine_schur_minor(&cache, nrows, ncols, rows, cols,
+                                     lower, upper, x, v, schur, delta, chosen_r, chosen_c);
             flint_free(chosen_c);
             flint_free(chosen_r);
             success = 1;
@@ -4130,7 +4380,7 @@ static int dixon_repair_predicted_minor(fq_mvpoly_t ***matrix,
         nr = FLINT_MIN(2 * nr, max_r);
         nc = FLINT_MIN(2 * nc, max_c);
     }
-    fq_nmod_clear(value, ctx);
+    dixon_eval_cache_clear(&cache);
     nmod_mat_clear(schur);
     nmod_mat_clear(v);
     nmod_mat_clear(x);

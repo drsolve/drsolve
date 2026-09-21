@@ -25,7 +25,9 @@ static void check_repair(const nmod_mat_t values, slong target,
             fq_mvpoly_init(matrix[i][j], 1, 1, ctx);
             fq_nmod_set_ui(coeff, nmod_mat_entry(values, i, j), ctx);
             slong degree = ((degree_case == 1 && i == 1) ||
-                            (degree_case == 2 && j == 1)) ? 8 : 0;
+                            (degree_case == 2 && j == 1) ||
+                            (degree_case == 3 && i == 0) ||
+                            (degree_case == 4 && j == 0)) ? 8 : 0;
             fq_mvpoly_add_term(matrix[i][j], &zero, &degree, coeff);
         }
     }
@@ -63,7 +65,8 @@ static void check_repair(const nmod_mat_t values, slong target,
         }
         assert(nmod_mat_rank(result) == target);
         if (degree_case) {
-            assert(degree_case == 1 ? rows[1] == 2 : cols[1] == 2);
+            if (degree_case <= 2) assert(degree_case == 1 ? rows[1] == 2 : cols[1] == 2);
+            else assert(degree_case == 3 ? rows[0] == 39 : cols[0] == 39);
             assert(dixon_minor_degree_bound(matrix, rows, cols, target) == 0);
         }
     } else {
@@ -82,6 +85,115 @@ static void check_repair(const nmod_mat_t values, slong target,
     flint_free(matrix);
     fq_nmod_clear(params[0], ctx);
     fq_nmod_clear(coeff, ctx);
+}
+
+/* Compare each exchange sweep with the original sorted greedy selection on
+   exactly the same fixed opposite set and specialization.  This checks the
+   objective, index ties, inverse updates in BOTH orientations and rebasing. */
+static void check_exchange_axes(flint_rand_t state, const fq_nmod_ctx_t ctx)
+{
+    slong total_exchanges = 0, total_rebases = 0;
+    for (slong trial = 0; trial < 100; trial++) {
+        slong r = 1 + trial % 12, nr = 2 * r + 3, nc = 2 * r + 4;
+        nmod_mat_t left, right, values;
+        nmod_mat_init(left, nr, r, 65537);
+        nmod_mat_init(right, r, nc, 65537);
+        nmod_mat_init(values, nr, nc, 65537);
+        for (slong i = 0; i < nr; i++) for (slong j = 0; j < r; j++)
+            nmod_mat_entry(left, i, j) = i < nr - r ? n_randint(state, 65537) : i - (nr - r) == j;
+        for (slong i = 0; i < r; i++) for (slong j = 0; j < nc; j++)
+            nmod_mat_entry(right, i, j) = j < nc - r ? n_randint(state, 65537) : j - (nc - r) == i;
+        nmod_mat_mul(values, left, right);
+        fq_mvpoly_t ***matrix = flint_malloc((size_t) nr * sizeof(*matrix));
+        fq_nmod_t coeff, params[1];
+        fq_nmod_init(coeff, ctx); fq_nmod_init(params[0], ctx); fq_nmod_one(params[0], ctx);
+        slong zero = 0;
+        for (slong i = 0; i < nr; i++) {
+            matrix[i] = flint_calloc((size_t) nc, sizeof(**matrix));
+            for (slong j = 0; j < nc; j++) if (nmod_mat_entry(values, i, j)) {
+                matrix[i][j] = flint_malloc(sizeof(fq_mvpoly_t));
+                fq_mvpoly_init(matrix[i][j], 1, 1, ctx);
+                fq_nmod_set_ui(coeff, nmod_mat_entry(values, i, j), ctx);
+                slong degree = (trial % 2) ? n_randint(state, 4) + 4 * (i >= nr-r) + 4 * (j >= nc-r) : 0;
+                fq_mvpoly_add_term(matrix[i][j], &zero, &degree, coeff);
+            }
+        }
+        dixon_eval_cache_t cache;
+        dixon_eval_cache_init(&cache, matrix, nc, params, ctx);
+        dixon_exchange_solver_t solver;
+        dixon_exchange_solver_init(&solver, r, 65537);
+        nmod_mat_one(solver.lu); nmod_mat_one(solver.transposed);
+        slong *rows = flint_malloc((size_t) r * sizeof(slong));
+        slong *cols = flint_malloc((size_t) r * sizeof(slong));
+        mp_limb_t *vector = flint_malloc((size_t) r * sizeof(mp_limb_t));
+        mp_limb_t *rhs = flint_malloc((size_t) r * sizeof(mp_limb_t));
+        for (slong i = 0; i < r; i++) { rows[i] = nr-r+i; cols[i] = nc-r+i; solver.perm[i] = i; }
+        for (int sweep = 0; sweep < 8; sweep++) {
+            int columns = sweep % 2;
+            slong count = columns ? nc : nr;
+            fq_index_degree_pair *order = flint_malloc((size_t) count * sizeof(*order));
+            mp_limb_t *vectors = flint_malloc((size_t) count * r * sizeof(*vectors));
+            for (slong i = 0; i < count; i++) {
+                order[i].index = i;
+                order[i].degree = columns
+                    ? compute_fq_selected_rows_col_max_total_degree(matrix, rows, r, i, 1)
+                    : compute_fq_selected_cols_row_max_total_degree(matrix, i, cols, r, 1);
+                for (slong j = 0; j < r; j++)
+                    vectors[i*r+j] = columns ? nmod_mat_entry(values, rows[j], i)
+                                             : nmod_mat_entry(values, i, cols[j]);
+            }
+            qsort(order, (size_t) count, sizeof(*order), compare_fq_degrees);
+            nmod_row_basis_tracker_t reference;
+            nmod_row_basis_tracker_init(&reference, r, r, &values->mod);
+            for (slong i = 0; i < count && reference.current_rank < r; i++)
+                nmod_try_add_row_to_basis_raw(&reference, vectors, order[i].index);
+            assert(reference.current_rank == r);
+            total_exchanges += dixon_exchange_axis(&solver, &cache, nr, nc, rows, cols, columns);
+            slong *selected = columns ? cols : rows;
+            for (slong i = 0; i < r; i++) {
+                int found = 0;
+                for (slong j = 0; j < r; j++) if (selected[i] == reference.selected_indices[j]) found = 1;
+                assert(found);
+            }
+            /* Independent residual check after mixed row and column updates. */
+            for (int orientation = 0; orientation < 2; orientation++) {
+                for (slong i = 0; i < r; i++) rhs[i] = vector[i] = n_randint(state, 65537);
+                dixon_exchange_solve(&solver, vector, orientation);
+                for (slong i = 0; i < r; i++) {
+                    mp_limb_t sum = 0;
+                    for (slong j = 0; j < r; j++)
+                        sum = nmod_add(sum, nmod_mul(vector[j], orientation
+                            ? nmod_mat_entry(values, rows[i], cols[j])
+                            : nmod_mat_entry(values, rows[j], cols[i]), values->mod), values->mod);
+                    assert(sum == rhs[i]);
+                }
+            }
+            nmod_row_basis_tracker_clear(&reference);
+            flint_free(vectors); flint_free(order);
+        }
+        total_rebases += solver.rebases;
+        /* Force hash growth, zero caching and collision handling independently. */
+        for (slong i = 0; i < nr; i++) for (slong j = 0; j < nc; j++)
+            assert(dixon_eval_cached(&cache, i, j) == nmod_mat_entry(values, i, j));
+        assert(cache.count == (size_t) nr * nc);
+        size_t cached = cache.count;
+        assert(dixon_eval_cached(&cache, 0, 0) == nmod_mat_entry(values, 0, 0));
+        assert(cache.count == cached);
+        dixon_exchange_solver_clear(&solver); dixon_eval_cache_clear(&cache);
+        flint_free(rhs); flint_free(vector); flint_free(cols); flint_free(rows);
+        for (slong i = 0; i < nr; i++) {
+            for (slong j = 0; j < nc; j++) if (matrix[i][j]) {
+                fq_mvpoly_clear(matrix[i][j]); flint_free(matrix[i][j]);
+            }
+            flint_free(matrix[i]);
+        }
+        flint_free(matrix);
+        fq_nmod_clear(params[0], ctx); fq_nmod_clear(coeff, ctx);
+        nmod_mat_clear(values); nmod_mat_clear(right); nmod_mat_clear(left);
+    }
+    assert(total_exchanges > 100 && total_rebases > 0);
+    printf("Degree-aware exchange: 800 greedy comparisons passed (%ld exchanges, %ld rebases)\n",
+           total_exchanges, total_rebases);
 }
 
 int main(void)
@@ -165,10 +277,19 @@ int main(void)
     reserve_sigma = 40;
     check_repair(a, 2, ctx, 1, 0); /* Complementary pair beyond the column prefix. */
     nmod_mat_clear(a);
+    reserve_sigma = -1;
+    nmod_mat_init(a, 40, 4, 65537);
+    nmod_mat_entry(a, 0, 0) = nmod_mat_entry(a, 2, 2) = nmod_mat_entry(a, 39, 0) = 1;
+    check_repair(a, 2, ctx, 1, 3); /* Replace a degree-8 CORE row outside reserve pool. */
+    nmod_mat_init(at, 4, 40, 65537);
+    nmod_mat_transpose(at, a);
+    check_repair(at, 2, ctx, 1, 4); /* Same regression for a core column. */
+    nmod_mat_clear(at); nmod_mat_clear(a);
+    check_exchange_axes(state, ctx);
     flint_rand_clear(state);
     fq_nmod_ctx_clear(ctx);
     fmpz_clear(prime);
     flint_cleanup();
-    puts("Schur repair: 109 cases passed");
+    puts("Schur repair: 111 cases passed");
     return 0;
 }
