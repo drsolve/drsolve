@@ -148,6 +148,18 @@ static void check_exchange_axes(flint_rand_t state, const fq_nmod_ctx_t ctx)
             for (slong i = 0; i < count && reference.current_rank < r; i++)
                 nmod_try_add_row_to_basis_raw(&reference, vectors, order[i].index);
             assert(reference.current_rank == r);
+            slong *stream_rows = flint_malloc((size_t) r * sizeof(slong));
+            slong *stream_cols = flint_malloc((size_t) r * sizeof(slong));
+            memcpy(stream_rows, rows, (size_t) r * sizeof(slong));
+            memcpy(stream_cols, cols, (size_t) r * sizeof(slong));
+            dixon_degree_stream_axis(matrix, nr, nc, r, stream_rows, stream_cols,
+                                      columns, params, ctx, 1 + trial % 7);
+            slong *stream_selected = columns ? stream_cols : stream_rows;
+            /* Pivot columns of the transposed panels must preserve greedy ORDER,
+               including dependent panels, skipped pivots and row permutations. */
+            for (slong i = 0; i < r; i++)
+                assert(stream_selected[i] == reference.selected_indices[i]);
+            flint_free(stream_cols); flint_free(stream_rows);
             total_exchanges += dixon_exchange_axis(&solver, &cache, nr, nc, rows, cols, columns);
             slong *selected = columns ? cols : rows;
             for (slong i = 0; i < r; i++) {
@@ -192,8 +204,85 @@ static void check_exchange_axes(flint_rand_t state, const fq_nmod_ctx_t ctx)
         nmod_mat_clear(values); nmod_mat_clear(right); nmod_mat_clear(left);
     }
     assert(total_exchanges > 100 && total_rebases > 0);
-    printf("Degree-aware exchange: 800 greedy comparisons passed (%ld exchanges, %ld rebases)\n",
+    printf("Degree-aware exchange and blocked streaming: 800 greedy comparisons each passed (%ld exchanges, %ld rebases)\n",
            total_exchanges, total_rebases);
+}
+
+/* Exercise automatic large-minor dispatch without building a Dixon polynomial.
+   Shared monomials keep this rank-256 regression below a few MiB of input. */
+static void check_large_repair_and_cache_limit(const fq_nmod_ctx_t ctx)
+{
+    slong r = DIXON_DEGREE_BLOCK_THRESHOLD, n = 2 * r + 4, zero = 0;
+    fq_mvpoly_t entries[3];
+    fq_nmod_t one, params[1];
+    fq_nmod_init(one, ctx); fq_nmod_one(one, ctx);
+    fq_nmod_init(params[0], ctx); fq_nmod_one(params[0], ctx);
+    for (int i = 0; i < 3; i++) {
+        slong degree = 8 * i;
+        fq_mvpoly_init(&entries[i], 1, 1, ctx);
+        fq_mvpoly_add_term(&entries[i], &zero, &degree, one);
+    }
+    fq_mvpoly_t ***matrix = flint_malloc((size_t) n * sizeof(*matrix));
+    fq_index_degree_pair *order = flint_malloc((size_t) n * sizeof(*order));
+    slong *rows = flint_malloc((size_t) r * sizeof(slong));
+    slong *cols = flint_malloc((size_t) r * sizeof(slong));
+    slong *perm = flint_malloc((size_t) r * sizeof(slong));
+    for (slong i = 0; i < n; i++) {
+        order[i].index = order[i].degree = i;
+        matrix[i] = flint_calloc((size_t) n, sizeof(**matrix));
+        for (slong j = 0; j < n; j++)
+            if (i != r-1 && (i == r ? r-1 : i % r) == j % r)
+                matrix[i][j] = &entries[(i < r) + (j < r)];
+    }
+    nmod_mat_t lu;
+    nmod_mat_init(lu, r, r, fq_nmod_ctx_prime(ctx));
+    for (slong i = 0; i < r; i++) {
+        rows[i] = cols[i] = i;
+        if (i < r-1) nmod_mat_entry(lu, i, i) = 1;
+    }
+    slong rank = nmod_mat_lu(perm, lu, 0);
+    assert(rank == r-1);
+    assert(dixon_repair_predicted_minor(matrix, n, n, rows, cols, r, lu, perm,
+                                       rank, order, order, -1, params, ctx));
+    assert(dixon_minor_degree_bound(matrix, rows, cols, r) == 0);
+    for (slong i = 0; i < r; i++) for (slong j = 0; j < r; j++)
+        nmod_mat_entry(lu, i, j) = matrix[rows[i]][cols[j]] != NULL;
+    assert(nmod_mat_rank(lu) == r);
+    nmod_mat_clear(lu);
+    flint_free(perm); flint_free(cols); flint_free(rows); flint_free(order);
+    for (slong i = 0; i < n; i++) flint_free(matrix[i]);
+    flint_free(matrix);
+
+    /* Two entirely dependent panels after a row-swapping first pivot. */
+    fq_mvpoly_t *sparse[12][4] = {{NULL}}, *transpose[4][12];
+    fq_mvpoly_t **small_rows[12], **small_cols[4];
+    for (slong i = 0; i < 12; i++) {
+        sparse[i][i < 9 ? 3 : i-9] = &entries[0];
+        small_rows[i] = sparse[i];
+        for (slong j = 0; j < 4; j++) transpose[j][i] = sparse[i][j];
+    }
+    for (slong j = 0; j < 4; j++) small_cols[j] = transpose[j];
+    slong sr[4] = {0,9,10,11}, sc[4] = {0,1,2,3};
+    assert(dixon_degree_stream_axis(small_rows,12,4,4,sr,sc,0,params,ctx,3) == 0);
+    assert(sr[0] == 0 && sr[1] == 9 && sr[2] == 10 && sr[3] == 11);
+    assert(dixon_degree_stream_axis(small_cols,4,12,4,sc,sr,1,params,ctx,3) == 0);
+    assert(sr[0] == 0 && sr[1] == 9 && sr[2] == 10 && sr[3] == 11);
+
+    const size_t limit = ((size_t) 16 << 20) / sizeof(dixon_eval_slot_t);
+    slong count = (slong) (limit / 2 + 1024);
+    fq_mvpoly_t **line = flint_calloc((size_t) count, sizeof(*line));
+    line[count-1] = &entries[0];
+    dixon_eval_cache_t cache;
+    dixon_eval_cache_init(&cache, &line, count, params, ctx);
+    for (slong j = 0; j < count; j++)
+        assert(dixon_eval_cached(&cache, 0, j) == (j == count-1));
+    assert(cache.capacity == limit && cache.count == limit / 2);
+    assert(dixon_eval_cached(&cache, 0, count-1) == 1);
+    assert(cache.count == limit / 2);
+    dixon_eval_cache_clear(&cache); flint_free(line);
+    for (int i = 0; i < 3; i++) fq_mvpoly_clear(&entries[i]);
+    fq_nmod_clear(params[0], ctx); fq_nmod_clear(one, ctx);
+    puts("Large repair dispatch and bounded cache passed");
 }
 
 int main(void)
@@ -286,6 +375,7 @@ int main(void)
     check_repair(at, 2, ctx, 1, 4); /* Same regression for a core column. */
     nmod_mat_clear(at); nmod_mat_clear(a);
     check_exchange_axes(state, ctx);
+    check_large_repair_and_cache_limit(ctx);
     flint_rand_clear(state);
     fq_nmod_ctx_clear(ctx);
     fmpz_clear(prime);

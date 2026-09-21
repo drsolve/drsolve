@@ -3962,7 +3962,9 @@ static mp_limb_t dixon_eval_cached(dixon_eval_cache_t *cache, slong row, slong c
     while (cache->slots[pos].key && cache->slots[pos].key != key)
         pos = (pos + 1) & (cache->capacity - 1);
     if (cache->slots[pos].key) return cache->slots[pos].value;
-    if (cache->count >= cache->capacity / 2) {
+    /* At most 16 MiB of slots; large streamed sweeps bypass this cache. */
+    const size_t max_capacity = ((size_t) 16 << 20) / sizeof(*cache->slots);
+    if (cache->count >= cache->capacity / 2 && cache->capacity < max_capacity) {
         size_t old_capacity = cache->capacity;
         dixon_eval_slot_t *old = cache->slots;
         cache->capacity *= 2;
@@ -3982,9 +3984,11 @@ static mp_limb_t dixon_eval_cached(dixon_eval_cache_t *cache, slong row, slong c
         evaluate_fq_mvpoly_at_params(cache->scratch, entry, cache->params);
         value = nmod_poly_get_coeff_ui(cache->scratch, 0);
     }
-    cache->slots[pos].key = key;
-    cache->slots[pos].value = value;
-    cache->count++;
+    if (cache->count < cache->capacity / 2) {
+        cache->slots[pos].key = key;
+        cache->slots[pos].value = value;
+        cache->count++;
+    }
     return value;
 }
 
@@ -4230,6 +4234,162 @@ static void dixon_refine_schur_minor(dixon_eval_cache_t *cache,
     dixon_maybe_print_step_detail_time("Step 3 degree-aware basis exchange", cpu_start, wall_start);
 }
 
+/* Large minors use streamed greedy selection, avoiding one solve per
+   candidate and the long elementary-update chain.  Each panel contains
+   candidates in EXACT degree/index order as columns.  LU scans these columns
+   from left to right, so its pivot columns are the original greedy basis.
+   Only L and its row permutation survive between panels: the old U is not
+   needed to reduce subsequent candidates modulo the accepted span. */
+#define DIXON_DEGREE_BLOCK_THRESHOLD 256
+#define DIXON_DEGREE_PANEL_SIZE 128
+
+static void dixon_permute_basis_prefix(nmod_mat_t lower, slong *perm,
+                                       slong rank, const slong *action)
+{
+    slong remaining = lower->r - rank;
+    unsigned char *seen = flint_calloc((size_t) remaining, 1);
+    mp_limb_t *saved = flint_malloc((size_t) FLINT_MAX(rank, 1) * sizeof(*saved));
+    for (slong i = 0; i < remaining; i++) if (!seen[i]) {
+        slong j = i, saved_perm = perm[rank + i];
+        if (rank) memcpy(saved, nmod_mat_entry_ptr(lower, rank + i, 0), (size_t) rank * sizeof(*saved));
+        while (action[j] != i) {
+            slong src = action[j];
+            if (rank) memcpy(nmod_mat_entry_ptr(lower, rank + j, 0),
+                             nmod_mat_entry_ptr(lower, rank + src, 0), (size_t) rank * sizeof(*saved));
+            perm[rank + j] = perm[rank + src];
+            seen[j] = 1;
+            j = src;
+        }
+        if (rank) memcpy(nmod_mat_entry_ptr(lower, rank + j, 0), saved, (size_t) rank * sizeof(*saved));
+        perm[rank + j] = saved_perm;
+        seen[j] = 1;
+    }
+    flint_free(saved);
+    flint_free(seen);
+}
+
+static slong dixon_degree_stream_axis(fq_mvpoly_t ***matrix,
+                                      slong nrows, slong ncols, slong size,
+                                      slong *rows, slong *cols, int columns,
+                                      fq_nmod_t *params, const fq_nmod_ctx_t ctx,
+                                      slong panel_size)
+{
+    slong count = columns ? ncols : nrows;
+    slong *indices = columns ? cols : rows;
+    slong *opposite = columns ? rows : cols;
+    fq_index_degree_pair *order = flint_malloc((size_t) count * sizeof(*order));
+    unsigned char *present = flint_calloc((size_t) count, 1);
+    slong *selected = flint_malloc((size_t) size * sizeof(*selected));
+    slong *perm = flint_malloc((size_t) size * sizeof(*perm));
+    slong *action = flint_malloc((size_t) size * sizeof(*action));
+    double start = get_wall_time(), last_report = start;
+    dixon_debug_log("  Degree-aware blocked %s: scanning %ld candidates, target=%ld, panel=%ld\n",
+                    columns ? "columns" : "rows", count, size, panel_size);
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (slong i = 0; i < count; i++) {
+        order[i].index = i;
+        order[i].degree = columns
+            ? compute_fq_selected_rows_col_max_total_degree(matrix, rows, size, i, 1)
+            : compute_fq_selected_cols_row_max_total_degree(matrix, i, cols, size, 1);
+    }
+    qsort(order, (size_t) count, sizeof(*order), compare_fq_degrees);
+    for (slong i = 0; i < size; i++) { perm[i] = i; present[indices[i]] = 1; }
+    nmod_mat_t lower;
+    nmod_mat_init(lower, size, size, fq_nmod_ctx_prime(ctx));
+    slong rank = 0, changed = 0, processed = 0;
+    while (processed < count && order[processed].degree < 0) processed++;
+    while (processed < count && rank < size) {
+        slong width = FLINT_MIN(panel_size, count - processed);
+        nmod_mat_t panel, residual;
+        nmod_mat_init(panel, size, width, fq_nmod_ctx_prime(ctx));
+#ifdef _OPENMP
+        #pragma omp parallel
+#endif
+        {
+            fq_nmod_t value;
+            fq_nmod_init(value, ctx);
+#ifdef _OPENMP
+            #pragma omp for schedule(static)
+#endif
+            for (slong i = 0; i < size; i++) {
+                slong fixed = opposite[perm[i]];
+                for (slong j = 0; j < width; j++) {
+                    slong candidate = order[processed + j].index;
+                    fq_mvpoly_t *entry = columns ? matrix[fixed][candidate] : matrix[candidate][fixed];
+                    if (entry && entry->nterms) {
+                        evaluate_fq_mvpoly_at_nmod_params_direct(value, entry, params, ctx);
+                        nmod_mat_entry(panel, i, j) = nmod_poly_get_coeff_ui(value, 0);
+                    }
+                }
+            }
+            fq_nmod_clear(value, ctx);
+        }
+        nmod_mat_window_init(residual, panel, rank, 0, size, width);
+        if (rank) {
+            nmod_mat_t top, l11, l21, solved, product;
+            nmod_mat_window_init(top, panel, 0, 0, rank, width);
+            nmod_mat_window_init(l11, lower, 0, 0, rank, rank);
+            nmod_mat_window_init(l21, lower, rank, 0, size, rank);
+            nmod_mat_init(solved, rank, width, panel->mod.n);
+            nmod_mat_init(product, size - rank, width, panel->mod.n);
+            nmod_mat_solve_tril(solved, l11, top, 1);
+            nmod_mat_mul(product, l21, solved);
+            nmod_mat_sub(residual, residual, product);
+            nmod_mat_clear(product); nmod_mat_clear(solved);
+            nmod_mat_window_clear(l21); nmod_mat_window_clear(l11); nmod_mat_window_clear(top);
+        }
+        slong added = nmod_mat_lu(action, residual, 0), pivot = 0;
+        if (added) {
+            for (slong i = 0; i < added; i++) {
+                while (pivot < width && !nmod_mat_entry(residual, i, pivot)) pivot++;
+                if (pivot == width) flint_throw(FLINT_ERROR, "Dixon blocked selector: missing pivot\n");
+                selected[rank + i] = order[processed + pivot++].index;
+            }
+            dixon_permute_basis_prefix(lower, perm, rank, action);
+            for (slong i = 0; i < size - rank; i++)
+                for (slong j = 0; j < FLINT_MIN(i, added); j++)
+                    nmod_mat_entry(lower, rank + i, rank + j) = nmod_mat_entry(residual, i, j);
+            rank += added;
+        }
+        nmod_mat_window_clear(residual);
+        nmod_mat_clear(panel);
+        processed += width;
+        double now = get_wall_time();
+        if (rank == size || now - last_report >= 1.0) {
+            dixon_debug_log("    Degree-aware blocked %s: candidates=%ld/%ld, rank=%ld/%ld, wall=%.3fs\n",
+                            columns ? "columns" : "rows", processed, count, rank, size, now - start);
+            last_report = now;
+        }
+    }
+    if (rank != size) flint_throw(FLINT_ERROR, "Dixon blocked selector lost the certified basis\n");
+    for (slong i = 0; i < size; i++) if (!present[selected[i]]) changed++;
+    memcpy(indices, selected, (size_t) size * sizeof(*indices));
+    nmod_mat_clear(lower);
+    flint_free(action); flint_free(perm); flint_free(selected); flint_free(present); flint_free(order);
+    return changed;
+}
+
+static void dixon_refine_streamed_minor(fq_mvpoly_t ***matrix,
+                                       slong nrows, slong ncols, slong size,
+                                       slong *rows, slong *cols,
+                                       fq_nmod_t *params, const fq_nmod_ctx_t ctx)
+{
+    clock_t cpu_start = clock();
+    double wall_start = get_wall_time();
+    dixon_debug_log("  Degree-aware refinement backend: blocked streaming (rank=%ld)\n", size);
+    for (int pass = 0; pass < 3; pass++) {
+        slong nr = dixon_degree_stream_axis(matrix, nrows, ncols, size, rows, cols, 0,
+                                            params, ctx, DIXON_DEGREE_PANEL_SIZE);
+        slong nc = dixon_degree_stream_axis(matrix, nrows, ncols, size, rows, cols, 1,
+                                            params, ctx, DIXON_DEGREE_PANEL_SIZE);
+        dixon_debug_log("  Degree-aware blocked pass %d: rows=%ld, columns=%ld\n", pass + 1, nr, nc);
+        if (!nr && !nc) break;
+    }
+    dixon_maybe_print_step_detail_time("Step 3 blocked degree-aware selection", cpu_start, wall_start);
+}
+
 /* Reuse the rank-deficient candidate's packed LU.  The core consists of the
    first s permuted rows and U's pivot columns.  Its L is stored below the
    first s diagonal entries (not below the original pivot columns).
@@ -4366,8 +4526,9 @@ static int dixon_repair_predicted_minor(fq_mvpoly_t ***matrix,
                 rows[s + i] = rx[chosen_r[i]];
                 cols[s + i] = cx[chosen_c[i]];
             }
-            dixon_refine_schur_minor(&cache, nrows, ncols, rows, cols,
-                                     lower, upper, x, v, schur, delta, chosen_r, chosen_c);
+            if (size < DIXON_DEGREE_BLOCK_THRESHOLD)
+                dixon_refine_schur_minor(&cache, nrows, ncols, rows, cols,
+                                         lower, upper, x, v, schur, delta, chosen_r, chosen_c);
             flint_free(chosen_c);
             flint_free(chosen_r);
             success = 1;
@@ -4386,6 +4547,9 @@ static int dixon_repair_predicted_minor(fq_mvpoly_t ***matrix,
     nmod_mat_clear(x);
     nmod_mat_clear(upper);
     nmod_mat_clear(lower);
+    /* Release completion workspaces before allocating the streamed basis. */
+    if (success && size >= DIXON_DEGREE_BLOCK_THRESHOLD)
+        dixon_refine_streamed_minor(matrix, nrows, ncols, size, rows, cols, params, ctx);
 cleanup_indices:
     flint_free(used_c);
     flint_free(used_r);
