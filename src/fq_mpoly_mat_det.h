@@ -53,6 +53,13 @@
 #define DET_PRINT(fmt, ...)
 #endif
 
+/* MQ coefficient projection. result is initialized only on success (1).
+ * Targets are count exponent vectors of length size-1 for each axis.
+ * Only prime-field, one-parameter, divided-difference MQ matrices qualify. */
+int compute_fq_det_mq_projected(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
+                              slong size, const slong *rows,
+                              const slong *cols, slong count);
+
 // ============= Timing Utilities =============
 
 typedef struct {

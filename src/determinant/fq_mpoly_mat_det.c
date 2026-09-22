@@ -1459,6 +1459,161 @@ void compute_nmod_mpoly_det_parallel_optimized(nmod_mpoly_t det_result,
     flint_free(partial_results);
 }
 
+/* Separate x/y order ideals: down(A x B) = down(A) x down(B).
+ * Packed keys are only used when all coordinates fit in one limb. Zero is
+ * represented by key 1, leaving 0 as the empty hash bucket. The tables are
+ * immutable during the parallel minor DP. Parameters are never truncated. */
+typedef struct {
+    ulong *keys;
+    slong alloc, count;
+} mq_monom_set;
+
+typedef struct {
+    slong nvars;
+    unsigned bits;
+    ulong digit_mask;
+    mq_monom_set rows, cols, row_targets, col_targets;
+} mq_det_filter;
+
+#define MQ_FILTER_MAX_MONOMS (1L << 20)
+
+static ulong mq_monom_hash(ulong key)
+{
+    return (key ^ (key >> 17)) * 2654435761UL;
+}
+
+static int mq_monom_contains(const mq_monom_set *set, ulong code)
+{
+    ulong key = code + 1, pos = mq_monom_hash(key) & (set->alloc - 1);
+    while (set->keys[pos]) {
+        if (set->keys[pos] == key) return 1;
+        pos = (pos + 1) & (set->alloc - 1);
+    }
+    return 0;
+}
+
+/* Return 1 for a new key, 0 for a duplicate, -1 at the memory budget. */
+static int mq_monom_insert(mq_monom_set *set, ulong code)
+{
+    if (mq_monom_contains(set, code)) return 0;
+    if (set->count >= MQ_FILTER_MAX_MONOMS) return -1;
+    if (2 * set->count >= set->alloc) {
+        slong old_alloc = set->alloc;
+        ulong *old = set->keys;
+        set->alloc *= 2;
+        set->keys = flint_calloc((size_t) set->alloc, sizeof(ulong));
+        for (slong i = 0; i < old_alloc; i++) if (old[i]) {
+            ulong pos = mq_monom_hash(old[i]) & (set->alloc - 1);
+            while (set->keys[pos]) pos = (pos + 1) & (set->alloc - 1);
+            set->keys[pos] = old[i];
+        }
+        flint_free(old);
+    }
+    ulong key = code + 1, pos = mq_monom_hash(key) & (set->alloc - 1);
+    while (set->keys[pos]) pos = (pos + 1) & (set->alloc - 1);
+    set->keys[pos] = key;
+    set->count++;
+    return 1;
+}
+
+static int mq_monom_close(mq_monom_set *set, ulong code, const mq_det_filter *f)
+{
+    int inserted = mq_monom_insert(set, code);
+    if (inserted <= 0) return inserted == 0;
+    for (slong v = 0; v < f->nvars; v++) {
+        unsigned shift = v * f->bits;
+        if (((code >> shift) & f->digit_mask) &&
+            !mq_monom_close(set, code - (UWORD(1) << shift), f)) return 0;
+    }
+    return 1;
+}
+
+static void mq_filter_clear(mq_det_filter *f)
+{
+    flint_free(f->rows.keys); flint_free(f->cols.keys);
+    flint_free(f->row_targets.keys); flint_free(f->col_targets.keys);
+}
+
+static int mq_filter_init(mq_det_filter *f, slong nvars,
+                         const slong *rows, const slong *cols, slong count)
+{
+    ulong largest = 0;
+    memset(f, 0, sizeof(*f));
+    if (nvars <= 0 || count <= 0) return 0;
+    for (slong i = 0; i < count * nvars; i++) {
+        if (rows[i] < 0 || cols[i] < 0) return 0;
+        largest = FLINT_MAX(largest, (ulong) FLINT_MAX(rows[i], cols[i]));
+    }
+    f->nvars = nvars; f->bits = 1;
+    while (largest >>= 1) f->bits++;
+    if (nvars > (FLINT_BITS - 1) / f->bits) return 0;
+    f->digit_mask = (UWORD(1) << f->bits) - 1;
+    mq_monom_set *sets[] = {&f->rows, &f->cols, &f->row_targets, &f->col_targets};
+    for (int i = 0; i < 4; i++) {
+        sets[i]->alloc = 16;
+        sets[i]->keys = flint_calloc(16, sizeof(ulong));
+    }
+    for (slong i = 0; i < count; i++) {
+        ulong r = 0, c = 0;
+        for (slong v = 0; v < nvars; v++) {
+            r |= (ulong) rows[i * nvars + v] << (v * f->bits);
+            c |= (ulong) cols[i * nvars + v] << (v * f->bits);
+        }
+        if (mq_monom_insert(&f->row_targets, r) < 0 ||
+            mq_monom_insert(&f->col_targets, c) < 0 ||
+            !mq_monom_close(&f->rows, r, f) || !mq_monom_close(&f->cols, c, f)) {
+            mq_filter_clear(f);
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int mq_filter_accepts(const mq_det_filter *f, const ulong *exp, int target)
+{
+    ulong r = 0, c = 0;
+    for (slong v = 0; v < f->nvars; v++) {
+        if (exp[v] > f->digit_mask || exp[f->nvars + v] > f->digit_mask) return 0;
+        r |= exp[v] << (v * f->bits);
+        c |= exp[f->nvars + v] << (v * f->bits);
+    }
+    return mq_monom_contains(target ? &f->row_targets : &f->rows, r) &&
+           mq_monom_contains(target ? &f->col_targets : &f->cols, c);
+}
+
+/* Compact a canonical FLINT polynomial in place. Packing/order are unchanged;
+ * parameters are inspected neither by the closure nor by the final mask. */
+static void mq_filter_poly(nmod_mpoly_t poly, const nmod_mpoly_ctx_t ctx,
+                           const mq_det_filter *f, int target)
+{
+    slong nv = nmod_mpoly_ctx_nvars(ctx), out = 0;
+    slong words = mpoly_words_per_exp(poly->bits, ctx->minfo);
+    ulong *exp = flint_malloc((size_t) nv * sizeof(ulong));
+    for (slong i = 0; i < poly->length; i++) {
+        nmod_mpoly_get_term_exp_ui(exp, poly, i, ctx);
+        if (!mq_filter_accepts(f, exp, target)) continue;
+        if (out != i) {
+            poly->coeffs[out] = poly->coeffs[i];
+            memcpy(poly->exps + out * words, poly->exps + i * words,
+                   (size_t) words * sizeof(ulong));
+        }
+        out++;
+    }
+    _nmod_mpoly_set_length(poly, out, ctx);
+    flint_free(exp);
+}
+
+/* Retain FLINT's packed-exponent multiplication and compact immediately,
+ * before this product enters a sum or feeds the next DP layer. Generating
+ * pairs with push_term/sort is substantially slower on dense random MQ. */
+static void mq_filtered_mul(nmod_mpoly_t out, const nmod_mpoly_t a,
+                            const nmod_mpoly_t b, const nmod_mpoly_ctx_t ctx,
+                            const mq_det_filter *f)
+{
+    nmod_mpoly_mul(out, a, b, ctx);
+    if (f) mq_filter_poly(out, ctx, f, 0);
+}
+
 /* Layered minor DP, using colex column-subset ranks and adjacent layers.
  * The final expansion is parallelized by cofactor, followed by a tree sum.
  * The entry limit excludes arithmetic temporaries and matrix views.
@@ -1468,7 +1623,8 @@ void compute_nmod_mpoly_det_parallel_optimized(nmod_mpoly_t det_result,
 void drsolve_det_test_event(int event, slong size);
 #endif
 static int compute_nmod_mpoly_det_layered_dp(nmod_mpoly_t result, nmod_mpoly_t **matrix,
-                       slong size, nmod_mpoly_ctx_t ctx, int use_parallel, slong limit)
+                       slong size, nmod_mpoly_ctx_t ctx, int use_parallel, slong limit,
+                       const mq_det_filter *filter)
 {
     ulong choose[FLINT_BITS][FLINT_BITS] = {{0}};
     nmod_mpoly_t *previous = NULL, *current = NULL;
@@ -1566,7 +1722,7 @@ static int compute_nmod_mpoly_det_layered_dp(nmod_mpoly_t result, nmod_mpoly_t *
 #ifdef DRSOLVE_DET_TESTING
                         drsolve_det_test_event(1, size);
 #endif
-                        nmod_mpoly_mul(current[index], matrix[0][index], previous[size - 1 - index], ctx);
+                        mq_filtered_mul(current[index], matrix[0][index], previous[size - 1 - index], ctx, filter);
                         if (index & 1) {
                             nmod_mpoly_zero(product, ctx);
                             nmod_mpoly_sub(current[index], product, current[index], ctx);
@@ -1593,7 +1749,7 @@ static int compute_nmod_mpoly_det_layered_dp(nmod_mpoly_t result, nmod_mpoly_t *
                         ulong child = prefix[j] + suffix[j + 1];
                         if (nmod_mpoly_is_zero(matrix[size - k][cols[j]], ctx) ||
                             nmod_mpoly_is_zero(previous[child], ctx)) continue;
-                        nmod_mpoly_mul(product, matrix[size - k][cols[j]], previous[child], ctx);
+                        mq_filtered_mul(product, matrix[size - k][cols[j]], previous[child], ctx, filter);
                         if (j & 1)
                             nmod_mpoly_sub(sum, current[index], product, ctx);
                         else
@@ -1621,6 +1777,14 @@ static int compute_nmod_mpoly_det_layered_dp(nmod_mpoly_t result, nmod_mpoly_t *
             }
         }
         if (failed) goto cleanup;
+        if (filter && g_dixon_verbose_level >= 3) {
+            slong terms = 0;
+            /* At the root only current[0] remains live after tree reduction. */
+            slong live = k == size ? 1 : count;
+            for (slong i = 0; i < live; i++) terms += nmod_mpoly_length(current[i], ctx);
+            printf("  MQ minor DP layer %ld/%ld: %ld live minors, %ld retained terms\n",
+                   k, size, live, terms);
+        }
         for (slong i = 0; i < previous_count; i++) nmod_mpoly_clear(previous[i], ctx);
         free(previous);
         previous = current;
@@ -1644,18 +1808,19 @@ cleanup:
  * never multiplies the entry budget; each child may still use layer threads.
  * The submatrix is a shallow, read-only view of the input polynomials. */
 static void compute_nmod_mpoly_det_minor(nmod_mpoly_t result, nmod_mpoly_t **matrix,
-                         slong size, nmod_mpoly_ctx_t ctx, int use_parallel, slong limit)
+                         slong size, nmod_mpoly_ctx_t ctx, int use_parallel, slong limit,
+                       const mq_det_filter *filter)
 {
     nmod_mpoly_t **rows = NULL, *entries = NULL;
     nmod_mpoly_t accum, child, product, sum;
     int accum_ok, child_ok, product_ok, sum_ok;
     size_t width;
 
-    if (size <= 3 || limit <= 0) {
+    if (size <= 1 || (!filter && (size <= 3 || limit <= 0))) {
         compute_nmod_mpoly_det_recursive(result, matrix, size, ctx);
         return;
     }
-    if (compute_nmod_mpoly_det_layered_dp(result, matrix, size, ctx, use_parallel, limit)) return;
+    if (compute_nmod_mpoly_det_layered_dp(result, matrix, size, ctx, use_parallel, limit, filter)) return;
 
     width = (size_t) (size - 1);
     if (width > (size_t) -1 / sizeof(*rows) ||
@@ -1687,9 +1852,9 @@ static void compute_nmod_mpoly_det_minor(nmod_mpoly_t result, nmod_mpoly_t **mat
                     memcpy(&rows[i - 1][dst++], &matrix[i][j], sizeof(*entries));
                 }
             }
-            compute_nmod_mpoly_det_minor(child, rows, size - 1, ctx, use_parallel, limit);
+            compute_nmod_mpoly_det_minor(child, rows, size - 1, ctx, use_parallel, limit, filter);
             if (nmod_mpoly_is_zero(child, ctx)) continue;
-            nmod_mpoly_mul(product, matrix[0][col], child, ctx);
+            mq_filtered_mul(product, matrix[0][col], child, ctx, filter);
             if (col & 1)
                 nmod_mpoly_sub(sum, accum, product, ctx);
             else
@@ -1731,7 +1896,7 @@ static void compute_fq_det_nmod_minor_direct(fq_mvpoly_t *result,
     nmod_mpoly_t det_nmod;
     nmod_mpoly_init(det_nmod, nmod_ctx);
     compute_nmod_mpoly_det_minor(det_nmod, nmod_matrix, size, nmod_ctx,
-                                  use_parallel, g_dixon_det_cache_limit);
+                                  use_parallel, g_dixon_det_cache_limit, NULL);
 
     fq_mvpoly_clear(result);
     nmod_mpoly_to_fq_mvpoly(result, det_nmod, nvars, npars, nmod_ctx, ctx);
@@ -1745,6 +1910,59 @@ static void compute_fq_det_nmod_minor_direct(fq_mvpoly_t *result,
     }
     flint_free(nmod_matrix);
     nmod_mpoly_ctx_clear(nmod_ctx);
+}
+
+/* Compute exactly the requested coefficient block, without claiming anything
+ * about its rank. On ineligibility/budget failure, leave result untouched.
+ * rows/cols are count contiguous exponent vectors of length size-1. */
+int compute_fq_det_mq_projected(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
+                              slong size, const slong *rows,
+                              const slong *cols, slong count)
+{
+    if (size < 2 || size >= FLINT_BITS || count <= 0 || count > MQ_FILTER_MAX_MONOMS ||
+        !rows || !cols || !is_prime_field(matrix[0][0].ctx) ||
+        matrix[0][0].nvars != 2 * (size - 1) || matrix[0][0].npars != 1) return 0;
+    /* This backend intentionally accepts only divided-difference MQ matrices.
+     * Check all entries, including the parameter degree, before packing. */
+    for (slong i = 0; i < size; i++) for (slong j = 0; j < size; j++) {
+        const fq_mvpoly_t *p = &matrix[i][j];
+        if (p->nvars != 2 * (size - 1) || p->npars != 1) return 0;
+        for (slong k = 0; k < p->nterms; k++) {
+            slong degree = p->terms[k].par_exp ? p->terms[k].par_exp[0] : 0;
+            if (p->terms[k].var_exp)
+                for (slong v = 0; v < p->nvars; v++) degree += p->terms[k].var_exp[v];
+            if (degree > (i == 0 ? 2 : 1)) return 0;
+        }
+    }
+    for (slong i = 0; i < count * (size - 1); i++)
+        if (rows[i] < 0 || cols[i] < 0 || rows[i] > size + 1 || cols[i] > size + 1) return 0;
+    mq_det_filter filter;
+    if (!mq_filter_init(&filter, size - 1, rows, cols, count)) return 0;
+    const fq_nmod_ctx_struct *fq = matrix[0][0].ctx;
+    slong nv = matrix[0][0].nvars;
+    nmod_mpoly_ctx_t ctx;
+    nmod_mpoly_ctx_init(ctx, nv + 1, ORD_LEX, fq_nmod_ctx_modulus(fq)->mod.n);
+    nmod_mpoly_t **m = flint_malloc((size_t) size * sizeof(*m));
+    for (slong i = 0; i < size; i++) m[i] = flint_malloc((size_t) size * sizeof(**m));
+    fq_matrix_mvpoly_to_nmod_mpoly(m, matrix, size, ctx);
+    nmod_mpoly_t det;
+    nmod_mpoly_init(det, ctx);
+    compute_nmod_mpoly_det_minor(det, m, size, ctx,
+        size >= PARALLEL_THRESHOLD && omp_get_max_threads() > 1,
+        g_dixon_det_cache_limit, &filter);
+    mq_filter_poly(det, ctx, &filter, 1);
+    nmod_mpoly_to_fq_mvpoly(result, det, nv, 1, ctx, fq);
+    if (g_dixon_verbose_level >= 2)
+        printf("  MQ projected minor DP: targets=%ld x %ld, closures=%ld x %ld, output=%ld terms\n",
+               filter.row_targets.count, filter.col_targets.count,
+               filter.rows.count, filter.cols.count, result->nterms);
+    nmod_mpoly_clear(det, ctx);
+    for (slong i = 0; i < size; i++) {
+        for (slong j = 0; j < size; j++) nmod_mpoly_clear(m[i][j], ctx);
+        flint_free(m[i]);
+    }
+    flint_free(m); nmod_mpoly_ctx_clear(ctx); mq_filter_clear(&filter);
+    return 1;
 }
 
 // ============= Univariate Optimization Implementation =============

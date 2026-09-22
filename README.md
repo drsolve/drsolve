@@ -209,6 +209,44 @@ Example:
 - Available methods: `0.Recursive`, `1.Kronecker+HNF`, `2.Interpolation`, `3.Sparse interpolation`, `4.Bareiss`, `5.Recursive Dixon construction`
 - `--method` sets both Step 1 and Step 4 for backward compatibility
 
+#### MQ Step 1 coefficient filtering
+
+The recursive Step 1 backend has an opt-in projected minor DP for
+prime-field MQ systems with one parameter (total degree at most two, including
+the parameter, and elimination degree two in each equation). It constructs a
+canonical candidate before computing the Dixon polynomial, retains the downward
+closures of its row/column monomials after each multiplication, and emits only
+the candidate coefficients. Parameter polynomials are preserved exactly.
+
+The candidate uses a fixed squarefree-first order, so it can differ from the
+legacy Step 3 first-occurrence candidate. A full-rank specialization verifies
+that minor; maximality still relies on the existing generic rank model. Failed
+verification (including unlucky evaluations in small fields) recomputes the
+full Dixon polynomial and uses the existing selection/Schur-repair path.
+Unsupported methods/fields, packing or support-budget limits also use the full
+path. The public `compute_fq_cancel_matrix_det` API always computes the full
+polynomial.
+
+Enable the experimental path with:
+
+```bash
+DRSOLVE_MQ_STEP1_FILTER=1 ./drsolve <args>
+```
+
+Leave this variable unset (or set it to `0`) to use the full path.
+
+`DRSOLVE_PREDICT_MAXRANK=0` also disables this optimization. Filtering reduces
+retained coefficients but is not always faster, especially for small systems
+or when the candidate fails verification. Verbosity 2 reports target/closure
+sizes; verbosity 3 reports retained terms per DP layer. Coefficient and
+integration checks, plus a reproducible four-thread
+random-MQ timing probe over F_65537, are available with:
+
+```bash
+make test-mq-filter
+./build/dixon_mq_filter_test --bench
+```
+
 #### Resultant construction
 ```bash
 ./drsolve --dixon <args>

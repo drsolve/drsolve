@@ -4634,7 +4634,154 @@ fail:
     return 0;
 }
 
-void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
+/* Enumerate the MQ dual support: each suffix has degree at most its
+ * length. Rows are its reversal. This is a structural candidate universe,
+ * independent of coefficient cancellations in any particular finite field. */
+static int dixon_mq_support(slong *out, slong capacity, slong *count, slong *exp,
+                            slong n, slong pos, slong remaining)
+{
+    if (pos == n) {
+        if (*count >= capacity) return 0;
+        memcpy(out + (*count)++ * n, exp, (size_t) n * sizeof(slong));
+        return 1;
+    }
+    remaining = FLINT_MIN(remaining, n - pos);
+    for (slong e = remaining; e >= 0; e--) {
+        exp[pos] = e;
+        if (!dixon_mq_support(out, capacity, count, exp, n, pos + 1, remaining - e)) return 0;
+    }
+    return 1;
+}
+
+/* A successful return owns an initialized, projected Dixon polynomial.
+ * Candidate verification follows the existing generic-rank heuristic: it
+ * certifies non-singularity of this block, not an upper bound on full rank.
+ * On failure the caller computes the FULL polynomial, so Schur repair and
+ * the degree-aware fallback never see an incomplete coefficient matrix. */
+static int dixon_try_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
+                                   const fq_mvpoly_t *polys, slong nvars,
+                                   slong npars, det_method_t method)
+{
+    const char *enabled = getenv("DRSOLVE_MQ_STEP1_FILTER");
+    const char *predict = getenv("DRSOLVE_PREDICT_MAXRANK");
+    if (!enabled || strcmp(enabled, "1") != 0 ||
+        (predict && strcmp(predict, "0") == 0) ||
+        method != DET_METHOD_RECURSIVE || npars != 1 || nvars < 2 ||
+        nvars >= FLINT_BITS || fq_nmod_ctx_degree(polys[0].ctx) != 1) return 0;
+    long *degrees = flint_malloc((size_t) (nvars + 1) * sizeof(long));
+    int eligible = 1;
+    for (slong i = 0; i <= nvars; i++) {
+        degrees[i] = 0;
+        for (slong t = 0; t < polys[i].nterms; t++) {
+            slong d = 0;
+            if (polys[i].terms[t].var_exp)
+                for (slong v = 0; v < nvars; v++) d += polys[i].terms[t].var_exp[v];
+            degrees[i] = FLINT_MAX(degrees[i], d);
+            if (polys[i].terms[t].par_exp) d += polys[i].terms[t].par_exp[0];
+            if (d > 2) eligible = 0;
+        }
+        if (degrees[i] != 2) eligible = 0;
+    }
+    slong *R = NULL, *H = NULL, rlen = 0, hlen = 0, sigma = 0, rank = 0;
+    int model = eligible && dixon_rank_profile_from_degrees(&R, &rlen, &H, &hlen,
+                                  &sigma, &rank, degrees, nvars + 1, nvars);
+    flint_free(degrees);
+    slong count = 0;
+    for (slong i = 0; model && i < rlen; i++) {
+        /* Bound support construction before allocating/enumerating. */
+        if (R[i] > (1L << 18) - count) model = 0;
+        else count += R[i];
+    }
+    flint_free(R);
+    if (!model || rank <= 0 || rank >= count) { flint_free(H); return 0; }
+    slong *exps = flint_malloc((size_t) count * nvars * sizeof(slong));
+    slong *reverse = flint_malloc((size_t) count * nvars * sizeof(slong));
+    slong *tmp = flint_calloc((size_t) nvars, sizeof(slong));
+    slong actual = 0;
+    if (!dixon_mq_support(exps, count, &actual, tmp, nvars, 0, nvars) || actual != count) {
+        flint_free(tmp); flint_free(reverse); flint_free(exps); flint_free(H);
+        return 0;
+    }
+    monom_t *rm = NULL, *cm = NULL;
+    slong nr = 0, nc = 0, rcap = 0, ccap = 0, rhs = 16, chs = 16;
+    hash_entry_t **ri = flint_calloc(16, sizeof(*ri));
+    hash_entry_t **ci = flint_calloc(16, sizeof(*ci));
+    /* Canonical MQ staircase: squarefree monomials first, then increasing
+     * repeated-variable degree, breaking ties by descending lex order.
+     * Unlike the legacy first-occurrence order this exists before Step 1.
+     * Its candidate must pass verification; no almost-revlex theorem is
+     * assumed for random inputs or small characteristic. */
+    for (slong excess = 0; excess <= nvars; excess++) {
+        for (slong j = 0; j < count; j++) {
+            slong e = 0;
+            for (slong v = 0; v < nvars; v++) e += FLINT_MAX(0, exps[j * nvars + v] - 1);
+            if (e != excess) continue;
+            for (slong v = 0; v < nvars; v++)
+                reverse[j * nvars + v] = exps[j * nvars + nvars - 1 - v];
+            dixon_intern_monom(&rm, &nr, &rcap, &ri, &rhs, reverse + j * nvars, nvars);
+            dixon_intern_monom(&cm, &nc, &ccap, &ci, &chs, exps + j * nvars, nvars);
+        }
+    }
+    slong *rows = NULL, *cols = NULL, size = 0;
+    int ok = dixon_build_predicted_mirror_indices(&rows, &cols, &size,
+                    rm, nr, cm, nc, ri, rhs, ci, chs, nvars, H, hlen, sigma, 2, rank);
+    flint_free(H);
+    slong *target_rows = NULL, *target_cols = NULL;
+    int computed = 0;
+    if (ok) {
+        target_rows = flint_malloc((size_t) rank * nvars * sizeof(slong));
+        target_cols = flint_malloc((size_t) rank * nvars * sizeof(slong));
+        for (slong i = 0; i < rank; i++) {
+            memcpy(target_rows + i * nvars, rm[rows[i]].exp, (size_t) nvars * sizeof(slong));
+            memcpy(target_cols + i * nvars, cm[cols[i]].exp, (size_t) nvars * sizeof(slong));
+        }
+        computed = compute_fq_det_mq_projected(result, matrix, nvars + 1,
+                                               target_rows, target_cols, rank);
+        ok = computed;
+    }
+    if (ok) {
+        slong *rmap = flint_malloc((size_t) nr * sizeof(slong));
+        slong *cmap = flint_malloc((size_t) nc * sizeof(slong));
+        for (slong i = 0; i < nr; i++) rmap[i] = -1;
+        for (slong j = 0; j < nc; j++) cmap[j] = -1;
+        for (slong i = 0; i < rank; i++) { rmap[rows[i]] = i; cmap[cols[i]] = i; }
+        ulong prime = fq_nmod_ctx_modulus(polys[0].ctx)->mod.n;
+        nmod_mat_t values;
+        nmod_mat_init(values, rank, rank, prime);
+        ok = 0;
+        /* Distinct points, including zero. False negatives only cause full
+         * recomputation; one full-rank evaluation certifies this minor. */
+        for (ulong point = 0; point < FLINT_MIN(prime, UWORD(3)) && !ok; point++) {
+            nmod_mat_zero(values);
+            for (slong t = 0; t < result->nterms; t++) {
+                const fq_monomial_t *term = &result->terms[t];
+                slong r = lookup_monom_index(ri, rhs, term->var_exp, nvars);
+                slong c = lookup_monom_index(ci, chs, term->var_exp + nvars, nvars);
+                FLINT_ASSERT(r >= 0 && c >= 0 && rmap[r] >= 0 && cmap[c] >= 0);
+                ulong coeff = nmod_poly_get_coeff_ui(term->coeff, 0);
+                ulong power = term->par_exp ? term->par_exp[0] : 0;
+                coeff = nmod_mul(coeff, nmod_pow_ui(point, power, values->mod), values->mod);
+                ulong *entry = nmod_mat_entry_ptr(values, rmap[r], cmap[c]);
+                *entry = nmod_add(*entry, coeff, values->mod);
+            }
+            ok = nmod_mat_rank(values) == rank;
+        }
+        nmod_mat_clear(values);
+        flint_free(rmap); flint_free(cmap);
+    }
+    if (computed && !ok) fq_mvpoly_clear(result);
+    if (computed)
+        dixon_info_log("  MQ Step 1 projection: %ld x %ld candidate %s\n", rank, rank,
+                       ok ? "verified" : "failed; recomputing full Dixon polynomial");
+    flint_free(target_rows); flint_free(target_cols);
+    flint_free(rows); flint_free(cols);
+    free_monom_index(ri, rhs); free_monom_index(ci, chs);
+    flint_free(rm); flint_free(cm);
+    flint_free(tmp); flint_free(reverse); flint_free(exps);
+    return ok;
+}
+
+static void extract_fq_coefficient_matrix_from_dixon_impl(fq_mvpoly_t ***coeff_matrix,
                                               fq_nmod_poly_mat_t *poly_matrix_out,
                                               slong *row_indices, slong *col_indices,
                                               slong *matrix_size,
@@ -4643,7 +4790,7 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
                                               slong nvars, slong npars,
                                               char **var_names, char **par_names,
                                               const char *gen_name,
-                                              const long *degrees, slong num_polys) {
+                                              const long *degrees, slong num_polys, int projected_verified) {
     dixon_info_log("\nStep 2: Construct Dixon matrix\n");
     if (extracted_x_power)
         *extracted_x_power = 0;
@@ -4764,6 +4911,22 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
     slong *col_idx_array = NULL;
     slong num_rows, num_cols;
     
+    if (projected_verified) {
+        /* Step 1 emitted ONLY the verified target block. Every target row
+         * and column occurs because its specialization is non-singular. */
+        FLINT_ASSERT(nx_monoms == ndual_monoms);
+        num_rows = num_cols = nx_monoms;
+        row_idx_array = flint_malloc((size_t) num_rows * sizeof(slong));
+        col_idx_array = flint_malloc((size_t) num_cols * sizeof(slong));
+        for (slong i = 0; i < num_rows; i++) row_idx_array[i] = col_idx_array[i] = i;
+        const char *reorder = getenv("DRSOLVE_PREDICT_REORDER");
+        if (!reorder || strcmp(reorder, "0") != 0)
+            reorder_fq_selected_minor_by_degree(full_matrix, row_idx_array,
+                                               col_idx_array, num_rows, npars);
+        dixon_debug_log("  Using MQ candidate verified in Step 1\n");
+        goto coefficient_matrix_selected;
+    }
+
     const char *predict_env = getenv("DRSOLVE_PREDICT_MAXRANK");
     int use_predicted_candidate =
         (npars == 1 && (predict_env == NULL || strcmp(predict_env, "0") != 0));
@@ -5254,6 +5417,21 @@ coefficient_matrix_selected: ;
                                          get_wall_time() - step3_wall_start);
 }
 
+void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
+                                              fq_nmod_poly_mat_t *poly_matrix_out,
+                                              slong *row_indices, slong *col_indices,
+                                              slong *matrix_size,
+                                              slong *extracted_x_power,
+                                              const fq_mvpoly_t *dixon_poly,
+                                              slong nvars, slong npars,
+                                              char **var_names, char **par_names,
+                                              const char *gen_name,
+                                              const long *degrees, slong num_polys) {
+    extract_fq_coefficient_matrix_from_dixon_impl(coeff_matrix, poly_matrix_out,
+        row_indices, col_indices, matrix_size, extracted_x_power, dixon_poly,
+        nvars, npars, var_names, par_names, gen_name, degrees, num_polys, 0);
+}
+
 // Compute determinant of cancellation matrix
 void compute_fq_cancel_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **modified_M_mvpoly,
                                   slong nvars, slong npars, det_method_t method) {
@@ -5501,7 +5679,10 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
         dixon_debug_log("  Computing cancellation matrix determinant using %s...\n",
                         dixon_det_method_name(step1_method));
     }
-    compute_fq_cancel_matrix_det(&d_poly, modified_M_mvpoly, nvars, npars, step1_method);
+    int projected_verified = dixon_try_mq_projection(&d_poly, modified_M_mvpoly,
+                                polys, nvars, npars, step1_method);
+    if (!projected_verified)
+        compute_fq_cancel_matrix_det(&d_poly, modified_M_mvpoly, nvars, npars, step1_method);
     
     if (g_dixon_verbose_level >= 1 && d_poly.nterms <= 100) {
         dixon_info_log("  Dixon polynomial: %ld terms\n", d_poly.nterms);
@@ -5537,11 +5718,11 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     slong extracted_x_power = 0;
     
     long *rank_degrees = dixon_polynomial_degrees(polys, nvars + 1, nvars);
-    extract_fq_coefficient_matrix_from_dixon(&coeff_matrix,
+    extract_fq_coefficient_matrix_from_dixon_impl(&coeff_matrix,
                                             use_poly_matrix ? &poly_matrix : NULL,
                                             row_indices, col_indices,
                                             &matrix_size, &extracted_x_power, &d_poly, nvars, npars,
-                                            NULL, NULL, NULL, rank_degrees, nvars + 1);
+                                            NULL, NULL, NULL, rank_degrees, nvars + 1, projected_verified);
     flint_free(rank_degrees);
 
     if (matrix_size > 0 && use_poly_matrix) {
@@ -5687,7 +5868,10 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     dixon_info_log("  Determinant method: %s\n", dixon_det_method_name(step1_method));
     dixon_debug_log("  Computing cancellation matrix determinant using %s...\n",
                     dixon_det_method_name(step1_method));
-    compute_fq_cancel_matrix_det(&d_poly, modified_M_mvpoly, nvars, npars, step1_method);
+    int projected_verified = dixon_try_mq_projection(&d_poly, modified_M_mvpoly,
+                                polys, nvars, npars, step1_method);
+    if (!projected_verified)
+        compute_fq_cancel_matrix_det(&d_poly, modified_M_mvpoly, nvars, npars, step1_method);
     
     if (g_dixon_verbose_level >= 1 && d_poly.nterms <= 100) {
         dixon_info_log("  Dixon polynomial: %ld terms\n", d_poly.nterms);
@@ -5713,12 +5897,12 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     slong extracted_x_power = 0;
     
     long *rank_degrees = dixon_polynomial_degrees(polys, nvars + 1, nvars);
-    extract_fq_coefficient_matrix_from_dixon(&coeff_matrix,
+    extract_fq_coefficient_matrix_from_dixon_impl(&coeff_matrix,
                                             use_poly_matrix ? &poly_matrix : NULL,
                                             row_indices, col_indices,
                                             &matrix_size, &extracted_x_power, &d_poly, nvars, npars,
                                             var_names, par_names, gen_name,
-                                            rank_degrees, nvars + 1);
+                                            rank_degrees, nvars + 1, projected_verified);
     flint_free(rank_degrees);
 
     if (matrix_size > 0 && use_poly_matrix) {

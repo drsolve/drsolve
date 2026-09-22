@@ -438,6 +438,13 @@ test-schur-repair: $(BUILD_DIR)/dixon_schur_repair_test
 $(BUILD_DIR)/dixon_schur_repair_test: $(SRC_DIR)/test/dixon_schur_repair_test.c $(SRC_DIR)/dixon/dixon_flint.c $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon_schur_repair_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
+.PHONY: test-mq-filter
+test-mq-filter: $(BUILD_DIR)/dixon_mq_filter_test
+	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/dixon_mq_filter_test
+
+$(BUILD_DIR)/dixon_mq_filter_test: $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/fq_mpoly_mat_det.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon_mq_filter_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
 .PHONY: test-minor-dp
 test-minor-dp: $(BUILD_DIR)/det_minor_dp_test
 	./$(BUILD_DIR)/det_minor_dp_test
