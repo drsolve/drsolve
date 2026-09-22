@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Method reference: Zhao and Fu, recursive construction of the Dixon matrix.
+ * https://link.springer.com/article/10.1360/04ys0166
+ */
 /*
  * dixon_recursive.c - Recursive block-matrix Dixon construction.
  *

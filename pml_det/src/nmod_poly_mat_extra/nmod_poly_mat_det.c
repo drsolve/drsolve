@@ -1,3 +1,7 @@
+/* Method reference for the HNF determinant path: Labahn, Neiger and Zhou.
+ * https://arxiv.org/abs/1607.04176
+ * This file also contains code from the bundled PML subset; see below.
+ */
 /*
     Copyright (C) 2025 Vincent Neiger
 

@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Method reference for the stored-minor expansion path: Gentleman and
+ * Johnson. https://dl.acm.org/doi/10.1145/355694.355696
+ */
 /* unified_mpoly_det.c - Implementation of unified polynomial matrix determinant computation */
 
 #include "unified_mpoly_det.h"

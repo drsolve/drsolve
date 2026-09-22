@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Method reference for the recursive Dixon construction complexity estimate:
+ * X. Qin et al. https://www.tandfonline.com/doi/full/10.1080/00207160.2016.1276572
+ */
 // dixon_complexity.c - Modified to use Hessenberg method
 
 #include "dixon_complexity.h"

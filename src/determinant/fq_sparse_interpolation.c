@@ -1,4 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Method reference: Q. L. Huang, sparse interpolation for polynomial
+ * determinant computation.
+ * https://www.sciencedirect.com/science/article/pii/S0747717122000517
+ */
 #include "fq_sparse_interpolation.h"
 
 typedef int (*sparse_probe_fn_t)(mp_limb_t* a,

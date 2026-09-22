@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Method reference for the stored-minor expansion path: Gentleman and
+ * Johnson. https://dl.acm.org/doi/10.1145/355694.355696
+ */
 /*
  * Implementation of optimized polynomial matrix determinant computation
  * Contains all algorithm implementations for various determinant methods
