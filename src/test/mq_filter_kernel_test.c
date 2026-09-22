@@ -12,7 +12,7 @@ static void check_packing(flint_rand_t state, slong n, ordering_t order)
     }
     rows[0] = cols[n - 1] = 3;
     mq_det_filter filter;
-    assert(mq_filter_init(&filter, n, rows, cols, 8));
+    assert(mq_filter_init(&filter, n, rows, 8, cols, 8));
     nmod_mpoly_ctx_t ctx;
     nmod_mpoly_ctx_init(ctx, 2 * n + 1, order, 101);
     mq_filter_prepare_packed(&filter, ctx, n + 2);
@@ -88,7 +88,7 @@ static void check_layer_certificate(void)
     slong sizes[] = {1,3,4};
     for (slong i = 0; i < 3; i++) {
         mq_det_filter f;
-        assert(mq_filter_init(&f, 3, sets[i], sets[i], sizes[i]));
+        assert(mq_filter_init(&f, 3, sets[i], sizes[i], sets[i], sizes[i]));
         assert(mq_safe_axis_layers(&f, &f.rows, m, 4, 0) == i);
         assert(mq_safe_axis_layers(&f, &f.cols, m, 4, 1) == i);
         mq_filter_clear(&f);
@@ -100,7 +100,7 @@ static void check_layer_certificate(void)
         all[3 * count++ + 2] = 3 - a - b;
     }
     mq_det_filter f;
-    assert(mq_filter_init(&f, 3, all, all, count));
+    assert(mq_filter_init(&f, 3, all, count, all, count));
     assert(mq_safe_axis_layers(&f, &f.rows, m, 4, 0) == 3);
     mq_filter_clear(&f);
     for (slong row = 0; row < 4; row++) {

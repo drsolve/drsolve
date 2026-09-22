@@ -51,15 +51,15 @@ static int in_targets(const slong *exp, const slong *targets, slong count, slong
 
 /* Compare every coefficient, including all parameter powers and coefficients
  * missing from the projected result, with an independently computed full D. */
-static void check_block(const fq_mvpoly_t *actual, const fq_mvpoly_t *full,
-                         const slong *rows, const slong *cols, slong count, slong n)
+static void check_rect(const fq_mvpoly_t *actual, const fq_mvpoly_t *full,
+                       const slong *rows, slong row_count, const slong *cols, slong col_count, slong n)
 {
     fq_mvpoly_t expected;
     fq_mvpoly_init(&expected, 2 * n, 1, full->ctx);
     for (slong t = 0; t < full->nterms; t++) {
         const fq_monomial_t *term = &full->terms[t];
-        if (in_targets(term->var_exp, rows, count, n) &&
-            in_targets(term->var_exp + n, cols, count, n))
+        if (in_targets(term->var_exp, rows, row_count, n) &&
+            in_targets(term->var_exp + n, cols, col_count, n))
             fq_mvpoly_add_term_fast(&expected, term->var_exp, term->par_exp, term->coeff);
     }
     nmod_mpoly_ctx_t ctx;
@@ -70,6 +70,12 @@ static void check_block(const fq_mvpoly_t *actual, const fq_mvpoly_t *full,
     assert(nmod_mpoly_equal(x, y, ctx));
     nmod_mpoly_clear(x, ctx); nmod_mpoly_clear(y, ctx); nmod_mpoly_ctx_clear(ctx);
     fq_mvpoly_clear(&expected);
+}
+
+static void check_block(const fq_mvpoly_t *actual, const fq_mvpoly_t *full,
+                        const slong *rows, const slong *cols, slong count, slong n)
+{
+    check_rect(actual, full, rows, count, cols, count, n);
 }
 
 static void check_predicted_block(const fq_mvpoly_t *actual, const fq_mvpoly_t *full, slong n)
@@ -83,6 +89,85 @@ static void check_predicted_block(const fq_mvpoly_t *actual, const fq_mvpoly_t *
     }
     check_block(actual, full, rows, cols, actual->nterms, n);
     flint_free(rows); flint_free(cols);
+}
+
+/* Force a deficient candidate even over a large prime, and compare the repaired
+ * block against a separately computed full Dixon polynomial. Also ask for an
+ * impossible rank, checking that a failed repair preserves its input. */
+static void check_local_repair(void)
+{
+    const slong n = 3, count = 14;
+    fq_nmod_ctx_t ctx;
+    fq_nmod_ctx_init_ui(ctx, 65537, 1, "a");
+    flint_rand_t state;
+    flint_rand_init(state); flint_rand_set_seed(state, 172, 913);
+    fq_mvpoly_t *p = random_mq(n, ctx, state), **m, **a, full;
+    build_fq_cancellation_matrix_mvpoly(&m, p, n, 1);
+    perform_fq_matrix_row_operations_mvpoly(&a, &m, n, 1);
+    compute_fq_cancel_matrix_det(&full, a, n, 1, DET_METHOD_RECURSIVE);
+    slong exps[42], reverse[42], tmp[3], actual = 0;
+    assert(dixon_mq_support(exps, count, &actual, tmp, n, 0, n) && actual == count);
+    monom_t *rm = NULL, *cm = NULL;
+    slong nr = 0, nc = 0, rcap = 0, ccap = 0, rhs = 16, chs = 16;
+    hash_entry_t **ri = flint_calloc(16, sizeof(*ri)), **ci = flint_calloc(16, sizeof(*ci));
+    for (slong i = 0; i < count; i++) {
+        for (slong v = 0; v < n; v++) reverse[i*n+v] = exps[i*n+n-1-v];
+        dixon_intern_monom(&rm, &nr, &rcap, &ri, &rhs, reverse+i*n, n);
+        dixon_intern_monom(&cm, &nc, &ccap, &ci, &chs, exps+i*n, n);
+    }
+    nmod_mat_t evaluated;
+    nmod_mat_init(evaluated, count, count, 65537);
+    for (slong t = 0; t < full.nterms; t++) {
+        fq_monomial_t *term = full.terms + t;
+        slong r = lookup_monom_index(ri, rhs, term->var_exp, n);
+        slong c = lookup_monom_index(ci, chs, term->var_exp+n, n);
+        assert(r >= 0 && c >= 0);
+        nmod_mat_entry(evaluated,r,c) = nmod_add(nmod_mat_entry(evaluated,r,c),
+                                  nmod_poly_get_coeff_ui(term->coeff,0), evaluated->mod);
+    }
+    slong rank = nmod_mat_rank(evaluated);
+    assert(rank > 0 && rank < count);
+    for (int failure = 0; failure <= 1; failure++) {
+        slong size = rank + failure, s = 0;
+        slong rows[14], cols[14], saved_rows[14], saved_cols[14], perm[14];
+        slong tr[42], tc[42];
+        nmod_mat_t lu;
+        nmod_mat_init(lu, size, size, 65537);
+        int found = 0;
+        for (int attempt = 0; attempt < 1000 && !found; attempt++) {
+            for (slong i = 0; i < count; i++) rows[i] = cols[i] = i;
+            for (slong i = count-1; i > 0; i--) {
+                slong j = n_randint(state, i+1), t = rows[i]; rows[i] = rows[j]; rows[j] = t;
+                j = n_randint(state, i+1); t = cols[i]; cols[i] = cols[j]; cols[j] = t;
+            }
+            for (slong i = 0; i < size; i++) for (slong j = 0; j < size; j++)
+                nmod_mat_entry(lu,i,j) = nmod_mat_entry(evaluated,rows[i],cols[j]);
+            s = nmod_mat_lu(perm, lu, 0);
+            found = s > 0 && s < size && size-s <= 8;
+        }
+        assert(found);
+        for (slong i = 0; i < size; i++) {
+            memcpy(tr+i*n, rm[rows[i]].exp, n*sizeof(slong));
+            memcpy(tc+i*n, cm[cols[i]].exp, n*sizeof(slong));
+        }
+        memcpy(saved_rows, rows, sizeof(rows)); memcpy(saved_cols, cols, sizeof(cols));
+        fq_mvpoly_t projected;
+        assert(compute_fq_det_mq_projected(&projected, a, n+1, tr, tc, size));
+        int ok = dixon_repair_mq_projection(&projected, a, n, rm, nr, cm, nc,
+                         ri, rhs, ci, chs, rows, cols, size, lu, perm, s, 1, n+2);
+        assert(ok == !failure);
+        if (ok) check_predicted_block(&projected, &full, n);
+        else {
+            assert(!memcmp(rows, saved_rows, sizeof(rows)) && !memcmp(cols, saved_cols, sizeof(cols)));
+            check_block(&projected, &full, tr, tc, size, n);
+        }
+        printf("MQ bounded repair: target=%ld initial rank=%ld, %s\n", size,s,ok?"verified":"failure preserved input");
+        fq_mvpoly_clear(&projected); nmod_mat_clear(lu);
+    }
+    nmod_mat_clear(evaluated);
+    free_monom_index(ri,rhs); free_monom_index(ci,chs); flint_free(rm); flint_free(cm);
+    fq_mvpoly_clear(&full); clear_input(p,m,a,n);
+    flint_rand_clear(state); fq_nmod_ctx_clear(ctx);
 }
 
 static void check_coefficients(void)
@@ -114,6 +199,13 @@ static void check_coefficients(void)
                 fq_mvpoly_clear(&actual);
             }
         }
+        for (slong rcount = 1; rcount <= 3; rcount += 2) {
+            slong ccount = 4 - rcount;
+            assert(compute_fq_det_mq_projected_rect(&actual, a, n+1, rows, rcount, cols, ccount));
+            check_rect(&actual, &full, rows, rcount, cols, ccount, n);
+            fq_mvpoly_clear(&actual);
+        }
+        assert(!compute_fq_det_mq_projected_rect(&actual, a, n+1, rows, 0, cols, 3));
         g_dixon_det_cache_limit = 100000;
         int ok = dixon_try_mq_projection(&actual, a, p, n, 1, DET_METHOD_RECURSIVE);
         if (ok) {
@@ -310,6 +402,7 @@ int main(int argc, char **argv)
         flint_cleanup_master();
         return 0;
     }
+    check_local_repair();
     check_coefficients();
     check_entry_points(0);
     check_entry_points(1);

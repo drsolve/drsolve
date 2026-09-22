@@ -1553,15 +1553,19 @@ static void mq_filter_clear(mq_det_filter *f)
 }
 
 static int mq_filter_init(mq_det_filter *f, slong nvars,
-                         const slong *rows, const slong *cols, slong count)
+                         const slong *rows, slong row_count,
+                         const slong *cols, slong col_count)
 {
     ulong largest = 0;
     memset(f, 0, sizeof(*f));
-    if (nvars <= 0 || count <= 0) return 0;
-    for (slong i = 0; i < count * nvars; i++) {
-        if (rows[i] < 0 || cols[i] < 0) return 0;
-        largest = FLINT_MAX(largest, (ulong) FLINT_MAX(rows[i], cols[i]));
-    }
+    if (nvars <= 0 || row_count <= 0 || col_count <= 0) return 0;
+    const slong *axes[] = {rows, cols};
+    slong counts[] = {row_count, col_count};
+    for (int axis = 0; axis < 2; axis++)
+        for (slong i = 0; i < counts[axis] * nvars; i++) {
+            if (axes[axis][i] < 0) return 0;
+            largest = FLINT_MAX(largest, (ulong) axes[axis][i]);
+        }
     f->nvars = nvars; f->bits = 1;
     while (largest >>= 1) f->bits++;
     if (nvars > (FLINT_BITS - 1) / f->bits) return 0;
@@ -1571,15 +1575,12 @@ static int mq_filter_init(mq_det_filter *f, slong nvars,
         sets[i]->alloc = 16;
         sets[i]->keys = flint_calloc(16, sizeof(ulong));
     }
-    for (slong i = 0; i < count; i++) {
-        ulong r = 0, c = 0;
-        for (slong v = 0; v < nvars; v++) {
-            r |= (ulong) rows[i * nvars + v] << (v * f->bits);
-            c |= (ulong) cols[i * nvars + v] << (v * f->bits);
-        }
-        if (mq_monom_insert(&f->row_targets, r) < 0 ||
-            mq_monom_insert(&f->col_targets, c) < 0 ||
-            !mq_monom_close(&f->rows, r, f) || !mq_monom_close(&f->cols, c, f)) {
+    for (int axis = 0; axis < 2; axis++) for (slong i = 0; i < counts[axis]; i++) {
+        ulong key = 0;
+        for (slong v = 0; v < nvars; v++)
+            key |= (ulong) axes[axis][i * nvars + v] << (v * f->bits);
+        if (mq_monom_insert(sets[axis + 2], key) < 0 ||
+            !mq_monom_close(sets[axis], key, f)) {
             mq_filter_clear(f);
             return 0;
         }
@@ -2054,13 +2055,13 @@ static void compute_fq_det_nmod_minor_direct(fq_mvpoly_t *result,
 
 /* Compute exactly the requested coefficient block, without claiming anything
  * about its rank. On ineligibility/budget failure, leave result untouched.
- * rows/cols are count contiguous exponent vectors of length size-1. */
-int compute_fq_det_mq_projected(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
-                              slong size, const slong *rows,
-                              const slong *cols, slong count)
+ * Each axis contains its own count of exponent vectors of length size-1. */
+int compute_fq_det_mq_projected_rect(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
+                                   slong size, const slong *rows, slong row_count,
+                                   const slong *cols, slong col_count)
 {
-    if (size < 2 || size >= FLINT_BITS || count <= 0 || count > MQ_FILTER_MAX_MONOMS ||
-        !rows || !cols || !is_prime_field(matrix[0][0].ctx) ||
+    if (size < 2 || size >= FLINT_BITS || row_count <= 0 || row_count > MQ_FILTER_MAX_MONOMS ||
+        col_count <= 0 || col_count > MQ_FILTER_MAX_MONOMS || !rows || !cols || !is_prime_field(matrix[0][0].ctx) ||
         matrix[0][0].nvars != 2 * (size - 1) || matrix[0][0].npars != 1) return 0;
     /* This backend intentionally accepts only divided-difference MQ matrices.
      * Check all entries, including the parameter degree, before packing. */
@@ -2074,10 +2075,12 @@ int compute_fq_det_mq_projected(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
             if (degree > (i == 0 ? 2 : 1)) return 0;
         }
     }
-    for (slong i = 0; i < count * (size - 1); i++)
-        if (rows[i] < 0 || cols[i] < 0 || rows[i] > size + 1 || cols[i] > size + 1) return 0;
+    for (slong i = 0; i < row_count * (size - 1); i++)
+        if (rows[i] < 0 || rows[i] > size + 1) return 0;
+    for (slong i = 0; i < col_count * (size - 1); i++)
+        if (cols[i] < 0 || cols[i] > size + 1) return 0;
     mq_det_filter filter;
-    if (!mq_filter_init(&filter, size - 1, rows, cols, count)) return 0;
+    if (!mq_filter_init(&filter, size - 1, rows, row_count, cols, col_count)) return 0;
     const fq_nmod_ctx_struct *fq = matrix[0][0].ctx;
     slong nv = matrix[0][0].nvars;
     nmod_mpoly_ctx_t ctx;
@@ -2110,6 +2113,13 @@ int compute_fq_det_mq_projected(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
     }
     flint_free(m); nmod_mpoly_ctx_clear(ctx); mq_filter_clear(&filter);
     return 1;
+}
+
+int compute_fq_det_mq_projected(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
+                              slong size, const slong *rows,
+                              const slong *cols, slong count)
+{
+    return compute_fq_det_mq_projected_rect(result, matrix, size, rows, count, cols, count);
 }
 
 // ============= Univariate Optimization Implementation =============

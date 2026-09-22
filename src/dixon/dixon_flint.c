@@ -4654,11 +4654,155 @@ static int dixon_mq_support(slong *out, slong capacity, slong *count, slong *exp
     return 1;
 }
 
+/* Copy a computed coefficient rectangle into a complete local repair block. */
+static void dixon_mq_copy_block(fq_mvpoly_t ***local, const fq_mvpoly_t *poly,
+                              slong n, hash_entry_t **ri, slong rhs,
+                              hash_entry_t **ci, slong chs,
+                              const slong *rmap, const slong *cmap)
+{
+    for (slong t = 0; t < poly->nterms; t++) {
+        const fq_monomial_t *term = &poly->terms[t];
+        slong r = lookup_monom_index(ri, rhs, term->var_exp, n);
+        slong c = lookup_monom_index(ci, chs, term->var_exp + n, n);
+        FLINT_ASSERT(r >= 0 && c >= 0 && rmap[r] >= 0 && cmap[c] >= 0);
+        fq_mvpoly_t *entry = get_matrix_entry_lazy(local, rmap[r], cmap[c], 1, poly->ctx);
+        fq_mvpoly_add_term_fast(entry, NULL, term->par_exp, term->coeff);
+    }
+}
+
+/* Keep the exact candidate, project only two disjoint border strips, then
+ * reuse Step 3's Schur completion and actual parameter-degree refinement.
+ * Unknown entries are never presented as zeros to that machinery. On failure
+ * result and the caller's chosen indices remain untouched. */
+static int dixon_repair_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
+                                     slong n, monom_t *rm, slong nr,
+                                     monom_t *cm, slong nc,
+                                     hash_entry_t **ri, slong rhs,
+                                     hash_entry_t **ci, slong chs,
+                                     slong *rows, slong *cols, slong size,
+                                     const nmod_mat_t lu, const slong *perm,
+                                     slong s, ulong point, slong sigma)
+{
+    slong delta = size - s;
+    if (s <= 0 || delta <= 0 || delta > 8) return 0;
+    slong budget = FLINT_MIN(8 * delta, 32);
+    slong counts[] = {nr, nc}, dims[2];
+    monom_t *monoms[] = {rm, cm};
+    slong *chosen[] = {rows, cols}, *indices[2], *targets[2], *maps[2];
+    fq_index_degree_pair *orders[2];
+    for (int axis = 0; axis < 2; axis++) {
+        dims[axis] = FLINT_MIN(counts[axis], size + budget);
+        indices[axis] = flint_malloc((size_t) dims[axis] * sizeof(slong));
+        targets[axis] = flint_malloc((size_t) dims[axis] * n * sizeof(slong));
+        maps[axis] = flint_malloc((size_t) counts[axis] * sizeof(slong));
+        orders[axis] = flint_malloc((size_t) counts[axis] * sizeof(fq_index_degree_pair));
+        for (slong i = 0; i < counts[axis]; i++) {
+            maps[axis][i] = -1;
+            slong degree = 0;
+            for (slong v = 0; v < n; v++) degree += monoms[axis][i].exp[v];
+            /* Every determinant term has total degree <= n+2. Larger axis
+             * degree gives a smaller parameter-degree upper bound. This is
+             * only a reserve ordering proxy; refinement uses exact degrees. */
+            orders[axis][i].index = i;
+            orders[axis][i].degree = n + 2 - degree;
+        }
+        for (slong i = 0; i < size; i++) {
+            indices[axis][i] = chosen[axis][i];
+            maps[axis][chosen[axis][i]] = i;
+        }
+        qsort(orders[axis], counts[axis], sizeof(fq_index_degree_pair), compare_fq_degrees);
+        slong k = size;
+        for (slong i = 0; i < counts[axis] && k < dims[axis]; i++) {
+            slong idx = orders[axis][i].index;
+            if (maps[axis][idx] >= 0) continue;
+            indices[axis][k] = idx; maps[axis][idx] = k++;
+        }
+        for (slong i = 0; i < dims[axis]; i++) {
+            memcpy(targets[axis] + i * n, monoms[axis][indices[axis][i]].exp, (size_t) n * sizeof(slong));
+            slong degree = 0;
+            for (slong v = 0; v < n; v++) degree += targets[axis][i * n + v];
+            orders[axis][i].index = i; orders[axis][i].degree = degree;
+        }
+        qsort(orders[axis], dims[axis], sizeof(fq_index_degree_pair), compare_fq_degrees);
+    }
+    fq_mvpoly_t ***local = flint_malloc((size_t) dims[0] * sizeof(*local));
+    for (slong i = 0; i < dims[0]; i++)
+        local[i] = flint_calloc((size_t) dims[1], sizeof(**local));
+    int ok = 0;
+    slong *lr = flint_malloc((size_t) size * sizeof(slong));
+    slong *lc = flint_malloc((size_t) size * sizeof(slong));
+    dixon_mq_copy_block(local, result, n, ri, rhs, ci, chs, maps[0], maps[1]);
+    dixon_info_log("  MQ Step 1 repair: deficit=%ld, adding %ld rows / %ld columns\n",
+                   delta, dims[0] - size, dims[1] - size);
+    for (int strip = 0; strip < 2; strip++) {
+        slong rcount = strip == 0 ? dims[0] - size : size;
+        slong ccount = strip == 0 ? dims[1] : dims[1] - size;
+        if (!rcount || !ccount) continue;
+        fq_mvpoly_t border;
+        if (!compute_fq_det_mq_projected_rect(&border, matrix, n + 1,
+                targets[0] + (strip == 0 ? size * n : 0), rcount,
+                targets[1] + (strip == 0 ? 0 : size * n), ccount)) goto cleanup;
+        dixon_mq_copy_block(local, &border, n, ri, rhs, ci, chs, maps[0], maps[1]);
+        fq_mvpoly_clear(&border);
+    }
+    for (slong i = 0; i < size; i++) lr[i] = lc[i] = i;
+    fq_nmod_t params[1], value;
+    fq_nmod_init(params[0], result->ctx); fq_nmod_init(value, result->ctx);
+    fq_nmod_set_ui(params[0], point, result->ctx);
+    ok = dixon_repair_predicted_minor(local, dims[0], dims[1], lr, lc, size,
+                                     lu, perm, s, orders[0], orders[1], sigma,
+                                     params, result->ctx);
+    if (ok) {
+        nmod_mat_t check;
+        nmod_mat_init(check, size, size, fq_nmod_ctx_prime(result->ctx));
+        for (slong i = 0; i < size; i++) for (slong j = 0; j < size; j++) {
+            fq_mvpoly_t *entry = local[lr[i]][lc[j]];
+            if (!entry) continue;
+            evaluate_fq_mvpoly_at_params(value, entry, params);
+            nmod_mat_entry(check, i, j) = nmod_poly_get_coeff_ui(value, 0);
+        }
+        ok = nmod_mat_rank(check) == size;
+        nmod_mat_clear(check);
+    }
+    fq_nmod_clear(value, result->ctx); fq_nmod_clear(params[0], result->ctx);
+    if (ok) {
+        fq_mvpoly_t repaired;
+        fq_mvpoly_init(&repaired, 2 * n, 1, result->ctx);
+        slong *exp = flint_malloc((size_t) 2 * n * sizeof(slong));
+        for (slong i = 0; i < size; i++) for (slong j = 0; j < size; j++) {
+            fq_mvpoly_t *entry = local[lr[i]][lc[j]];
+            if (!entry) continue;
+            memcpy(exp, targets[0] + lr[i] * n, (size_t) n * sizeof(slong));
+            memcpy(exp + n, targets[1] + lc[j] * n, (size_t) n * sizeof(slong));
+            for (slong t = 0; t < entry->nterms; t++)
+                fq_mvpoly_add_term_fast(&repaired, exp, entry->terms[t].par_exp, entry->terms[t].coeff);
+        }
+        flint_free(exp);
+        fq_mvpoly_clear(result); *result = repaired;
+        for (slong i = 0; i < size; i++) {
+            rows[i] = indices[0][lr[i]]; cols[i] = indices[1][lc[i]];
+        }
+    }
+cleanup:
+    for (slong i = 0; i < dims[0]; i++) {
+        for (slong j = 0; j < dims[1]; j++) if (local[i][j]) {
+            fq_mvpoly_clear(local[i][j]); flint_free(local[i][j]);
+        }
+        flint_free(local[i]);
+    }
+    flint_free(local); flint_free(lr); flint_free(lc);
+    for (int axis = 0; axis < 2; axis++) {
+        flint_free(indices[axis]); flint_free(targets[axis]);
+        flint_free(maps[axis]); flint_free(orders[axis]);
+    }
+    return ok;
+}
+
 /* A successful return owns an initialized, projected Dixon polynomial.
  * Candidate verification follows the existing generic-rank heuristic: it
  * certifies non-singularity of this block, not an upper bound on full rank.
- * On failure the caller computes the FULL polynomial, so Schur repair and
- * the degree-aware fallback never see an incomplete coefficient matrix. */
+ * Deficient candidates first get a bounded, complete local Schur repair.
+ * Only if that fails does the caller compute the FULL polynomial. */
 static int dixon_try_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
                                    const fq_mvpoly_t *polys, slong nvars,
                                    slong npars, det_method_t method)
@@ -4744,8 +4888,13 @@ static int dixon_try_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
         for (slong j = 0; j < nc; j++) cmap[j] = -1;
         for (slong i = 0; i < rank; i++) { rmap[rows[i]] = i; cmap[cols[i]] = i; }
         ulong prime = fq_nmod_ctx_modulus(polys[0].ctx)->mod.n;
-        nmod_mat_t values;
+        nmod_mat_t values, best;
         nmod_mat_init(values, rank, rank, prime);
+        int have_best = 0;
+        slong best_s = 0;
+        ulong best_point = 0;
+        slong *perm = flint_malloc((size_t) rank * sizeof(slong));
+        slong *best_perm = flint_malloc((size_t) rank * sizeof(slong));
         ok = 0;
         /* The same distinct points as before, but try 1 before 0 to avoid
          * a guaranteed rank drop when the candidate has parameter content.
@@ -4772,8 +4921,22 @@ static int dixon_try_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
                 ulong *entry = nmod_mat_entry_ptr(values, rmap[r], cmap[c]);
                 *entry = nmod_add(*entry, coeff, values->mod);
             }
-            ok = nmod_mat_rank(values) == rank;
+            slong s = nmod_mat_lu(perm, values, 0);
+            ok = s == rank;
+            if (!ok && s > best_s && rank - s <= 8) {
+                if (!have_best) { nmod_mat_init(best, rank, rank, prime); have_best = 1; }
+                nmod_mat_set(best, values);
+                memcpy(best_perm, perm, (size_t) rank * sizeof(slong));
+                best_s = s; best_point = point;
+            }
         }
+        if (!ok && have_best) {
+            ok = dixon_repair_mq_projection(result, matrix, nvars, rm, nr, cm, nc,
+                     ri, rhs, ci, chs, rows, cols, rank, best, best_perm, best_s, best_point, sigma);
+            if (ok) dixon_info_log("  MQ Step 1 Schur repair verified (degree-aware selection)\n");
+        }
+        if (have_best) nmod_mat_clear(best);
+        flint_free(perm); flint_free(best_perm);
         nmod_mat_clear(values);
         flint_free(rmap); flint_free(cmap);
     }

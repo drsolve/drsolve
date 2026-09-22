@@ -60,6 +60,11 @@ int compute_fq_det_mq_projected(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
                               slong size, const slong *rows,
                               const slong *cols, slong count);
 
+/* Rectangular counterpart, used for disjoint repair border strips. */
+int compute_fq_det_mq_projected_rect(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
+                                   slong size, const slong *rows, slong row_count,
+                                   const slong *cols, slong col_count);
+
 // ============= Timing Utilities =============
 
 typedef struct {

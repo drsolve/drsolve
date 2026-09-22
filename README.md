@@ -226,8 +226,16 @@ parallel minor DP and its read-only shared masks.
 The candidate uses a fixed squarefree-first order, so it can differ from the
 legacy Step 3 first-occurrence candidate. A full-rank specialization verifies
 that minor; maximality still relies on the existing generic rank model. Failed
-verification (including unlucky evaluations in small fields) recomputes the
-full Dixon polynomial and uses the existing selection/Schur-repair path.
+verification first tries a bounded local Schur repair when the best sampled
+rank is positive and its deficit is at most 8. Each axis admits at most
+`min(8 * deficit, 32)` extra directions, ordered by a parameter-degree upper
+bound. The original coefficients are retained; two additional projected minor
+DP runs compute only the disjoint border strips. This recomputes the required
+DP states rather than resuming the original run. The resulting complete local
+block uses Step 3's Schur completion and actual parameter-degree-aware exchanges,
+then verifies the selected minor again. If repair fails (including unlucky
+specializations in small fields), the full Dixon polynomial is recomputed and
+the existing selection/Schur-repair path is used.
 Unsupported methods/fields, packing or support-budget limits also use the full
 path. The public `compute_fq_cancel_matrix_det` API always computes the full
 polynomial.
