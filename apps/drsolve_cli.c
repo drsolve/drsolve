@@ -2972,6 +2972,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int determinant_method_explicit = 0;
     int fast_ksy_precondition = 0;
     long fast_ksy_constant_col = 0;
+    int mq_step1_filter = 1;
     int step3_verify_second = 0;
     fq_nmod_poly_det_method_t fq_det_method = FQ_NMOD_POLY_DET_METHOD_AUTO;
     int fq_det_method_explicit = 0;
@@ -3198,6 +3199,8 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             i++;
         } else if (strcmp(argv[i], "--no-fast-ksy") == 0) {
             fast_ksy_precondition = 0;
+        } else if (strcmp(argv[i], "--no-mq-step1-filter") == 0) {
+            mq_step1_filter = 0;
         } else if (strcmp(argv[i], "--step3-verify-second") == 0) {
             step3_verify_second = 1;
         } else if (strcmp(argv[i], "--no-step3-verify-second") == 0) {
@@ -4138,6 +4141,7 @@ random_done:
     g_rational_root_scan_mode = rational_root_scan_mode;
     g_dixon_fast_use_ksy_precondition = fast_ksy_precondition;
     g_dixon_fast_ksy_constant_col = fast_ksy_constant_col;
+    g_dixon_mq_step1_filter = mq_step1_filter;
     g_dixon_step3_second_verification = step3_verify_second;
     g_dixon_det_cache_limit = det_cache_limit;
     fq_nmod_poly_mat_det_set_method(fq_det_method);

@@ -90,6 +90,8 @@ extern rational_root_scan_mode_t g_rational_root_scan_mode;
 extern int g_matrix_transpose_threshold;
 extern int g_dixon_fast_use_ksy_precondition;
 extern slong g_dixon_fast_ksy_constant_col;
+/* Default on for eligible prime-field, single-parameter MQ systems. */
+extern int g_dixon_mq_step1_filter;
 extern int g_dixon_step3_second_verification;
 /* Method 0: live DP polynomial entry cap; 0 selects plain expansion. */
 extern slong g_dixon_det_cache_limit;

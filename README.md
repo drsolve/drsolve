@@ -211,12 +211,17 @@ Example:
 
 #### MQ Step 1 coefficient filtering
 
-The recursive Step 1 backend has an opt-in projected minor DP for
+The recursive Step 1 backend enables projected minor DP by default for
 prime-field MQ systems with one parameter (total degree at most two, including
 the parameter, and elimination degree two in each equation). It constructs a
 canonical candidate before computing the Dixon polynomial, retains the downward
 closures of its row/column monomials after each multiplication, and emits only
 the candidate coefficients. Parameter polynomials are preserved exactly.
+Layers whose trailing-row support is certified to lie entirely in the closure
+skip the filter. Other layers read FLINT's packed exponents directly where
+possible; wider layouts retain a generic fallback. Candidate verification
+tries 1 before 0 and caches parameter powers. These changes preserve the
+parallel minor DP and its read-only shared masks.
 
 The candidate uses a fixed squarefree-first order, so it can differ from the
 legacy Step 3 first-occurrence candidate. A full-rank specialization verifies
@@ -227,15 +232,14 @@ Unsupported methods/fields, packing or support-budget limits also use the full
 path. The public `compute_fq_cancel_matrix_det` API always computes the full
 polynomial.
 
-Enable the experimental path with:
+To disable Step 1 filtering and use the full polynomial path:
 
 ```bash
-DRSOLVE_MQ_STEP1_FILTER=1 ./drsolve <args>
+./drsolve --no-mq-step1-filter <args>
 ```
 
-Leave this variable unset (or set it to `0`) to use the full path.
-
-`DRSOLVE_PREDICT_MAXRANK=0` also disables this optimization. Filtering reduces
+This setting is controlled by the command line, not environment variables.
+Filtering reduces
 retained coefficients but is not always faster, especially for small systems
 or when the candidate fails verification. Verbosity 2 reports target/closure
 sizes; verbosity 3 reports retained terms per DP layer. Coefficient and

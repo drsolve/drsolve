@@ -44,6 +44,7 @@ int g_matrix_transpose_threshold = 10000;
 rational_root_scan_mode_t g_rational_root_scan_mode = RATIONAL_ROOT_SCAN_AUTO;
 int g_dixon_fast_use_ksy_precondition = 0;
 slong g_dixon_fast_ksy_constant_col = 0;
+int g_dixon_mq_step1_filter = 1;
 int g_dixon_step3_second_verification = 0;
 slong g_dixon_det_cache_limit = 1024;
 
@@ -4662,10 +4663,7 @@ static int dixon_try_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
                                    const fq_mvpoly_t *polys, slong nvars,
                                    slong npars, det_method_t method)
 {
-    const char *enabled = getenv("DRSOLVE_MQ_STEP1_FILTER");
-    const char *predict = getenv("DRSOLVE_PREDICT_MAXRANK");
-    if (!enabled || strcmp(enabled, "1") != 0 ||
-        (predict && strcmp(predict, "0") == 0) ||
+    if (!g_dixon_mq_step1_filter ||
         method != DET_METHOD_RECURSIVE || npars != 1 || nvars < 2 ||
         nvars >= FLINT_BITS || fq_nmod_ctx_degree(polys[0].ctx) != 1) return 0;
     long *degrees = flint_malloc((size_t) (nvars + 1) * sizeof(long));
@@ -4749,18 +4747,28 @@ static int dixon_try_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
         nmod_mat_t values;
         nmod_mat_init(values, rank, rank, prime);
         ok = 0;
-        /* Distinct points, including zero. False negatives only cause full
-         * recomputation; one full-rank evaluation certifies this minor. */
-        for (ulong point = 0; point < FLINT_MIN(prime, UWORD(3)) && !ok; point++) {
+        /* The same distinct points as before, but try 1 before 0 to avoid
+         * a guaranteed rank drop when the candidate has parameter content.
+         * MQ bounds the parameter degree by nvars+2. Cache powers once per
+         * point; 0 and 1 require no modular multiplication per term. */
+        ulong powers[FLINT_BITS + 2];
+        for (ulong attempt = 0; attempt < FLINT_MIN(prime, UWORD(3)) && !ok; attempt++) {
+            ulong point = attempt == 0 ? 1 : attempt == 1 ? 0 : 2;
+            powers[0] = 1;
+            for (slong d = 1; d <= nvars + 2; d++)
+                powers[d] = nmod_mul(powers[d - 1], point, values->mod);
             nmod_mat_zero(values);
             for (slong t = 0; t < result->nterms; t++) {
                 const fq_monomial_t *term = &result->terms[t];
+                ulong power = term->par_exp ? term->par_exp[0] : 0;
+                FLINT_ASSERT(power <= (ulong) nvars + 2);
+                if (point == 0 && power != 0) continue;
                 slong r = lookup_monom_index(ri, rhs, term->var_exp, nvars);
                 slong c = lookup_monom_index(ci, chs, term->var_exp + nvars, nvars);
                 FLINT_ASSERT(r >= 0 && c >= 0 && rmap[r] >= 0 && cmap[c] >= 0);
                 ulong coeff = nmod_poly_get_coeff_ui(term->coeff, 0);
-                ulong power = term->par_exp ? term->par_exp[0] : 0;
-                coeff = nmod_mul(coeff, nmod_pow_ui(point, power, values->mod), values->mod);
+                if (point > 1 && power != 0)
+                    coeff = nmod_mul(coeff, powers[power], values->mod);
                 ulong *entry = nmod_mat_entry_ptr(values, rmap[r], cmap[c]);
                 *entry = nmod_add(*entry, coeff, values->mod);
             }

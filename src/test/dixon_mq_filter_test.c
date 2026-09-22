@@ -124,14 +124,9 @@ static void check_coefficients(void)
         printf("MQ projection p=%lu n=%ld: coefficients exact, candidate=%s\n",
                primes[pi], n, ok ? "verified" : "fallback/ineligible");
         assert(!dixon_try_mq_projection(&actual, a, p, n, 1, DET_METHOD_KRONECKER));
-        unsetenv("DRSOLVE_MQ_STEP1_FILTER");
+        g_dixon_mq_step1_filter = 0;
         assert(!dixon_try_mq_projection(&actual, a, p, n, 1, DET_METHOD_RECURSIVE));
-        setenv("DRSOLVE_MQ_STEP1_FILTER", "0", 1);
-        assert(!dixon_try_mq_projection(&actual, a, p, n, 1, DET_METHOD_RECURSIVE));
-        setenv("DRSOLVE_MQ_STEP1_FILTER", "1", 1);
-        setenv("DRSOLVE_PREDICT_MAXRANK", "0", 1);
-        assert(!dixon_try_mq_projection(&actual, a, p, n, 1, DET_METHOD_RECURSIVE));
-        unsetenv("DRSOLVE_PREDICT_MAXRANK");
+        g_dixon_mq_step1_filter = 1;
         flint_free(rows); flint_free(cols);
         fq_mvpoly_clear(&full); clear_input(p, m, a, n); fq_nmod_ctx_clear(ctx);
     }
@@ -171,6 +166,28 @@ static void check_entry_points(int homogeneous)
             fq_mvpoly_clear(p + i); p[i] = h;
         }
     }
+    if (homogeneous == 2) {
+        /* Replace t by t-1: point 1 is singular, but point 0 can certify.
+         * This exercises retry/zero handling after changing point order. */
+        for (slong i = 0; i <= n; i++) {
+            fq_mvpoly_t shifted;
+            fq_mvpoly_init(&shifted, n, 1, ctx);
+            fq_nmod_t c;
+            fq_nmod_init(c, ctx);
+            for (slong t = 0; t < p[i].nterms; t++) {
+                const fq_monomial_t *term = &p[i].terms[t];
+                slong power = term->par_exp[0];
+                for (slong d = 0; d <= power; d++) {
+                    fq_nmod_set(c, term->coeff, ctx);
+                    if (power == 2 && d == 1) fq_nmod_add(c, c, c, ctx);
+                    if ((power - d) & 1) fq_nmod_neg(c, c, ctx);
+                    fq_mvpoly_add_term(&shifted, term->var_exp, &d, c);
+                }
+            }
+            fq_nmod_clear(c, ctx);
+            fq_mvpoly_clear(p + i); p[i] = shifted;
+        }
+    }
     build_fq_cancellation_matrix_mvpoly(&m, p, n, 1);
     perform_fq_matrix_row_operations_mvpoly(&a, &m, n, 1);
     assert(dixon_try_mq_projection(&projected, a, p, n, 1, DET_METHOD_RECURSIVE));
@@ -185,7 +202,7 @@ static void check_entry_points(int homogeneous)
     extract_fq_coefficient_matrix_from_dixon(&cm, &pm, ri, ci, &size, &content,
                               &projected, n, 1, NULL, NULL, NULL, degrees, n + 1);
     assert(size > 0);
-    if (homogeneous) assert(content > 0);
+    if (homogeneous == 1) assert(content > 0);
     fq_nmod_poly_t det;
     fq_nmod_poly_init(det, ctx); fq_nmod_poly_mat_det_iter(det, pm, ctx);
     fq_mvpoly_init(&expected, 0, 1, ctx);
@@ -226,9 +243,9 @@ static void check_fallback_and_gates(void)
     perform_fq_matrix_row_operations_mvpoly(&a, &m, n, 1);
     assert(!dixon_try_mq_projection(&result, a, p, n, 1, DET_METHOD_RECURSIVE));
     fq_dixon_resultant(&result, p, n, 1);
-    setenv("DRSOLVE_MQ_STEP1_FILTER", "0", 1);
+    g_dixon_mq_step1_filter = 0;
     fq_dixon_resultant(&old, p, n, 1);
-    setenv("DRSOLVE_MQ_STEP1_FILTER", "1", 1);
+    g_dixon_mq_step1_filter = 1;
     assert_same_result(&result, &old); assert(result.nterms == 0);
     fq_mvpoly_clear(&result); fq_mvpoly_clear(&old);
     /* Parameter degree is part of the MQ gate. */
@@ -286,7 +303,8 @@ int main(int argc, char **argv)
 {
     g_dixon_verbose_level = 0;
     omp_set_num_threads(4);
-    setenv("DRSOLVE_MQ_STEP1_FILTER", "1", 1); unsetenv("DRSOLVE_PREDICT_MAXRANK");
+    assert(g_dixon_mq_step1_filter == 1);
+    unsetenv("DRSOLVE_PREDICT_MAXRANK");
     if (argc == 2 && strcmp(argv[1], "--bench") == 0) {
         benchmark_projection();
         flint_cleanup_master();
@@ -295,6 +313,7 @@ int main(int argc, char **argv)
     check_coefficients();
     check_entry_points(0);
     check_entry_points(1);
+    check_entry_points(2);
     check_fallback_and_gates();
     puts("MQ projection coefficient, integration and fallback tests passed");
     flint_cleanup_master();

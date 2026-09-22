@@ -1473,13 +1473,30 @@ typedef struct {
     unsigned bits;
     ulong digit_mask;
     mq_monom_set rows, cols, row_targets, col_targets;
+    slong safe_linear_layers;
+    flint_bitcnt_t packed_bits;
+    mq_monom_set packed[4];
 } mq_det_filter;
 
 #define MQ_FILTER_MAX_MONOMS (1L << 20)
 
 static ulong mq_monom_hash(ulong key)
 {
-    return (key ^ (key >> 17)) * 2654435761UL;
+    /* Native FLINT keys can have their only nonzero coordinate near bit 56.
+     * Mix high bits before masking a small power-of-two table. */
+#if FLINT_BITS == 64
+    key ^= key >> 33;
+    key *= UWORD(0xff51afd7ed558ccd);
+    key ^= key >> 33;
+    key *= UWORD(0xc4ceb9fe1a85ec53);
+    return key ^ (key >> 33);
+#else
+    key ^= key >> 16;
+    key *= UWORD(0x85ebca6b);
+    key ^= key >> 13;
+    key *= UWORD(0xc2b2ae35);
+    return key ^ (key >> 16);
+#endif
 }
 
 static int mq_monom_contains(const mq_monom_set *set, ulong code)
@@ -1532,6 +1549,7 @@ static void mq_filter_clear(mq_det_filter *f)
 {
     flint_free(f->rows.keys); flint_free(f->cols.keys);
     flint_free(f->row_targets.keys); flint_free(f->col_targets.keys);
+    for (int i = 0; i < 4; i++) flint_free(f->packed[i].keys);
 }
 
 static int mq_filter_init(mq_det_filter *f, slong nvars,
@@ -1569,6 +1587,74 @@ static int mq_filter_init(mq_det_filter *f, slong nvars,
     return 1;
 }
 
+/* Every linear difference row contributes either zero or one axis variable.
+ * Ignore coefficients and column exclusivity, and include zero even when it
+ * is absent: the resulting support is a safe upper bound for EVERY minor of
+ * these trailing rows. Stop at the first term outside the order ideal. Since
+ * zero was included, this bound only grows with the number of rows. */
+static slong mq_safe_axis_layers(const mq_det_filter *f, const mq_monom_set *closure,
+                                 fq_mvpoly_t **matrix, slong size, slong axis)
+{
+    mq_monom_set previous = {flint_calloc(16, sizeof(ulong)), 16, 0};
+    mq_monom_insert(&previous, 0);
+    slong safe = 0;
+    for (slong row = size - 1; row >= 1; row--) {
+        ulong active = 0;
+        for (slong col = 0; col < size; col++) {
+            const fq_mvpoly_t *p = &matrix[row][col];
+            for (slong t = 0; t < p->nterms; t++) if (p->terms[t].var_exp)
+                for (slong v = 0; v < f->nvars; v++)
+                    if (p->terms[t].var_exp[axis * f->nvars + v]) active |= UWORD(1) << v;
+        }
+        mq_monom_set next = {flint_calloc(16, sizeof(ulong)), 16, 0};
+        int inside = 1;
+        for (slong i = 0; inside && i < previous.alloc; i++) if (previous.keys[i]) {
+            ulong code = previous.keys[i] - 1;
+            if (mq_monom_insert(&next, code) < 0) { inside = 0; break; }
+            for (slong v = 0; v < f->nvars; v++) if (active & (UWORD(1) << v)) {
+                unsigned shift = v * f->bits;
+                /* Do not let a packed-coordinate carry alias another monomial. */
+                if (((code >> shift) & f->digit_mask) == f->digit_mask) { inside = 0; break; }
+                ulong added = code + (UWORD(1) << shift);
+                if (!mq_monom_contains(closure, added) || mq_monom_insert(&next, added) < 0) {
+                    inside = 0; break;
+                }
+            }
+        }
+        flint_free(previous.keys);
+        previous = next;
+        if (!inside) break;
+        safe++;
+    }
+    flint_free(previous.keys);
+    return safe;
+}
+
+/* For short axes use the SAME packing as FLINT's lex exponents. An axis can
+ * then be extracted with at most two word loads, without visiting variables.
+ * Build these read-only tables once, before entering any parallel region. */
+static void mq_filter_prepare_packed(mq_det_filter *f, const nmod_mpoly_ctx_t ctx,
+                                     slong degree_bound)
+{
+    flint_bitcnt_t bits = mpoly_fix_bits(1 + FLINT_BIT_COUNT((ulong) degree_bound), ctx->minfo);
+    if (ctx->minfo->ord != ORD_LEX || bits >= FLINT_BITS ||
+        f->nvars > (FLINT_BITS - 1) / bits) return;
+    f->packed_bits = bits;
+    mq_monom_set *source[] = {&f->rows, &f->cols, &f->row_targets, &f->col_targets};
+    for (int s = 0; s < 4; s++) {
+        mq_monom_set *dest = &f->packed[s];
+        dest->alloc = source[s]->alloc;
+        dest->keys = flint_calloc((size_t) dest->alloc, sizeof(ulong));
+        for (slong i = 0; i < source[s]->alloc; i++) if (source[s]->keys[i]) {
+            ulong code = source[s]->keys[i] - 1, native = 0;
+            for (slong v = 0; v < f->nvars; v++)
+                native |= ((code >> (v * f->bits)) & f->digit_mask)
+                            << ((f->nvars - 1 - v) * bits);
+            mq_monom_insert(dest, native);
+        }
+    }
+}
+
 static int mq_filter_accepts(const mq_det_filter *f, const ulong *exp, int target)
 {
     ulong r = 0, c = 0;
@@ -1581,26 +1667,78 @@ static int mq_filter_accepts(const mq_det_filter *f, const ulong *exp, int targe
            mq_monom_contains(target ? &f->col_targets : &f->cols, c);
 }
 
-/* Compact a canonical FLINT polynomial in place. Packing/order are unchanged;
- * parameters are inspected neither by the closure nor by the final mask. */
+/* A lex axis may straddle a word boundary with unused padding between
+ * words (e.g. seven 9-bit fields per limb). Drop that padding when joining
+ * the two pieces. The prepared widths are nonzero and below FLINT_BITS. */
+static inline ulong mq_packed_axis(const ulong *exp, slong word, slong shift,
+                                   slong low_bits, slong width)
+{
+    ulong code = (exp[word] >> shift) & (UWORD_MAX >> (FLINT_BITS - low_bits));
+    if (width > low_bits) code |= exp[word + 1] << low_bits;
+    return code & (UWORD_MAX >> (FLINT_BITS - width));
+}
+
+/* Compact canonical FLINT storage in place. Native lex axes need no exponent
+ * buffer. Larger axes use cached field locations; multiword fields retain
+ * the generic FLINT unpacker. All scratch is bounded stack storage. */
 static void mq_filter_poly(nmod_mpoly_t poly, const nmod_mpoly_ctx_t ctx,
                            const mq_det_filter *f, int target)
 {
-    slong nv = nmod_mpoly_ctx_nvars(ctx), out = 0;
-    slong words = mpoly_words_per_exp(poly->bits, ctx->minfo);
-    ulong *exp = flint_malloc((size_t) nv * sizeof(ulong));
+    slong out = 0, words = mpoly_words_per_exp(poly->bits, ctx->minfo);
+    slong offset[2 * FLINT_BITS], shift[2 * FLINT_BITS];
+    ulong exp[2 * FLINT_BITS + 1];
+    int native = f->packed_bits && poly->bits == f->packed_bits && ctx->minfo->ord == ORD_LEX;
+    int small_fields = poly->bits <= FLINT_BITS;
+    slong axis_offset[2], axis_shift[2], low_bits[2];
+    slong width = f->nvars * poly->bits;
+    if (native) {
+        for (slong a = 0; a < 2; a++) {
+            mpoly_gen_offset_shift_sp(axis_offset + a, axis_shift + a,
+                                      (a + 1) * f->nvars - 1, poly->bits, ctx->minfo);
+            low_bits[a] = FLINT_MIN(width, ((FLINT_BITS - axis_shift[a]) / poly->bits) * poly->bits);
+        }
+    }
+    ulong field_mask = small_fields ? UWORD_MAX >> (FLINT_BITS - poly->bits) : 0;
+    if (!native && small_fields)
+        for (slong v = 0; v < 2 * f->nvars; v++)
+            mpoly_gen_offset_shift_sp(offset + v, shift + v, v, poly->bits, ctx->minfo);
+    const mq_monom_set *rows = target ? &f->row_targets : &f->rows;
+    const mq_monom_set *cols = target ? &f->col_targets : &f->cols;
     for (slong i = 0; i < poly->length; i++) {
-        nmod_mpoly_get_term_exp_ui(exp, poly, i, ctx);
-        if (!mq_filter_accepts(f, exp, target)) continue;
+        const ulong *packed = poly->exps + i * words;
+        int keep;
+        if (native) {
+            ulong r = mq_packed_axis(packed, axis_offset[0], axis_shift[0], low_bits[0], width);
+            ulong c = mq_packed_axis(packed, axis_offset[1], axis_shift[1], low_bits[1], width);
+            keep = mq_monom_contains(&f->packed[target ? 2 : 0], r) &&
+                   mq_monom_contains(&f->packed[target ? 3 : 1], c);
+        } else if (small_fields) {
+            ulong r = 0, c = 0;
+            keep = 1;
+            for (slong v = 0; v < f->nvars; v++) {
+                ulong e = (packed[offset[v]] >> shift[v]) & field_mask;
+                if (e > f->digit_mask) { keep = 0; break; }
+                r |= e << (v * f->bits);
+            }
+            if (keep) keep = mq_monom_contains(rows, r);
+            for (slong v = 0; keep && v < f->nvars; v++) {
+                ulong e = (packed[offset[f->nvars + v]] >> shift[f->nvars + v]) & field_mask;
+                if (e > f->digit_mask) { keep = 0; break; }
+                c |= e << (v * f->bits);
+            }
+            if (keep) keep = mq_monom_contains(cols, c);
+        } else {
+            nmod_mpoly_get_term_exp_ui(exp, poly, i, ctx);
+            keep = mq_filter_accepts(f, exp, target);
+        }
+        if (!keep) continue;
         if (out != i) {
             poly->coeffs[out] = poly->coeffs[i];
-            memcpy(poly->exps + out * words, poly->exps + i * words,
-                   (size_t) words * sizeof(ulong));
+            memcpy(poly->exps + out * words, packed, (size_t) words * sizeof(ulong));
         }
         out++;
     }
     _nmod_mpoly_set_length(poly, out, ctx);
-    flint_free(exp);
 }
 
 /* Retain FLINT's packed-exponent multiplication and compact immediately,
@@ -1680,6 +1818,7 @@ static int compute_nmod_mpoly_det_layered_dp(nmod_mpoly_t result, nmod_mpoly_t *
 
     for (slong k = 1; k <= size; k++) {
         slong count = k == size ? size : (slong) choose[size][k];
+        const mq_det_filter *layer_filter = filter && k > filter->safe_linear_layers ? filter : NULL;
         int failed = 0;
         current = malloc((size_t) count * sizeof(nmod_mpoly_t));
         if (current == NULL) goto cleanup;
@@ -1722,7 +1861,7 @@ static int compute_nmod_mpoly_det_layered_dp(nmod_mpoly_t result, nmod_mpoly_t *
 #ifdef DRSOLVE_DET_TESTING
                         drsolve_det_test_event(1, size);
 #endif
-                        mq_filtered_mul(current[index], matrix[0][index], previous[size - 1 - index], ctx, filter);
+                        mq_filtered_mul(current[index], matrix[0][index], previous[size - 1 - index], ctx, layer_filter);
                         if (index & 1) {
                             nmod_mpoly_zero(product, ctx);
                             nmod_mpoly_sub(current[index], product, current[index], ctx);
@@ -1749,7 +1888,7 @@ static int compute_nmod_mpoly_det_layered_dp(nmod_mpoly_t result, nmod_mpoly_t *
                         ulong child = prefix[j] + suffix[j + 1];
                         if (nmod_mpoly_is_zero(matrix[size - k][cols[j]], ctx) ||
                             nmod_mpoly_is_zero(previous[child], ctx)) continue;
-                        mq_filtered_mul(product, matrix[size - k][cols[j]], previous[child], ctx, filter);
+                        mq_filtered_mul(product, matrix[size - k][cols[j]], previous[child], ctx, layer_filter);
                         if (j & 1)
                             nmod_mpoly_sub(sum, current[index], product, ctx);
                         else
@@ -1816,7 +1955,7 @@ static void compute_nmod_mpoly_det_minor(nmod_mpoly_t result, nmod_mpoly_t **mat
     int accum_ok, child_ok, product_ok, sum_ok;
     size_t width;
 
-    if (size <= 1 || (!filter && (size <= 3 || limit <= 0))) {
+    if (size <= 1 || ((!filter || size <= filter->safe_linear_layers) && (size <= 3 || limit <= 0))) {
         compute_nmod_mpoly_det_recursive(result, matrix, size, ctx);
         return;
     }
@@ -1854,7 +1993,8 @@ static void compute_nmod_mpoly_det_minor(nmod_mpoly_t result, nmod_mpoly_t **mat
             }
             compute_nmod_mpoly_det_minor(child, rows, size - 1, ctx, use_parallel, limit, filter);
             if (nmod_mpoly_is_zero(child, ctx)) continue;
-            mq_filtered_mul(product, matrix[0][col], child, ctx, filter);
+            mq_filtered_mul(product, matrix[0][col], child, ctx,
+                            filter && size > filter->safe_linear_layers ? filter : NULL);
             if (col & 1)
                 nmod_mpoly_sub(sum, accum, product, ctx);
             else
@@ -1942,6 +2082,13 @@ int compute_fq_det_mq_projected(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
     slong nv = matrix[0][0].nvars;
     nmod_mpoly_ctx_t ctx;
     nmod_mpoly_ctx_init(ctx, nv + 1, ORD_LEX, fq_nmod_ctx_modulus(fq)->mod.n);
+    slong row_safe = mq_safe_axis_layers(&filter, &filter.rows, matrix, size, 0);
+    slong col_safe = mq_safe_axis_layers(&filter, &filter.cols, matrix, size, 1);
+    filter.safe_linear_layers = FLINT_MIN(row_safe, col_safe);
+    mq_filter_prepare_packed(&filter, ctx, size + 1);
+    if (g_dixon_verbose_level >= 2)
+        printf("  MQ filter: skipping %ld certified linear layers; packed axes=%s\n",
+               filter.safe_linear_layers, filter.packed_bits ? "yes" : "no");
     nmod_mpoly_t **m = flint_malloc((size_t) size * sizeof(*m));
     for (slong i = 0; i < size; i++) m[i] = flint_malloc((size_t) size * sizeof(**m));
     fq_matrix_mvpoly_to_nmod_mpoly(m, matrix, size, ctx);
