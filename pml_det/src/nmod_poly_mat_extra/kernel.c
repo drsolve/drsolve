@@ -22,8 +22,29 @@
 extern int g_dixon_verbose_level;
 extern int g_dixon_debug_mode;
 
+#define NMOD_ZLS_PROFILE_DEPTHS 64
+
+typedef struct {
+    slong calls, certificate_hits;
+    double inclusive, self, exclusive;
+} nmod_zls_depth_profile_t;
+
+typedef struct nmod_zls_profile_frame {
+    struct nmod_zls_profile_frame *parent;
+    double children, pmbasis;
+} nmod_zls_profile_frame_t;
+
+static nmod_zls_profile_frame_t *g_nmod_zls_profile_frame;
+
 typedef struct
 {
+    slong certificate_checks, certificate_hits, certificate_rank_evaluations;
+    slong certificate_invalid_bounds, certificate_insufficient_rows, certificate_rank_misses;
+    slong degree_kernel_rows, certified_kernel_rows;
+    slong residual_matrices_skipped, residual_rows_skipped;
+    double certificate_degree_time, certificate_rank_time, certificate_extract_time;
+    double zls_self_time, zls_exclusive_time;
+    nmod_zls_depth_profile_t by_depth[NMOD_ZLS_PROFILE_DEPTHS];
     slong kernel_calls;
     slong zls_calls;
     slong zls_zero_residue_returns;
@@ -96,6 +117,22 @@ nmod_poly_mat_kernel_zls_profile_print(void)
     printf("      p2_sort=%.6fs shift_right_split=%.6fs recurse=%.6fs middle_mul=%.6fs combine=%.6fs\n",
            p->zls_p2_sort_time, p->zls_shift_right_split_time, p->zls_recursive_time,
            p->zls_middle_mul_time, p->zls_combine_time);
+    printf("      certificate: checks=%ld hits=%ld rank_evaluations=%ld rank_misses=%ld insufficient_rows=%ld invalid_bounds=%ld\n",
+           p->certificate_checks, p->certificate_hits, p->certificate_rank_evaluations,
+           p->certificate_rank_misses, p->certificate_insufficient_rows, p->certificate_invalid_bounds);
+    printf("      certificate: degree_kernel_rows=%ld certified_kernel_rows=%ld residual_matrices_skipped=%ld residual_rows_skipped=%ld\n",
+           p->degree_kernel_rows, p->certified_kernel_rows, p->residual_matrices_skipped, p->residual_rows_skipped);
+    printf("      certificate_cpu: degree=%.6fs rank=%.6fs extract=%.6fs\n",
+           p->certificate_degree_time, p->certificate_rank_time, p->certificate_extract_time);
+    printf("      CPU self/exclusive: kernel_wrapper=%.6fs zls_self=%.6fs zls_exclusive=%.6fs\n",
+           p->kernel_total_time - p->kernel_zls_time, p->zls_self_time, p->zls_exclusive_time);
+    printf("      ZLS depth CPU: self excludes ZLS children; exclusive also excludes PMBasis; depth 63 aggregates deeper calls\n");
+    for (slong depth = 0; depth < NMOD_ZLS_PROFILE_DEPTHS; depth++) {
+        const nmod_zls_depth_profile_t *d = p->by_depth + depth;
+        if (d->calls)
+            printf("        depth=%ld calls=%ld certificate_hits=%ld inclusive=%.6fs self=%.6fs exclusive=%.6fs\n",
+                   depth, d->calls, d->certificate_hits, d->inclusive, d->self, d->exclusive);
+    }
     nmod_poly_mat_pmbasis_profile_print();
 }
 
@@ -184,10 +221,123 @@ void _nmod_poly_mat_sort_permute_columns_zls(nmod_poly_mat_t M, slong *sdeg, \
  *
  */
 
-int nmod_poly_mat_zls_sorted(nmod_poly_mat_t N, slong *degN, const nmod_poly_mat_t A, \
+/* A rank at a specialization is only a LOWER bound on polynomial rank.
+   q independent exact kernel vectors give the opposite bound n-q.  Equality
+   certifies completeness; a bad point can only make this shortcut decline. */
+static int
+_nmod_zls_degree_rank_certificate(nmod_poly_mat_t N, slong *degN,
+                                  const nmod_poly_mat_t A,
+                                  const nmod_poly_mat_t PT,
+                                  const slong *ishift, const slong *shift,
+                                  slong order, slong *nullity, int profile)
+{
+    const slong m = A->r, n = A->c;
+    double start = profile ? _nmod_kernel_now_seconds() : 0.0;
+    slong q = 0;
+    if (profile) g_nmod_kernel_zls_profile.certificate_checks++;
+    /* This is essential even though the ZLS contract asks for degree bounds:
+       the certificate must not rely on an underestimated caller shift. */
+    for (slong j = 0; j < n; j++)
+        for (slong i = 0; i < m; i++)
+            if (nmod_poly_degree(nmod_poly_mat_entry(A, i, j)) > ishift[j]) {
+                if (profile) {
+                    g_nmod_kernel_zls_profile.certificate_invalid_bounds++;
+                    g_nmod_kernel_zls_profile.certificate_degree_time += _nmod_kernel_now_seconds() - start;
+                }
+                return 0;
+            }
+    for (slong j = 0; j < n; j++) if (shift[j] < order) q++;
+    if (profile) {
+        g_nmod_kernel_zls_profile.degree_kernel_rows += q;
+        g_nmod_kernel_zls_profile.certificate_degree_time += _nmod_kernel_now_seconds() - start;
+    }
+    const slong target = n - q;
+    if (target > m) {
+        if (profile) g_nmod_kernel_zls_profile.certificate_insufficient_rows++;
+        return 0;
+    }
+    int certified = (target == 0);
+    if (!certified) {
+        start = profile ? _nmod_kernel_now_seconds() : 0.0;
+        nmod_mat_t evaluated;
+        nmod_mat_init(evaluated, m, n, A->modulus);
+        slong *perm = flint_malloc((size_t) m * sizeof(slong));
+        /* Distinct points also over F_2.  Limit unsuccessful checks to two;
+           polynomials vanishing on the whole base field still use normal ZLS. */
+        for (ulong trial = 0; trial < 2 && !certified; trial++) {
+            ulong point = (trial + 1) % A->modulus;
+            nmod_poly_mat_evaluate_nmod(evaluated, A, point);
+            slong rank = nmod_mat_lu(perm, evaluated, 0);
+            if (profile) g_nmod_kernel_zls_profile.certificate_rank_evaluations++;
+            certified = (rank == target);
+        }
+        flint_free(perm);
+        nmod_mat_clear(evaluated);
+        if (profile) g_nmod_kernel_zls_profile.certificate_rank_time += _nmod_kernel_now_seconds() - start;
+    }
+    if (!certified) {
+        if (profile) g_nmod_kernel_zls_profile.certificate_rank_misses++;
+        return 0;
+    }
+    /* PT is a basis of the entire approximant module.  Its q zero-product
+       rows are independent.  Once rank(A)=n-q, the products of the remaining
+       rows are independent over F_p(x), so ANY polynomial kernel vector,
+       expanded in PT, has zero coefficients on these remaining rows.
+       Thus the selected rows generate the full polynomial kernel module,
+       not just a submodule of the right rational dimension.  Reducedness is
+       inherited from the shifted reduced approximant basis. */
+    start = profile ? _nmod_kernel_now_seconds() : 0.0;
+    if (q > 0) {
+        nmod_poly_mat_init(N, n, q, A->modulus);
+        for (slong j = 0, k = 0; j < n; j++) if (shift[j] < order) {
+            for (slong i = 0; i < n; i++)
+                nmod_poly_set(nmod_poly_mat_entry(N, i, k), nmod_poly_mat_entry(PT, j, i));
+            k++;
+        }
+        nmod_poly_mat_column_degree(degN, N, ishift);
+    }
+    *nullity = q; /* Preserve the ZLS convention: N is uninitialized if q=0. */
+    if (profile) {
+        g_nmod_kernel_zls_profile.certificate_hits++;
+        g_nmod_kernel_zls_profile.residual_matrices_skipped++;
+        g_nmod_kernel_zls_profile.residual_rows_skipped += n;
+        g_nmod_kernel_zls_profile.certified_kernel_rows += q;
+        g_nmod_kernel_zls_profile.certificate_extract_time += _nmod_kernel_now_seconds() - start;
+    }
+    return 1;
+}
+
+static int nmod_poly_mat_zls_sorted_impl(nmod_poly_mat_t N, slong *degN,
+    const nmod_poly_mat_t A, const slong *ishift, double kappa);
+
+int nmod_poly_mat_zls_sorted(nmod_poly_mat_t N, slong *degN,
+    const nmod_poly_mat_t A, const slong *ishift, const double kappa)
+{
+    if (!_nmod_kernel_profile_enabled())
+        return nmod_poly_mat_zls_sorted_impl(N, degN, A, ishift, kappa);
+    nmod_zls_profile_frame_t frame = {g_nmod_zls_profile_frame, 0.0, 0.0};
+    slong depth = FLINT_MIN(g_nmod_kernel_zls_depth, NMOD_ZLS_PROFILE_DEPTHS - 1);
+    double start = _nmod_kernel_now_seconds();
+    g_nmod_zls_profile_frame = &frame;
+    int result = nmod_poly_mat_zls_sorted_impl(N, degN, A, ishift, kappa);
+    double elapsed = _nmod_kernel_now_seconds() - start;
+    double self = elapsed - frame.children;
+    nmod_zls_depth_profile_t *d = g_nmod_kernel_zls_profile.by_depth + depth;
+    d->calls++;
+    d->inclusive += elapsed;
+    d->self += self;
+    d->exclusive += self - frame.pmbasis;
+    g_nmod_kernel_zls_profile.zls_total_time += elapsed;
+    g_nmod_kernel_zls_profile.zls_self_time += self;
+    g_nmod_kernel_zls_profile.zls_exclusive_time += self - frame.pmbasis;
+    g_nmod_zls_profile_frame = frame.parent;
+    if (frame.parent) frame.parent->children += elapsed;
+    return result;
+}
+
+static int nmod_poly_mat_zls_sorted_impl(nmod_poly_mat_t N, slong *degN, const nmod_poly_mat_t A, \
                                  const slong *ishift, const double kappa)
 {
-    const double call_start = _nmod_kernel_now_seconds();
     const int collect_profile = _nmod_kernel_profile_enabled();
     const slong depth = g_nmod_kernel_zls_depth++;
 
@@ -281,8 +431,23 @@ int nmod_poly_mat_zls_sorted(nmod_poly_mat_t N, slong *degN, const nmod_poly_mat
     {
         double t0 = _nmod_kernel_now_seconds();
         nmod_poly_mat_pmbasis(PT, shift, AT, ks+1);
+        if (collect_profile) {
+            double elapsed = _nmod_kernel_now_seconds() - t0;
+            g_nmod_kernel_zls_profile.zls_pmbasis_time += elapsed;
+            g_nmod_zls_profile_frame->pmbasis += elapsed;
+        }
+    }
+
+    slong certified_nullity;
+    if (_nmod_zls_degree_rank_certificate(N, degN, A, PT, ishift, shift,
+                                          ks + 1, &certified_nullity, collect_profile)) {
         if (collect_profile)
-            g_nmod_kernel_zls_profile.zls_pmbasis_time += _nmod_kernel_now_seconds() - t0;
+            g_nmod_kernel_zls_profile.by_depth[FLINT_MIN(depth, NMOD_ZLS_PROFILE_DEPTHS - 1)].certificate_hits++;
+        nmod_poly_mat_clear(PT);
+        nmod_poly_mat_clear(AT);
+        flint_free(shift);
+        g_nmod_kernel_zls_depth--;
+        return certified_nullity;
     }
 
     // Looking for zero residues and non zero residues
@@ -345,7 +510,6 @@ int nmod_poly_mat_zls_sorted(nmod_poly_mat_t N, slong *degN, const nmod_poly_mat
         nmod_poly_mat_column_degree(degN, P1, ishift);
         if (collect_profile) {
             g_nmod_kernel_zls_profile.zls_zero_residue_returns++;
-            g_nmod_kernel_zls_profile.zls_total_time += _nmod_kernel_now_seconds() - call_start;
         }
 
         nmod_poly_mat_clear(P1);
@@ -383,7 +547,6 @@ int nmod_poly_mat_zls_sorted(nmod_poly_mat_t N, slong *degN, const nmod_poly_mat
         if (n1==0) {
             if (collect_profile) {
                 g_nmod_kernel_zls_profile.zls_m1_returns++;
-                g_nmod_kernel_zls_profile.zls_total_time += _nmod_kernel_now_seconds() - call_start;
             }
             nmod_poly_mat_clear(P2);
             nmod_poly_mat_clear(RT);
@@ -398,7 +561,6 @@ int nmod_poly_mat_zls_sorted(nmod_poly_mat_t N, slong *degN, const nmod_poly_mat
             nmod_poly_mat_column_degree(degN, P1, ishift);
             if (collect_profile) {
                 g_nmod_kernel_zls_profile.zls_m1_returns++;
-                g_nmod_kernel_zls_profile.zls_total_time += _nmod_kernel_now_seconds() - call_start;
             }
 
             nmod_poly_mat_clear(P1);
@@ -599,8 +761,6 @@ int nmod_poly_mat_zls_sorted(nmod_poly_mat_t N, slong *degN, const nmod_poly_mat
                 if (n1 > 0)
                     nmod_poly_mat_clear(P1);
                 flint_free(shift);
-                if (collect_profile)
-                    g_nmod_kernel_zls_profile.zls_total_time += _nmod_kernel_now_seconds() - call_start;
                 g_nmod_kernel_zls_depth--;
                 return 0;
             }
@@ -611,8 +771,6 @@ int nmod_poly_mat_zls_sorted(nmod_poly_mat_t N, slong *degN, const nmod_poly_mat
                 nmod_poly_mat_clear(P1);
                 nmod_poly_mat_clear(P2);
                 flint_free(shift);
-                if (collect_profile)
-                    g_nmod_kernel_zls_profile.zls_total_time += _nmod_kernel_now_seconds() - call_start;
                 g_nmod_kernel_zls_depth--;
                 return n1;
             }
@@ -661,8 +819,6 @@ int nmod_poly_mat_zls_sorted(nmod_poly_mat_t N, slong *degN, const nmod_poly_mat
             if (n1 > 0)
                 nmod_poly_mat_clear(P1);
             flint_free(shift);
-            if (collect_profile)
-                g_nmod_kernel_zls_profile.zls_total_time += _nmod_kernel_now_seconds() - call_start;
             g_nmod_kernel_zls_depth--;
             return c2;
 
@@ -705,8 +861,6 @@ int nmod_poly_mat_zls_sorted(nmod_poly_mat_t N, slong *degN, const nmod_poly_mat
             nmod_poly_mat_clear(Q);
 
             flint_free(shift);
-            if (collect_profile)
-                g_nmod_kernel_zls_profile.zls_total_time += _nmod_kernel_now_seconds() - call_start;
             g_nmod_kernel_zls_depth--;
             return n1+c2;
         }
@@ -714,8 +868,6 @@ int nmod_poly_mat_zls_sorted(nmod_poly_mat_t N, slong *degN, const nmod_poly_mat
     }
 
     flint_free(shift);
-    if (collect_profile)
-        g_nmod_kernel_zls_profile.zls_total_time += _nmod_kernel_now_seconds() - call_start;
     g_nmod_kernel_zls_depth--;
     return 0;
 }
@@ -834,9 +986,11 @@ int nmod_poly_mat_kernel_zls(nmod_poly_mat_t N, slong *degN, const nmod_poly_mat
         for (k = 0; k < n; k++) {
             for (j = 0; j < nz; j++){
                 nmod_poly_set(nmod_poly_mat_entry(N, perm[k], j), nmod_poly_mat_entry(NT,k,j));
-                degN[perm[k]]=tdeg[k];
             }
         }
+        /* Row unpermutation does not permute kernel COLUMNS or their degrees.
+           Only tdeg[0..nz) was initialized by the recursive kernel routine. */
+        for (j = 0; j < nz; j++) degN[j] = tdeg[j];
         if (collect_profile)
             g_nmod_kernel_zls_profile.kernel_unpermute_time += _nmod_kernel_now_seconds() - t0;
 

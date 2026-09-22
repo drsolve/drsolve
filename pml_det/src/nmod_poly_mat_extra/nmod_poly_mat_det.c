@@ -155,6 +155,9 @@ _nmod_det_hnf_profile_print(void)
     printf("    lnz_vu_kernel=%.6fs lnz_k_kernel=%.6fs lnz_completion=%.6fs lnz_stack=%.6fs verify=%.6fs\n",
            p->vu_kernel_time, p->k_kernel_time, p->completion_time,
            p->stack_time, p->verify_time);
+    printf("    CPU self/exclusive: hnf_self=%.6fs hnf_exclusive=%.6fs (excludes HNF recursion and kernel calls)\n",
+           p->total_time - p->recurse_time,
+           p->total_time - p->recurse_time - p->kernel_time - p->vu_kernel_time - p->k_kernel_time);
     nmod_poly_mat_kernel_zls_profile_print();
 }
 

@@ -33,6 +33,7 @@ typedef struct
     slong max_rows;
     slong max_cols;
     double mbasis_total_time;
+    double mbasis_backend_time;
     double pmbasis_total_time;
     double pmbasis_basecase_time;
     double pmbasis_first_half_time;
@@ -120,6 +121,10 @@ nmod_poly_mat_pmbasis_profile_print(void)
            p->pmbasis_first_half_time, p->pmbasis_middle_product_time,
            p->pmbasis_second_half_time, p->pmbasis_final_mul_time,
            p->mbasis_total_time);
+    printf("        CPU self/exclusive: pmbasis_self=%.6fs pmbasis_exclusive=%.6fs mbasis_wrapper_exclusive=%.6fs\n",
+           p->pmbasis_total_time - p->pmbasis_first_half_time - p->pmbasis_second_half_time,
+           p->pmbasis_total_time - p->pmbasis_first_half_time - p->pmbasis_second_half_time - p->pmbasis_basecase_time,
+           p->mbasis_total_time - p->mbasis_backend_time);
     nmod_mat_poly_mbasis_profile_print();
     nmod_mat_poly_mbasis_resupdate_profile_print();
 }
@@ -144,10 +149,13 @@ void nmod_poly_mat_mbasis(nmod_poly_mat_t appbas,
     nmod_mat_poly_init(matp, pmat->r, pmat->c, pmat->modulus);
     nmod_mat_poly_set_trunc_from_poly_mat(matp, pmat, order);
     nmod_mat_poly_init(app, pmat->r, pmat->r, pmat->modulus);
+    double backend_start = collect_profile ? _nmod_pmbasis_now_seconds() : 0.0;
     if (_nmod_pmbasis_use_legacy_mbasis())
         nmod_mat_poly_mbasis(app, shift, matp, order);
     else
         nmod_mat_poly_mbasis_resupdate(app, shift, matp, order);
+    if (collect_profile)
+        g_nmod_pmbasis_profile.mbasis_backend_time += _nmod_pmbasis_now_seconds() - backend_start;
     nmod_poly_mat_set_from_mat_poly(appbas, app);
     nmod_mat_poly_clear(matp);
     nmod_mat_poly_clear(app);

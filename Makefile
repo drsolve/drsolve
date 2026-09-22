@@ -424,6 +424,13 @@ test-components: $(BUILD_DIR)/component_tests
 $(BUILD_DIR)/component_tests: $(COMPONENT_TEST_SOURCES) $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -o $@ $(COMPONENT_TEST_SOURCES) -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
+.PHONY: test-kernel-certificate
+test-kernel-certificate: $(BUILD_DIR)/pml_kernel_certificate_test
+	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/pml_kernel_certificate_test
+
+$(BUILD_DIR)/pml_kernel_certificate_test: $(SRC_DIR)/test/pml_kernel_certificate_test.c $(PML_SOURCE_DIR)/src/nmod_poly_mat_extra/kernel.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/pml_kernel_certificate_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
 .PHONY: test-schur-repair
 test-schur-repair: $(BUILD_DIR)/dixon_schur_repair_test
 	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/dixon_schur_repair_test

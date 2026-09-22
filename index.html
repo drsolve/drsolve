@@ -1,0 +1,1788 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DRSolve — Polynomial System Solver</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  font-size: 15px;
+  color: #111;
+  background: #fff;
+  line-height: 1.6;
+}
+
+/* ── NAV ── */
+nav {
+  border-bottom: 1px solid #ddd;
+  padding: 0 40px;
+  display: flex;
+  align-items: center;
+  background: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.nav-logo {
+  font-weight: 700;
+  font-size: 16px;
+  color: #111;
+  text-decoration: none;
+  margin-right: 32px;
+  padding: 14px 0;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.nav-tabs {
+  display: flex;
+  list-style: none;
+}
+
+.nav-tabs button {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 14px 18px;
+  font-size: 14px;
+  color: #555;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  margin-bottom: -1px;
+}
+
+.nav-tabs button:hover { color: #111; }
+.nav-tabs button.active { color: #111; font-weight: 600; border-bottom-color: #111; }
+
+.nav-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+}
+
+.nav-link {
+  font-size: 13px;
+  color: #555;
+  text-decoration: none;
+  padding: 6px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.nav-link:hover { background: #f5f5f5; color: #111; }
+
+/* ── PAGES ── */
+.page { display: none; max-width: 860px; margin: 0 auto; padding: 48px 40px 60px; }
+.page.active { display: block; }
+
+/* ── TYPOGRAPHY ── */
+h1 { font-size: 26px; font-weight: 700; margin-bottom: 10px; line-height: 1.25; }
+h2 { font-size: 18px; font-weight: 700; margin: 36px 0 10px; }
+h3 { font-size: 15px; font-weight: 600; margin: 24px 0 8px; }
+p  { color: #333; margin-bottom: 12px; }
+a  { color: #0066cc; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.subtitle {
+  font-size: 15px;
+  color: #555;
+  margin-bottom: 28px;
+  max-width: 800px;
+}
+
+hr { border: none; border-top: 1px solid #e5e5e5; margin: 32px 0; }
+
+/* ── BADGES ── */
+.badge-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 28px; }
+.badge {
+  font-size: 12px;
+  background: #f0f0f0;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  padding: 3px 10px;
+  color: #444;
+}
+.badge.green { background: #f0faf4; border-color: #b2dfcc; color: #1a6b3a; }
+.badge.blue  { background: #eff6ff; border-color: #bfdbfe; color: #1e40af; }
+
+/* ── FEATURE LIST ── */
+.feature-list { list-style: none; margin: 0 0 24px; }
+.feature-list li {
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f0f0;
+  color: #333;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+.feature-list li::before { content: "-"; color: #aaa; flex-shrink: 0; font-size: 13px; }
+
+/* ── CODE ── */
+pre, code {
+  font-family: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+  font-size: 13px;
+}
+
+pre {
+  background: #f8f8f8;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 16px 20px;
+  overflow-x: auto;
+  margin: 10px 0 20px;
+  line-height: 1.7;
+  color: #222;
+}
+
+code {
+  background: #f0f0f0;
+  border: 1px solid #e0e0e0;
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-size: 12.5px;
+  color: #333;
+}
+
+.cmt { color: #999; }
+.kw  { color: #0055cc; font-weight: 500; }
+.str { color: #006644; }
+.num { color: #884400; }
+
+/* ── COPY WRAPPER ── */
+.code-block { position: relative; }
+.copy-btn {
+  position: absolute;
+  top: 8px; right: 8px;
+  font-size: 11px;
+  font-family: monospace;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  padding: 3px 10px;
+  cursor: pointer;
+  color: #666;
+  transition: all 0.15s;
+}
+.copy-btn:hover { background: #f0f0f0; color: #111; }
+
+/* ── SUB-TABS (Usage page) ── */
+.sub-tabs {
+  display: flex;
+  border-bottom: 1px solid #ddd;
+  margin-bottom: 28px;
+  flex-wrap: wrap;
+}
+.sub-tabs button {
+  background: none; border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 16px;
+  font-size: 13px;
+  color: #666;
+  cursor: pointer;
+  margin-bottom: -1px;
+  transition: color 0.15s, border-color 0.15s;
+}
+.sub-tabs button:hover { color: #111; }
+.sub-tabs button.active { color: #111; font-weight: 600; border-bottom-color: #111; }
+
+.sub-page { display: none; }
+.sub-page.active { display: block; }
+
+/* ── TABLE ── */
+table { width: 100%; border-collapse: collapse; margin: 12px 0 24px; font-size: 14px; }
+th { text-align: left; padding: 8px 12px; background: #f5f5f5; border: 1px solid #e0e0e0; font-weight: 600; color: #222; }
+td { padding: 8px 12px; border: 1px solid #e0e0e0; color: #333; vertical-align: top; }
+tr:nth-child(even) td { background: #fafafa; }
+
+/* ── INFO BOXES ── */
+.info-box {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 4px;
+  padding: 12px 16px;
+  font-size: 13px;
+  color: #1e3a8a;
+  margin-bottom: 20px;
+}
+.note-box {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 4px;
+  padding: 12px 16px;
+  font-size: 13px;
+  color: #78350f;
+  margin-bottom: 20px;
+}
+
+/* ── REPO CARD ── */
+.repo-card {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 20px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin: 24px 0;
+  flex-wrap: wrap;
+}
+.repo-card-info p { font-size: 13px; color: #555; margin: 4px 0 0; }
+.repo-card-info strong { font-size: 15px; }
+.btn {
+  display: inline-block;
+  padding: 8px 20px;
+  background: #111;
+  color: #fff;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.btn:hover { background: #333; text-decoration: none; }
+.btn-outline {
+  background: #fff;
+  color: #111;
+  border: 1px solid #bbb;
+}
+.btn-outline:hover { background: #f5f5f5; }
+
+/* ── MUSIC BUTTON HOVER REVEAL ── */
+.music-select-btn {
+  display: inline-block;
+  background: none;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 5px 12px;
+  font-size: 13px;
+  color: #555;
+  cursor: pointer;
+  opacity: 0.05;
+  pointer-events: none; 
+  transition: opacity 0.2s, background 0.15s;
+  white-space: nowrap;
+}
+.nav-right:hover .music-select-btn,
+.music-menu[style*="display: block"] + .music-select-btn,
+#music-wrapper:hover .music-select-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+.music-select-btn:hover { background: #f5f5f5; color: #111; }
+
+.music-menu {
+  display: none;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.10);
+  min-width: 200px;
+  z-index: 100;
+  overflow: hidden;
+}
+
+.music-menu-grid {
+  display: block;
+}
+
+.music-menu-head {
+  padding: 10px 10.5px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #666;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: #fafafa;
+  border-bottom: 1px solid #eee;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.music-group-play {
+  border: 1px solid #ddd;
+  background: #fff;
+  color: #555;
+  border-radius: 999px;
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.music-group-play:hover {
+  background: #f5f5f5;
+  color: #111;
+}
+
+.music-item {
+  padding: 9px 16px;
+  font-size: 13px;
+  color: #333;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.music-item:hover { background: #f5f5f5; }
+
+.music-menu-footer {
+  border-top: 1px solid #eee;
+  padding: 9px 16px;
+}
+
+.music-menu-footer a {
+  font-size: 13px;
+  color: #0066cc;
+  text-decoration: none;
+}
+
+.music-menu-footer a:hover {
+  text-decoration: underline;
+}
+
+/* ── FOOTER ── */
+footer {
+  border-top: 1px solid #e5e5e5;
+  padding: 20px 40px;
+  font-size: 12px;
+  color: #888;
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 640px) {
+  nav { padding: 0 16px; }
+  .page { padding: 28px 20px 48px; }
+  footer { padding: 16px 20px; }
+  .nav-tabs button { padding: 12px 10px; font-size: 13px; }
+  .repo-card { flex-direction: column; }
+  h1 { font-size: 22px; }
+  .music-menu { min-width: 200px; right: -8px; }
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <span class="nav-logo" onclick="showPage('home')">DRSolve</span>
+  <ul class="nav-tabs">
+    <li><button class="active" onclick="showPage('home')">Overview</button></li>
+    <li><button onclick="showPage('usage')">Usage</button></li>
+    <li><button onclick="showPage('sage')">SageMath</button></li>
+    <li><button onclick="showPage('install')">Install</button></li>
+    <li><button onclick="showPage('downloads')">Downloads</button></li>
+  </ul>
+  <div class="nav-right">
+    <div id="music-wrapper" style="position:relative;margin-right:10px;">
+      <button id="music-select-btn" class="music-select-btn" onclick="toggleMusicMenu()">
+        🎵 Music ▾
+      </button>
+
+      <div id="music-menu" class="music-menu">
+        <div class="music-menu-grid">
+          <div class="music-menu-col">
+            <div class="music-menu-head">
+              <button class="music-group-play" onclick="playGroup(event, 'piano')" title="Loop Piano&Violin">▶</button>
+              <span>Piano&amp;Violin</span>
+            </div>
+            <div class="music-item" onclick="selectTrack(0)"><span id="indicator-0" style="color:#111;font-size:11px;">▶</span> Moon</div>
+            <div class="music-item" onclick="selectTrack(1)"><span id="indicator-1" style="color:#111;font-size:11px;">▶</span> Cloud</div>
+            <div class="music-item" onclick="selectTrack(2)"><span id="indicator-2" style="color:#111;font-size:11px;">▶</span> Wind</div>
+            <div class="music-item" onclick="selectTrack(3)"><span id="indicator-3" style="color:#111;font-size:11px;">▶</span> Beach</div>
+            <div class="music-item" onclick="selectTrack(4)"><span id="indicator-4" style="color:#111;font-size:11px;">▶</span> Dance</div>
+            <div class="music-menu-head">
+              <button class="music-group-play" onclick="playGroup(event, 'song')" title="Loop Song">▶</button>
+              <span>Crypto Song</span> 
+            </div>
+            <div class="music-item" onclick="selectTrack(5)"><span id="indicator-5" style="color:#111;font-size:11px;">▶</span> Dixon Song</div>
+            <div class="music-item" onclick="selectTrack(6)"><span id="indicator-6" style="color:#111;font-size:11px;">▶</span> Crypto Star</div>
+            <div class="music-item" onclick="selectTrack(7)"><span id="indicator-7" style="color:#111;font-size:11px;">▶</span> Prove Dream</div>
+            <div class="music-item" onclick="selectTrack(8)"><span id="indicator-8" style="color:#111;font-size:11px;">▶</span> FHE</div>
+            <div class="music-item" onclick="selectTrack(9)"><span id="indicator-9" style="color:#111;font-size:11px;">▶</span> One-Way Hash</div>
+          </div>
+        </div>
+        <div class="music-menu-footer">
+          <a href="https://github.com/drsolve/drsolve.github.io" target="_blank">⬇ Download</a>
+        </div>
+      </div>
+    </div>
+    <audio id="dixon-audio"></audio>
+  </div>
+</nav>
+
+<!-- ══ OVERVIEW ══ -->
+<div id="page-home" class="page active">
+  <h1>DRSolve: Dixon Resultant &amp; Polynomial System Solver</h1>
+  <p class="subtitle">A C implementation for computing Dixon resultants and solving polynomial systems over finite fields and ℚ.</p>
+
+
+<div class="repo-card">
+  <div class="repo-card-info">
+<strong style="color:#333">GitHub — </strong>
+    <strong><a href="https://github.com/drsolve/drsolve" target="_blank" style="text-decoration:underline;">https://github.com/drsolve/drsolve</a></strong>
+  </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:-5px;">
+  <span style="background:#eee;color:#111;border:1px solid #d1d5db;padding:10px 10px;border-radius:6px;font-weight:bold;font-size:14px;margin-right:4px;">
+    <a href="#" onclick="showPage('downloads');return false;" style="text-decoration:none; color:inherit; display:inline-block;">Download v0.5.1</a>
+  </span>
+  <span style="width:1px;height:30px;background:#ddd;display:inline-block;margin:0 2px;"></span>
+
+  <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.5.1.tar.gz" style="background:#333;color:#fff;border:1px solid #333;">Source Code</a>
+  <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.5.1/drsolve-0.5.1-linux-x86_64.zip">Linux Binary</a>
+  <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.5.1/drsolve-0.5.1-macos26.5-arm64.zip">macOS Binary</a>
+  <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.5.1/drsolve-0.5.1-windows-x86_64.zip">Windows GUI</a>
+    </div>
+</div>
+
+  <h2>Features</h2>
+  <ul class="feature-list">
+    <li><strong>Dixon resultant computation</strong> — Variable elimination for multivariate polynomial systems.</li>
+    <li><strong>Polynomial system solver</strong> — Solves n×n systems and enumerates all solutions over the given field.</li>
+    <li><strong>Prime fields F<sub>p</sub> (any size)</strong> — Implemented with FLINT modular arithmetic, optionally accelerated by PML.</li>
+    <li><strong>Extension fields GF(p<sup>k</sup>)</strong> — Further optimized for GF(2^8), GF(2^16), GF(2^32), GF(2^64), GF(2^128).</li>
+    <li><strong>Rational field ℚ</strong> — Rational reconstruction via multi-prime CRT.</li>
+  </ul>
+
+  <h2>Dependencies</h2>
+
+  <p>
+    <strong><a href="https://github.com/flintlib/flint" target="_blank">FLINT</a></strong>
+    (recommended version: 3.6.0) —
+    Core arithmetic library for modular and polynomial computations.
+  </p>
+
+  <p>
+    <strong><a href="https://github.com/vneiger/pml" target="_blank">PML</a></strong>
+    (built in) —
+    Accelerates prime field polynomial matrix operations when available.
+  </p>
+
+  <hr>
+
+  <h2>License</h2>
+  <p>DRSolve is free software distributed under the <strong>GNU General Public License, version 2.0 or later (GPLv2+)</strong>.</p>
+</div>
+
+<!-- ══ USAGE ══ -->
+<div id="page-usage" class="page">
+  <h1>Usage</h1>
+  <div class="sub-tabs">
+    <button class="active" onclick="showSub(this,'basic')">Basic Resultant</button>
+    <button onclick="showSub(this,'solve')">System Solver</button>
+    <button onclick="showSub(this,'random')">Random Mode</button>
+    <button onclick="showSub(this,'comp')">Complexity</button>
+    <button onclick="showSub(this,'fields')">Fields</button>
+    <button onclick="showSub(this,'fieldeq')">Field Equation</button>
+    <button onclick="showSub(this,'ext')">Extension Fields</button>
+    <button onclick="showSub(this,'ideal')">Ideal Reduction</button>
+    <button onclick="showSub(this,'file')">File Input</button>
+  </div>
+
+  <!-- Basic -->
+  <div id="sub-basic" class="sub-page active">
+    <h2>Dixon Resultant (Basic)</h2>
+    <p>Eliminates variables from a polynomial system and returns the resultant in the remaining variables.</p>
+    <p><strong>Syntax</strong></p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre>./drsolve <span class="str">"polynomials"</span> <span class="str">"eliminate_vars"</span> field_size
+./drsolve -o output.dr <span class="str">"polynomials"</span> <span class="str">"eliminate_vars"</span> field_size</pre>
+    </div>
+    <div class="note-box">
+      <code>field_size</code> may be a prime such as <code>257</code>, an extension field such as <code>2^8</code>,
+      a custom extension field such as <code>"2^8: t^8+t^4+t^3+t+1"</code>, or <code>0</code> for ℚ.
+      The number of eliminated variables must equal the number of equations minus one.
+    </div>
+    <div class="info-box">
+      Direct resultant selectors <code>--dixon</code>, <code>--macaulay</code>, and <code>--subres</code> are available.
+      For convenience, 2 equations with 1 elimination variable auto-enable <code>--subres</code>, while standard 3/4-equation Dixon cases auto-enable the fast recursive Dixon construction unless a method is selected explicitly.
+    </div>
+    <p><strong>Example</strong> — eliminate x and y from a 3-polynomial system over GF(257):</p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre>./drsolve <span class="str">"x+y+z, x*y+y*z+z*x, x*y*z+1"</span> <span class="str">"x,y"</span> <span class="num">257</span></pre>
+    </div>
+    <p>Output: the resultant polynomial in <code>z</code>, written to a solution <code>.dr</code> file. This is also the mode used for very large prime fields beyond the <code>nmod</code> limit.</p>
+  </div>
+
+  <!-- Solver -->
+  <div id="sub-solve" class="sub-page">
+    <h2>Polynomial System Solver</h2>
+    <p>Solves a well-determined system of n equations in n unknowns and enumerates all solutions over the given field.</p>
+    <p><strong>Syntax</strong></p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre>./drsolve <span class="str">"polynomials"</span> field_size
+./drsolve -s <span class="str">"polynomials"</span> field_size
+./drsolve -v <span class="num">2</span> -s <span class="str">"polynomials"</span> field_size</pre>
+    </div>
+    <p><strong>Example</strong></p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre>./drsolve -s <span class="str">"x^2 + y^2 + z^2 - 6, x + y + z - 4, x*y*z - x - 1"</span> <span class="num">257</span></pre>
+    </div>
+    <div class="info-box">
+      <code>-s</code> is the short form of solver mode, while plain <code>./drsolve "polynomials" field_size</code>
+      also auto-enters solver mode. <code>-v 0</code> is silent, <code>-v 1</code> is the default output level,
+      <code>-v 2</code> keeps the full elimination/debug log, and <code>-v 3</code> also dumps small intermediate matrices. Variables are auto-detected from the input expressions.
+    </div>
+    <p>Use <code>-v 0</code> to suppress console output while still writing the solution file:</p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre>./drsolve -v <span class="num">0</span> -s <span class="str">"..."</span> <span class="num">257</span></pre>
+    </div>
+    <div class="note-box"><code>--solve</code>, <code>--solve-verbose</code>, and <code>--silent</code> are still accepted for compatibility. For <code>field_size=0</code>, you can also use <code>--solve-rational-only</code> to keep only exact rational solutions.</div>
+  </div>
+
+  <!-- Complexity -->
+  <div id="sub-comp" class="sub-page">
+    <h2>Complexity Analysis</h2>
+    <p>
+      Estimates the difficulty of a Dixon resultant computation <em>without performing any polynomial arithmetic</em>.
+      The tool parses the input, then reports:
+    </p>
+    <ul class="feature-list" style="margin-bottom:20px;">
+      <li>Equation count, variable list, and elimination variable list</li>
+      <li>Total degree of each input polynomial</li>
+      <li>Bezout bound (product of degrees)</li>
+      <li>Dixon matrix size via the Hessenberg recurrence</li>
+      <li>Resultant degree estimate</li>
+      <li>Step 1/2 and Step 4 complexity estimates for direct, HNF/interpolation, sparse, and recursive Dixon construction models</li>
+    </ul>
+
+    <p><strong>Syntax</strong></p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre>./drsolve --comp <span class="str">"polynomials"</span> <span class="str">"eliminate_vars"</span> field_size
+./drsolve -c     <span class="str">"polynomials"</span> <span class="str">"eliminate_vars"</span> field_size
+./drsolve -r -c  <span class="str">"[d]*n"</span> field_size
+./drsolve -c -r  <span class="str">"[d]*n"</span> field_size</pre>
+    </div>
+
+    <p><strong>Example</strong></p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre>./drsolve --comp <span class="str">"x^3+y^3+z^3, x^2*y+y^2*z+z^2*x, x+y+z-1"</span> <span class="str">"x,y"</span> <span class="num">257</span></pre>
+    </div>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre>./drsolve -c -r <span class="str">"[4]*4"</span> <span class="num">257</span></pre>
+    </div>
+
+    <p><strong>Sample console output</strong></p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre>=== Complexity Analysis ===
+--- Step 1/2 ---
+Step 1/2 direct multivariate cofactor expansion (naive, log2): ...
+Step 1/2 Kronecker + HNF (log2): ...
+Step 1/2 recursive block Dixon construction (Zhao/Qin surrogate, log2): ...
+Best Step 1/2 estimate: ...
+
+--- Step 4 ---
+Step 4 HNF (log2, omega=2.81): ...
+Step 4 ordinary dense interpolation (log2): ...
+Best Step 4 estimate: ...
+
+--- Overall ---
+Overall complexity = max(step1/2, step4) (log2): ...
+===========================</pre>
+    </div>
+
+    <h3>Custom omega</h3>
+    <p>
+      The complexity formula uses a matrix-multiplication exponent ω (default: 2.3).
+      Set a custom value with <code>--omega</code> (or <code>-w</code>):
+    </p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre><span class="cmt"># Theoretical bound ω ≈ 2.373</span>
+./drsolve --comp --omega <span class="num">2.373</span> <span class="str">"polynomials"</span> <span class="str">"eliminate_vars"</span> field_size
+
+<span class="cmt"># Short form</span>
+./drsolve -c -w <span class="num">2.0</span> <span class="str">"polynomials"</span> <span class="str">"eliminate_vars"</span> field_size</pre>
+    </div>
+    <div class="info-box">
+      Flags may appear in any order before the positional arguments.
+      <code>-v</code>, <code>--comp</code>, <code>--omega</code>, and <code>-o</code> can be combined freely.
+    </div>
+    <div class="info-box">
+      Complexity mode also works with random generation. Use <code>-r -c</code> or <code>-r --comp</code> to estimate a generated system without computing its resultant.
+    </div>
+    <div class="info-box">
+      Under <code>--comp</code>, <code>-v 0</code> prints only the final overall complexity, <code>-v 1</code> prints the per-step / per-method summary, <code>-v 2</code> adds formulas and parameter values, and <code>-v 3</code> adds extra detail.
+    </div>
+    <div class="note-box">Supported over prime fields within the standard backend, extension fields, and ℚ. It is not available in the current large-prime fallback mode.</div>
+
+    <h3>Output file</h3>
+    <table>
+      <tr><th>Input method</th><th>Output file</th></tr>
+      <tr><td>Command-line arguments</td><td><code>comp_YYYYMMDD_HHMMSS.dr</code></td></tr>
+      <tr><td>File input <code>example.dr</code></td><td><code>example_comp.dr</code></td></tr>
+    </table>
+    <p>The report file contains all of the above fields plus the omega value used.</p>
+  </div>
+
+  <!-- Fields -->
+  <div id="sub-fields" class="sub-page">
+    <h2>Field Support</h2>
+    <p>DRsolve currently supports prime fields, extension fields, and ℚ. Arithmetic uses FLINT throughout, with optional PML acceleration for suitable prime-field computations.</p>
+
+    <h3>Prime fields — F<sub>p</sub></h3>
+    <p>Specify a prime field as a plain integer such as <code>257</code>. For primes within the standard <code>nmod</code> backend, all finite-field modes are available.</p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre>./drsolve -s <span class="str">"..."</span> <span class="num">257</span>
+./drsolve -s <span class="str">"..."</span> <span class="num">65537</span>
+./drsolve -s <span class="str">"..."</span> <span class="num">4294967311</span></pre>
+    </div>
+    <p>When the optional <a href="https://github.com/vneiger/pml" target="_blank">PML library</a> is installed and detected at configure time, polynomial matrix operations are automatically accelerated for well-determined prime field systems.</p>
+    <div class="info-box">For very large primes beyond the <code>nmod</code> limit, the current release still computes Dixon resultants by reconstructing over ℚ and then reducing modulo the target prime.</div>
+    <div class="note-box">For very large primes beyond the <code>nmod</code> limit, solver mode is available, but <code>--comp</code>, <code>--random</code>, <code>--ideal</code>, and <code>--field-equation</code> are not available yet.</div>
+
+    <h3>Extension fields — F<sub>p<sup>k</sup></sub></h3>
+    <p>Specify an extension field as <code>p^k</code>. The generator is <code>t</code> by default, and FLINT's built-in irreducible polynomial is used unless a custom one is provided.</p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre><span class="cmt"># FLINT default polynomial</span>
+./drsolve <span class="str">"..."</span> <span class="str">"x"</span> <span class="num">2^8</span>
+
+<span class="cmt"># Custom polynomial</span>
+./drsolve -s <span class="str">"x^2+t*y, x*y+t^2"</span> <span class="str">"2^8: t^8 + t^4 + t^3 + t + 1"</span></pre>
+    </div>
+    <div class="info-box">Extension fields are slower than prime fields because arithmetic is carried out modulo an irreducible polynomial. PML acceleration does not apply here.</div>
+    <div class="note-box">Extension fields whose characteristic exceeds the <code>nmod</code> limit are not supported in the current release.</div>
+
+    <h3>Rational field — ℚ</h3>
+    <p>Use <code>field_size=0</code> to work over the rationals. DRsolve reconstructs exact rational results from modular images.</p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre>./drsolve <span class="str">"x^2+y^2+z^2-1, x^2+y^2-2*z^2, x+y+z"</span> <span class="str">"x,y"</span> <span class="num">0</span>
+./drsolve --comp <span class="str">"x^3+y^3+z^3, x^2*y+y^2*z+z^2*x, x+y+z-1"</span> <span class="str">"x,y"</span> <span class="num">0</span>
+./drsolve -s <span class="str">"x^2+y^2-5, x-y-1"</span> <span class="num">0</span></pre>
+    </div>
+    <div class="note-box">Over the rationals, the basic Dixon resultant, <code>--comp</code>, and solver mode are supported. <code>--ideal</code> and <code>--field-equation</code> are not implemented there yet.</div>
+
+    <h3>Common examples</h3>
+    <table>
+      <tr><th>Field type</th><th>Example argument</th><th>Current status</th></tr>
+      <tr><td>Prime field within <code>nmod</code> range</td><td><code>257</code></td><td>All main modes available</td></tr>
+      <tr><td>Very large prime field</td><td><code>340282366920938463463374607431768211507</code></td><td>Basic Dixon resultant only</td></tr>
+      <tr><td>GF(2<sup>8</sup>)</td><td><code>2^8</code></td><td>FLINT default irreducible polynomial</td></tr>
+      <tr><td>GF(2<sup>8</sup>) with AES polynomial</td><td><code>"2^8: t^8+t^4+t^3+t+1"</code></td><td>Custom polynomial supported</td></tr>
+      <tr><td>GF(3<sup>5</sup>)</td><td><code>3^5</code></td><td>Extension field with FLINT default polynomial</td></tr>
+      <tr><td>Q</td><td><code>0</code></td><td>Basic Dixon resultant, <code>--comp</code>, and solver mode</td></tr>
+    </table>
+  </div>
+
+  <!-- Field-equation -->
+  <div id="sub-fieldeq" class="sub-page">
+    <h2>Field-equation Reduction</h2>
+    <p>After each multiplication, reduces <code>x^q -&gt; x</code> for every variable. This can be useful for finite-field systems where field equations should be enforced throughout the computation.</p>
+    <p><strong>Syntax</strong></p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre>./drsolve --field-equation <span class="str">"polynomials"</span> <span class="str">"eliminate_vars"</span> field_size
+./drsolve --field-equation -r <span class="str">"[d1,d2,...,dn]"</span> field_size</pre>
+    </div>
+    <p><strong>Example</strong></p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre>./drsolve --field-equation <span class="str">"x0*x2+x1, x0*x1*x2+x2+1, x1*x2+x0+1"</span> <span class="str">"x0,x1"</span> <span class="num">2</span></pre>
+    </div>
+    <div class="note-box">Not available for <code>field_size=0</code> or for the current large-prime fallback mode.</div>
+  </div>
+
+  <!-- Random -->
+  <div id="sub-random" class="sub-page">
+    <h2>Random Mode</h2>
+    <p>Generates a random polynomial system from a degree list, then runs the selected computation mode on the generated system.</p>
+    <p><strong>Syntax</strong></p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre>./drsolve --random <span class="str">"[d1,d2,...,dn]"</span> field_size
+./drsolve -r       <span class="str">"[d]*n"</span>          field_size
+./drsolve -r -n <span class="num">4</span> --density <span class="num">0.5</span> <span class="str">"[d]*3"</span> field_size
+./drsolve -r -s    <span class="str">"[d1,...,dn]"</span> field_size
+./drsolve -r --comp  <span class="str">"[d]*n"</span>        field_size</pre>
+    </div>
+    <p><strong>Examples</strong></p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre>./drsolve --random <span class="str">"[3,3,2]"</span> <span class="num">257</span>
+./drsolve -r <span class="str">"[3]*3"</span> <span class="num">0</span>
+./drsolve -r -n <span class="num">4</span> --density <span class="num">0.5</span> <span class="str">"[3]*3"</span> <span class="num">257</span>
+./drsolve -r --seed <span class="num">12345</span> <span class="str">"[3]*3"</span> <span class="num">257</span>
+./drsolve -r -s <span class="str">"[2]*3"</span> <span class="num">257</span>
+./drsolve -r --comp --omega <span class="num">2.373</span> <span class="str">"[4]*4"</span> <span class="num">257</span></pre>
+    </div>
+    <div class="info-box">Random systems use auto-generated variable names such as <code>x0</code>, <code>x1</code>, … and write the same solution/complexity files as manual input.</div>
+    <div class="info-box"><code>--seed &lt;num&gt;</code> makes random generation reproducible across runs. This is useful for benchmarks, bug reports, and paper examples.</div>
+    <div class="note-box">Random mode is not available in the current large-prime fallback mode.</div>
+  </div>
+
+  <!-- Extension fields -->
+  <div id="sub-ext" class="sub-page">
+    <h2>Extension Fields</h2>
+    <p>Specify the field as <code>p^k</code>. The generator variable is <code>t</code> by default, and the current CLI prints the irreducible polynomial chosen by FLINT unless a custom polynomial is provided.</p>
+    <p><strong>Default polynomial</strong></p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre>./drsolve <span class="str">"x + y^2 + t, x*y + t*y + 1"</span> <span class="str">"x"</span> <span class="num">2^8</span></pre>
+    </div>
+    <p><strong>Custom polynomial</strong> (e.g., the AES field polynomial for GF(2<sup>8</sup>)):</p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre>./drsolve -s <span class="str">"x^2 + t*y, x*y + t^2"</span> <span class="str">"2^8: t^8 + t^4 + t^3 + t + 1"</span></pre>
+    </div>
+    <table>
+      <tr><th>Field</th><th>Argument</th></tr>
+      <tr><td>GF(2<sup>8</sup>) default</td><td><code>2^8</code></td></tr>
+      <tr><td>GF(2<sup>8</sup>) AES polynomial</td><td><code>"2^8: t^8+t^4+t^3+t+1"</code></td></tr>
+      <tr><td>GF(3<sup>5</sup>) default</td><td><code>3^5</code></td></tr>
+      <tr><td>GF(3<sup>5</sup>) custom</td><td><code>"3^5: t^5+2*t+1"</code></td></tr>
+    </table>
+  </div>
+
+  <!-- Ideal -->
+  <div id="sub-ideal" class="sub-page">
+    <h2>Dixon with Ideal Reduction</h2>
+    <p>Reduces the polynomial system modulo a triangular ideal before computing the Dixon resultant. Useful for structured systems such as those arising from block cipher analysis.</p>
+    <p><strong>Syntax</strong></p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre>./drsolve --ideal <span class="str">"ideal_generators"</span> <span class="str">"polynomials"</span> <span class="str">"eliminate_vars"</span> field_size
+./drsolve --ideal -f input.dr
+./drsolve --ideal -f input.dr -o output.dr</pre>
+    </div>
+    <p><strong>Example</strong></p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre>./drsolve \
+  --ideal \
+  <span class="str">"a2^3=2*a1+1, a3^3=a1*a2+3"</span> \
+  <span class="str">"a1^2+a2^2+a3^2-10, a3^3-a1*a2-3"</span> \
+  <span class="str">"a3"</span> \
+  <span class="num">257</span></pre>
+    </div>
+    <div class="info-box">In file mode, lines containing <code>=</code> are parsed as ideal generators and the remaining non-empty lines are parsed as system polynomials.</div>
+    <div class="note-box">Not available for <code>field_size=0</code> or for the current large-prime fallback mode.</div>
+  </div>
+
+  <!-- File input -->
+  <div id="sub-file" class="sub-page">
+    <h2>File Input</h2>
+    <p>Pass a <code>.dr</code> file instead of inline arguments for scripted or batch use. The input file may be given directly or with <code>-f</code>; use <code>-o</code> to choose the output file.</p>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre>./drsolve example.dr
+./drsolve -f example.dr
+./drsolve -s -f system.dr -o output.dr
+./drsolve --comp -f system.dr
+./drsolve --ideal -f ideal.dr
+./drsolve --field-equation -f system.dr</pre>
+    </div>
+    <h3>Dixon mode / Complexity mode — file format</h3>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre><span class="num">x,y</span>            <span class="cmt"># line 1: variables to eliminate</span>
+257          <span class="cmt"># line 2: field size</span>
+x*y+y*z+z*x
+x*y*z+1
+x+y+z            <span class="cmt"># last 3+: polynomials (one per line or comma-separated)</span></pre>
+    </div>
+    <h3>Solver mode — file format</h3>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre><span class="num">257</span>                   <span class="cmt"># line 1: field size</span>
+x^2 + y^2 + z^2 - 6  <span class="cmt"># line 2+: n equations in n variables</span>
+x + y + z - 4
+x*y*z - x - 1</pre>
+    </div>
+    <h3>Ideal reduction — file format</h3>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyPre(this)">copy</button>
+      <pre><span class="num">257</span>                <span class="cmt"># line 1: field size</span>
+a2^3=2*a1+1          <span class="cmt"># lines 2..n-1 with '=' are ideal generators</span>
+a3^3=a1*a2+3
+a1^2+a2^2+a3^2-10    <span class="cmt"># lines 2..n-1 without '=' are system polynomials</span>
+a3^3-a1*a2-3
+a3                   <span class="cmt"># last line: variables to eliminate</span></pre>
+    </div>
+    <h3>Output filenames</h3>
+    <table>
+      <tr><th>Mode</th><th>Command-line input</th><th>File input <code>example.dr</code></th></tr>
+      <tr><td>Dixon / Solver</td><td><code>solution_YYYYMMDD_HHMMSS.dr</code></td><td><code>example_solution.dr</code></td></tr>
+      <tr><td>Complexity</td><td><code>comp_YYYYMMDD_HHMMSS.dr</code></td><td><code>example_comp.dr</code></td></tr>
+    </table>
+    <p><code>--ideal</code> and <code>--field-equation</code> also use the solution filename pattern. If <code>-o</code> is given, that filename is used instead.</p>
+  </div>
+</div>
+
+<!-- ══ SAGEMATH ══ -->
+<div id="page-sage" class="page">
+  <h1>SageMath Interface</h1>
+  <p class="subtitle">
+    <code>drsolve_sage_interface.sage</code> is a thin wrapper that lets you call DRsolve
+    directly from a SageMath session. Polynomials are passed as native Sage objects;
+    the interface handles serialisation, subprocess invocation, and output parsing automatically.
+  </p>
+
+  <div class="info-box">
+    The interface file <code>drsolve_sage_interface.sage</code> is included in the DRsolve repository.
+    The DRsolve binary must be built and accessible before use.
+  </div>
+
+  <h2>Setup</h2>
+  <div class="code-block">
+    <button class="copy-btn" onclick="copyPre(this)">copy</button>
+    <pre><span class="kw">load</span>(<span class="str">"drsolve_sage_interface.sage"</span>)
+set_dixon_path(<span class="str">"./drsolve"</span>)   <span class="cmt"># set once per session</span></pre>
+  </div>
+
+  <hr>
+
+  <h2>Available functions</h2>
+  <table>
+    <tr><th>Function</th><th>Description</th><th>Returns</th></tr>
+    <tr>
+      <td><code>DixonRes(F, elim_vars, ...)</code><br><code>DixonResultant(F, elim_vars, ...)</code></td>
+      <td>Compute the resultant while eliminating the specified variables. <code>field_size</code> is inferred from the polynomial ring if not given.</td>
+      <td>Resultant as a string, or <code>None</code></td>
+    </tr>
+    <tr>
+      <td><code>DixonSolve(F, ...)</code></td>
+      <td>Solve a polynomial system and enumerate all solutions.</td>
+      <td>List of <code>{var: value}</code> dicts; <code>[]</code> if none; <code>"infinite"</code> if positive-dimensional</td>
+    </tr>
+    <tr>
+      <td><code>DixonComplexity(F, elim_vars, ...)</code></td>
+      <td>Estimate complexity without running any polynomial arithmetic.</td>
+      <td>Dict with <code>complexity_log2</code>, <code>bezout_bound</code>, <code>matrix_size</code>, etc.</td>
+    </tr>
+    <tr>
+      <td><code>DixonIdeal(F, ideal_gens, elim_vars, ...)</code></td>
+      <td>Dixon resultant with triangular ideal reduction. <code>ideal_gens</code> is a list of strings like <code>"a^3=2*b+1"</code>.</td>
+      <td>Resultant as a string, or <code>None</code></td>
+    </tr>
+    <tr>
+      <td><code>set_dixon_path(path)</code><br><code>get_dixon_path()</code></td>
+      <td>Set or query the default path to the <code>drsolve</code> executable.</td>
+      <td>Path string or <code>None</code></td>
+    </tr>
+  </table>
+  <p>The helper writers <code>ToDixon(...)</code>, <code>ToDixonSolver(...)</code>, and <code>ToDixonIdeal(...)</code> are also available when you want to generate input files without running the binary.</p>
+
+  <h2>Common options</h2>
+  <table>
+    <tr><th>Option</th><th>Meaning</th></tr>
+    <tr><td><code>field_size</code></td><td>Integer prime, extension-field string such as <code>"2^8"</code> or <code>"2^8: t^8+t^4+t^3+t+1"</code>, Sage <code>GF(...)</code> object, or <code>0</code> for ℚ. If omitted, inferred from the Sage polynomial ring when possible.</td></tr>
+    <tr><td><code>verbosity=0..3</code></td><td>Pass <code>-v</code> to <code>drsolve</code>. If omitted, the interface leaves the CLI default unchanged.</td></tr>
+    <tr><td><code>time=True</code></td><td>Pass <code>--time</code>.</td></tr>
+    <tr><td><code>threads=n</code></td><td>Pass <code>--threads n</code>.</td></tr>
+    <tr><td><code>method</code>, <code>step1</code>, <code>step4</code></td><td>Select the determinant / recursive Dixon strategy.</td></tr>
+    <tr><td><code>resultant_method</code></td><td>One of <code>"dixon"</code>, <code>"macaulay"</code>, or <code>"subres"</code>.</td></tr>
+    <tr><td><code>field_equation=True</code></td><td>Enable field-equation reduction.</td></tr>
+    <tr><td><code>fast_ksy</code>, <code>fast_ksy_col</code></td><td>Control the method-5 KSY precondition options.</td></tr>
+    <tr><td><code>rational_root_scan</code></td><td>Solver-only option: <code>"auto"</code>, <code>"off"</code>, or <code>"force"</code>.</td></tr>
+    <tr><td><code>rational_only=True</code></td><td>Solver-only option for exact rational solutions over <code>field_size=0</code>.</td></tr>
+    <tr><td><code>debug=True</code></td><td>Print wrapper-level diagnostics such as the command line and output-file parsing status.</td></tr>
+    <tr><td><code>live_output=True</code></td><td>Stream <code>drsolve</code> stdout/stderr directly to the Sage terminal while the subprocess runs.</td></tr>
+    <tr><td><code>timeout</code></td><td>Abort the subprocess after the given number of seconds.</td></tr>
+  </table>
+
+  <hr>
+
+  <h2>Examples</h2>
+
+  <h3>Resultant and solver</h3>
+  <div class="code-block">
+    <button class="copy-btn" onclick="copyPre(this)">copy</button>
+    <pre><span class="kw">load</span>(<span class="str">"drsolve_sage_interface.sage"</span>)
+set_dixon_path(<span class="str">"./drsolve"</span>)
+
+R.&lt;x, y, z&gt; = GF(<span class="num">257</span>)[]
+F = [x + y + z - <span class="num">3</span>, x*y + y*z + z*x - <span class="num">3</span>, x*y*z - <span class="num">1</span>]
+
+res  = DixonRes(F, [x, y])         <span class="cmt"># eliminate x, y</span>
+sols = DixonSolve(F)               <span class="cmt"># enumerate all solutions</span>
+info = DixonComplexity(F, [x, y])  <span class="cmt"># complexity estimate</span>
+
+<span class="kw">print</span>(res, sols, info)</pre>
+  </div>
+
+  <h3>Iterative elimination</h3>
+  <p>The output of <code>DixonRes</code> is a plain string and can be fed directly into the next call, enabling variable-by-variable elimination over large systems.</p>
+  <div class="code-block">
+    <button class="copy-btn" onclick="copyPre(this)">copy</button>
+    <pre>R.&lt;x, y, z&gt; = GF(<span class="num">17</span>)[]
+res1 = DixonRes([x+y+z, x*y+y*z+z*x+<span class="num">1</span>], [x])
+res2 = DixonRes([res1, y*z-<span class="num">1</span>], [y])
+res3 = DixonRes([res2, z-<span class="num">2</span>], [z])
+<span class="kw">print</span>(res3)</pre>
+  </div>
+
+  <h3>Method selection and live output</h3>
+  <div class="code-block">
+    <button class="copy-btn" onclick="copyPre(this)">copy</button>
+    <pre>R.&lt;x, y, z&gt; = GF(<span class="num">257</span>)[]
+F = [x + y + z - <span class="num">3</span>, x*y + y*z + z*x - <span class="num">3</span>, x*y*z - <span class="num">1</span>]
+
+res_macaulay = DixonRes(F, [x, y], resultant_method=<span class="str">"macaulay"</span>, verbosity=<span class="num">2</span>)
+res_fast = DixonRes(F, [x, y], method=<span class="num">5</span>, fast_ksy=<span class="kw">True</span>, fast_ksy_col=<span class="num">0</span>, time=<span class="kw">True</span>)
+sols = DixonSolve(F, verbosity=<span class="num">3</span>, live_output=<span class="kw">True</span>)
+
+<span class="kw">print</span>(res_macaulay)
+<span class="kw">print</span>(res_fast)
+<span class="kw">print</span>(sols)</pre>
+  </div>
+
+  <h3>Ideal reduction</h3>
+  <div class="code-block">
+    <button class="copy-btn" onclick="copyPre(this)">copy</button>
+    <pre>R.&lt;x0, x1, x2&gt; = GF(<span class="num">257</span>)[]
+F = [x0^2 + x1^2 + x2^2 - <span class="num">10</span>, x2^3 - x0*x1 - <span class="num">3</span>]
+I = [<span class="str">"x1^3=2*x0+1"</span>, <span class="str">"x2^3=x0*x1+3"</span>]
+
+res = DixonIdeal(F, I, [x2], verbosity=<span class="num">2</span>, time=<span class="kw">True</span>)
+<span class="kw">print</span>(res)</pre>
+  </div>
+
+  <h3>Extension fields and rational solving</h3>
+  <div class="code-block">
+    <button class="copy-btn" onclick="copyPre(this)">copy</button>
+    <pre>K.&lt;z8&gt; = GF(<span class="num">2</span>^<span class="num">8</span>, modulus=x^<span class="num">8</span> + x^<span class="num">4</span> + x^<span class="num">3</span> + x + <span class="num">1</span>)
+R.&lt;x, y&gt; = PolynomialRing(K, <span class="num">2</span>)
+F = [x^2 + z8*y + <span class="num">1</span>, x*y + z8^<span class="num">2</span>]
+
+res = DixonRes(F, [y], field_size=K)
+sols = DixonSolve(F, field_size=K)
+
+RQ.&lt;u, v&gt; = QQ[]
+G = [u^2 - <span class="num">1</span>, v - u]
+rat = DixonSolve(G, field_size=<span class="num">0</span>, rational_only=<span class="kw">True</span>)
+
+<span class="kw">print</span>(res)
+<span class="kw">print</span>(sols)
+<span class="kw">print</span>(rat)</pre>
+  </div>
+
+  <hr>
+
+  <h2>Helper functions</h2>
+  <table>
+    <tr><th>Function</th><th>Description</th></tr>
+    <tr><td><code>set_dixon_path(path)</code> / <code>get_dixon_path()</code></td><td>Set / get the default path to the <code>drsolve</code> binary</td></tr>
+    <tr><td><code>ToDixon(F, elim_vars, field_size, finput)</code></td><td>Write a Dixon/complexity input file without running the binary</td></tr>
+    <tr><td><code>ToDixonSolver(F, field_size, finput)</code></td><td>Write a solver input file without running the binary</td></tr>
+    <tr><td><code>ToDixonIdeal(F, ideal_gens, elim_vars, field_size, finput)</code></td><td>Write an ideal-reduction input file without running the binary</td></tr>
+  </table>
+</div>
+
+<!-- ══ INSTALL ══ -->
+<div id="page-install" class="page">
+  <h1>Installation</h1>
+  <p class="subtitle">DRsolve is built on FLINT and ships with the PML code it uses. FLINT 3.6.0 is the recommended version.</p>
+
+  <h2>1. Install FLINT</h2>
+  <p>Install FLINT first. The upstream repository is <a href="https://github.com/flintlib/flint" target="_blank">github.com/flintlib/flint</a>; the current recommended version is <code>3.5.0</code>.</p>
+  <div class="code-block">
+    <button class="copy-btn" onclick="copyPre(this)">copy</button>
+    <pre>git clone https://github.com/flintlib/flint.git
+cd flint
+./bootstrap.sh
+./configure
+make
+make install</pre>
+  </div>
+  <div class="note-box">If FLINT is installed under a non-standard prefix, pass the matching include/library paths when configuring DRsolve.</div>
+
+  <h2>2. PML status</h2>
+  <p>The PML code used by DRsolve is already built into the source tree. You do not need to clone or install a separate PML package just to build DRsolve.</p>
+  <div class="info-box">PML acceleration applies to suitable prime-field polynomial-matrix computations. It does not apply to extension fields.</div>
+
+  <h2>3. Clone and build</h2>
+  <div class="code-block">
+    <button class="copy-btn" onclick="copyPre(this)">copy</button>
+    <pre>git clone https://github.com/drsolve/drsolve
+cd drsolve
+./configure
+make
+make check     <span class="cmt"># optional</span>
+make install   <span class="cmt"># optional</span></pre>
+  </div>
+  <p>For additional build options:</p>
+  <div class="code-block">
+    <button class="copy-btn" onclick="copyPre(this)">copy</button>
+    <pre>./configure --help
+make help</pre>
+  </div>
+
+  <h2>4. Verify</h2>
+  <p>Run a quick test to confirm the build is working:</p>
+  <div class="code-block">
+    <button class="copy-btn" onclick="copyPre(this)">copy</button>
+    <pre>./drsolve -s <span class="str">"x + y - 3, x*y - 2"</span> <span class="num">257</span></pre>
+  </div>
+  <p>Expected: solutions <code>[x=1, y=2]</code> and <code>[x=2, y=1]</code> over GF(257).</p>
+
+  <hr>
+
+  <h2>Requirements</h2>
+  <table>
+    <tr><th>Component</th><th>Required</th><th>Version</th><th>Link</th></tr>
+    <tr>
+      <td>FLINT</td><td>Yes</td><td>recommended 3.5.0</td>
+      <td><a href="https://github.com/flintlib/flint" target="_blank">github.com/flintlib/flint</a></td>
+    </tr>
+    <tr>
+      <td>PML</td><td>Built in</td><td>bundled with DRsolve</td>
+      <td><a href="https://github.com/vneiger/pml" target="_blank">github.com/vneiger/pml</a></td>
+    </tr>
+    <tr>
+      <td>C compiler</td><td>Yes</td><td>C11 or later</td>
+      <td>gcc / clang</td>
+    </tr>
+  </table>
+</div>
+<!-- ══ DOWNLOADS ══ -->
+<div id="page-downloads" class="page">
+  <h1>Downloads</h1>
+  <p class="subtitle">Pre-built source archives for each <a href="https://github.com/drsolve/drsolve/releases" target="_blank" rel="noopener noreferrer">release</a>. 
+    Build instructions are on the <a href="#" onclick="showPage('install');return false;">Install</a> page.</p>
+  <!-- v0.5.1 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.5.1</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-09-07</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Optimize Step 1 with layered dynamic programming.</li>
+      <li>- Optimize Step 2 by reusing monomial indices.</li>
+      <li>- Fix several bugs.</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.5.1.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.5.1.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.5.1/drsolve-0.5.1-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.5.1/drsolve-0.5.1-macos26.5-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.5.1/drsolve-0.5.1-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.5.0 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.5.0</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-08-15</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Optimize the determinant of sparse matrices over prime fields.</li>
+      <li>- Optimize Step 3 based on rank prediction.</li>
+      <li>- Add examples, integrate Windows GUI, restructure the codebase, and fix bugs.</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.5.0.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.5.0.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.5.0/drsolve-0.5.0-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.5.0/drsolve-0.5.0-macos26.5-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.5.0/drsolve-0.5.0-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.4.5 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.4.5</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-08-05</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Add `-v 4` for matrix printing and `--hom` for random homogeneous systems.</li>
+      <li>- Optimize rational reconstruction.</li>
+      <li>- Fix a rare negative time bug and restructure header files.</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.4.5.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.4.5.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.4.5/drsolve-0.4.5-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.4.5/drsolve-0.4.5-macos26.5-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.4.5/drsolve-0.4.5-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.4.4 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.4.4</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-07-27</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Heuristically predict the maximal-rank matrix to optimize Step 3 in some cases.</li>
+      <li>- Adjust the default density for random system generation over F2.</li>
+      <li>- Fix a bug in real root.</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.4.4.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.4.4.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.4.4/drsolve-0.4.4-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.4.4/drsolve-0.4.4-macos26.4-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.4.4/drsolve-0.4.4-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.4.3 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.4.3</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-07-22</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Support random system generation over arbitrarily large prime fields.</li>
+      <li>- Add --max-primes option to set the number of primes for multi-prime CRT.</li>
+      <li>- Fix a bug in Parallelize multi-prime CRT.</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.4.3.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.4.3.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.4.3/drsolve-0.4.3-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.4.3/drsolve-0.4.3-macos26.4-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.4.3/drsolve-0.4.3-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.4.2 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.4.2</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-07-17</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Parallelize multi-prime CRT to accelerate resultant elimination over rational and large-prime finite fields.</li>
+      <li>- Accelerate real-root solving using `acb_fmpz_poly_real_roots` (requires FLINT 3.6.0).</li>
+      <li>- Add `--array-limit-k` option to adjust the limit of `gf2n_mpoly_array_mul`.</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.4.2.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.4.2.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.4.2/drsolve-0.4.2-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.4.2/drsolve-0.4.2-macos26.4-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.4.2/drsolve-0.4.2-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.4.1 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.4.1</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-07-13</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Improve Step 3 performance for small fields.</li>
+      <li>- Fix an issue with negative time values.</li>
+      <li>- Split `drsolve.c` and optimize parameter handling.</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.4.1.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.4.1.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.4.1/drsolve-0.4.1-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.4.1/drsolve-0.4.1-macos26.4-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.4.1/drsolve-0.4.1-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.4.0 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.4.0</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-07-10</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Optimize the HNF algorithm, accelerating Step 4 for square systems over prime fields.</li>
+      <li>- Optimize the maximum-rank submatrix selection, accelerating Step 3.</li>
+      <li>- Change the default method for 3-variable cases. (The 'fdixon' method might still be slightly faster for 3 variables; use `--method 5` to enable it.)</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.4.0.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.4.0.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.4.0/drsolve-0.4.0-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.4.0/drsolve-0.4.0-macos26.4-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.4.0/drsolve-0.4.0-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.3.5 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.3.5</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-07-07</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Optimize Step 3 memory usage.</li>
+      <li>- Add heuristic prediction for Dixon rank.</li>
+      <li>- Add small-scale resultant output.</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.3.5.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.3.5.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.3.5/drsolve-0.3.5-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.3.5/drsolve-0.3.5-macos15.7-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.3.5/drsolve-0.3.5-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.3.4 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.3.4</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-07-03</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Optimize extension field computation.</li>
+      <li>- Correct complexity output for Step 1.</li>
+      <li>- Fix memory leak.</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.3.4.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.3.4.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.3.4/drsolve-0.3.4-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.3.4/drsolve-0.3.4-macos15.7-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.3.4/drsolve-0.3.4-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.3.3 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.3.3</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-06-18</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Provides support for solving underdetermined systems by automatically fixing variables, or by specifying variable values via `--specialize-vars "x=0,y=1"`.</li>
+      <li>- Add optimization for arithmetic over GF(2^4).</li>
+      <li>- Fix several bugs, including issues in the parser, zero-polynomial handling, and ideal reduction.</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.3.3.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.3.3.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.3.3/drsolve-0.3.3-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.3.3/drsolve-0.3.3-macos15.7-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.3.3/drsolve-0.3.3-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.3.2 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.3.2</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-06-11</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Parallelize the stored minor expansion method, improving Step 1.</li>
+      <li>- Add complex solution support for 2x2 system over Q.</li>
+      <li>- Fix several bugs and update Windows GUI.</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.3.2.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.3.2.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.3.2/drsolve-0.3.2-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.3.2/drsolve-0.3.2-macos15.7-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.3.2/drsolve-0.3.2-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.3.1 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.3.1</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-06-05</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Optimize the HNF algorithm by switching mbasis to residual-sequence updates, improving Step 4 for square systems over prime fields.</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.3.1.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.3.1.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.3.1/drsolve-0.3.1-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.3.1/drsolve-0.3.1-macos15.7-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.3.1/drsolve-0.3.1-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.3.0 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.3.0</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-05-19</span>
+    </div>
+    <p style="margin-bottom:16px;font-size:13px;color:#555;">Asiacrypt 2026 paper submission version. </p>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Integrate the stored minor expansion method from <a href="https://dl.acm.org/doi/10.1145/355694.355696">Gentleman & Johnson</a>, improving Step 1 for systems with more variables.</li>
+      <li>- Support polynomial system solving and random system generation over arbitrarily large prime fields.</li>
+      <li>- Enhance testing capabilities with correctness and performance tests.</li>
+      <li>- Improve usage output, several bug fixes, fix memory leaks.</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.3.0.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.3.0.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.3.0/drsolve-0.3.0-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.3.0/drsolve-0.3.0-macos15.7-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.3.0/drsolve-0.3.0-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.2.5 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.2.5</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-05-14</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Parallelizing the Dixon matrix construction, significantly optimizes steps 2 and 3.</li>
+      <li>- Improve the SageMath interface and introduce all new features.</li>
+      <li>- Optimizations for output and various bug fixes.</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.2.5.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.2.5.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.2.5/drsolve-0.2.5-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.2.5/drsolve-0.2.5-macos15.7-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.2.5/drsolve-0.2.5-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.2.4 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.2.4</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-05-10</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Integrate the recursive construct method from <a href="https://link.springer.com/article/10.1360/04ys0166">Zhao & Fu</a>, significantly accelerating Dixon matrix construction for high-degree, low-variable systems.</li>
+      <li>- Add complexity estimate of the recursive construct method from <a href="https://www.tandfonline.com/doi/full/10.1080/00207160.2016.1276572">X Qin et al.</a></li>
+      <li>- Simplify the default help message, moving detailed help content to `-h` or `--help`.</li>
+      <li>- Improve output handling and fix various bugs.</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.2.4.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.2.4.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.2.4/drsolve-0.2.4-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.2.4/drsolve-0.2.4-macos15.7-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.2.4/drsolve-0.2.4-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.2.3 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.2.3</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-05-07</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Fix and refine the detailed complexity estimates for Step 1 and Step 4.</li>
+      <li>- Enrich and optimize the random mode.</li>
+      <li>- Add output level `-v 3` to print the Cancellation matrix and Dixon matrix to console.</li>
+      <li>- Changed default output destination to the `out/` directory.</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.2.3.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.2.3.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.2.3/drsolve-0.2.3-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.2.3/drsolve-0.2.3-macos15.7-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.2.3/drsolve-0.2.3-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.2.2 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.2.2</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-05-01</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Add the -v option to set the output level, and the -o option to set the output file name.</li>
+      <li>- Simplify the PML library to only the parts we actually need.</li>
+      <li>- Support input of all variables, compatible with msolve input file.</li>
+      <li>- Several bug fixes (rational solutions lost and sparse interpolation failed).</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.2.2.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.2.2.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.2.2/drsolve-0.2.2-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.2.2/drsolve-0.2.2-macos15.7-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.2.2/drsolve-0.2.2-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.2.1 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.2.1</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-04-29</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Support for finding all solutions over prime fields of arbitrary size.</li>
+      <li>- Add Macaulay Resultant for comparison.</li>
+      <li>- Add step 1 complexity estimation.</li>
+      <li>- Fix many bugs and improve output.</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.2.1.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.2.1.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.2.1/drsolve-0.2.1-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.2.1/drsolve-0.2.1-macos15.7-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.2.1/drsolve-0.2.1-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.2.0 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.2.0</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-04-25</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Rename from DixonRes to DRSolve.</li>
+      <li>- Significantly optimize determinant computation over prime fields.</li>
+      <li>- Support for finding all real solutions over rational number fields.</li>
+      <li>- Modify file mode format by moving variables to the first line.</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.2.0.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/drsolve/drsolve/archive/refs/tags/v0.2.0.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.2.0/drsolve-0.2.0-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.2.0/drsolve-0.2.0-macos15.7-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/drsolve/drsolve/releases/download/v0.2.0/drsolve-0.2.0-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.1.5 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.1.5</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-04-23</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Integrate the sparse interpolation method from <a href="https://www.sciencedirect.com/science/article/pii/S0747717122000517">QL Huang</a>, significantly accelerating determinant computation for sparse multivariate polynomials.</li>
+      <li>- Add a determinant method option for step1.</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/v0.1.5.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/v0.1.5.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.1.5/dixon-0.1.5-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.1.5/dixon-0.1.5-macos15.7-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.1.5/dixon-0.1.5-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.1.4 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.1.4</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-04-18</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Integrating the HNF method from <a href="https://arxiv.org/abs/1607.04176">Labahn-Neiger-Zhou</a>, significantly accelerates determinant computation over prime fields.</li>
+      <li>- Built in the PML library with HNF method.</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/v0.1.4.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/v0.1.4.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.1.4/dixon-0.1.4-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.1.4/dixon-0.1.4-macos15.7-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.1.4/dixon-0.1.4-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.1.3 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.1.3</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-04-07</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Fix missing solutions over small finite fields via extension field evaluation</li>
+      <li>- Add method and threads option</li>
+      <li>- Improve outputs of time, process, and resultant over rationals</li>
+      <li>- Solve mode now supports omitting `--solve`. Example: `./dixon "x^2+y, x*y+1" 7`</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/v0.1.3.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/v0.1.3.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.1.3/dixon-0.1.3-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.1.3/dixon-0.1.3-macos15.7-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.1.3/dixon-0.1.3-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.1.2 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.1.2</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-03-27</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Add support for real and complex roots over the rationals</li>
+      <li>- Add functionality for computing all rational solutions over the rationals</li>
+      <li>- Improve parsing of rational coefficients</li>
+      <li>- Output univariate polynomial roots in dixon resultant file</li>
+      <li>- Change default output file extension from .dat to .dr</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/v0.1.2.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/v0.1.2.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.1.2/dixon-0.1.2-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.1.2/dixon-0.1.2-macos15.7-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.1.2/dixon-0.1.2-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.1.1 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.1.1</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-03-23</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Add SageMath interface</li>
+      <li>- Support macOS</li>
+      <li>- Support old versions of FLINT</li>
+      <li>- Enhance compilation options and PML support</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/v0.1.1.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/v0.1.1.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.1.1/dixon-0.1.1-linux-x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.1.1/dixon-0.1.1-macos15.7-arm64.zip"> Binary (.zip, MacOS arm64)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.1.1/dixon-0.1.1-windows-x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.1.0 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.1.0</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-03-19</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Support ℚ and prime fields of arbitrary size via multi-prime CRT</li>
+      <li>- Significantly adjust and simplify the output</li>
+      <li>- Improve evaluation logic for maximum rank submatrix</li>
+      <li>- Add functionality to find rational roots</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/v0.1.0.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/v0.1.0.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.1.0/dixon-0.1.0_linux_x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.1.0/dixon-0.1.0_windows_x86_64.zip"> Binary (.zip, Windows x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.0.5 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.0.5</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-03-18</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- ℚ support: rational reconstruction via multi-prime CRT (experimental)</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/v0.0.5.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/v0.0.5.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.0.5/dixon-0.0.5_linux_x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+    </div>
+  </div>
+  <!-- v0.0.4 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.0.4</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-03-17</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Add Field-equation reduction mode (Experimental feature)</li>
+      <li>- Add make check option</li>
+      <li>- Remove some old redundant functions</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/v0.0.4.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/v0.0.4.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.0.4/dixon-0.0.4_linux_x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+    </div>
+  </div>
+
+  <!-- v0.0.3 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.0.3</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-03-09</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Add random mode</li>
+      <li>- Add complexity analysis features</li>
+      <li>- Support for More Variables in GF(2^n) Arithmetic</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/v0.0.3.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/v0.0.3.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.0.3/dixon-0.0.3_linux_x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+    </div>
+  </div>
+  
+  <!-- v0.0.2 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">v0.0.2</h2>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-03-05</span>
+    </div>
+    <ul style="list-style:none;font-size:14px;color:#333;margin-bottom:20px;display:flex;flex-direction:column;gap:6px;">
+      <li>- Fix memory leak issue</li>
+      <li>- Enhanced compilation features / PML library display</li>
+      <li>- Add GPL v2.0 copyright notice</li>
+    </ul>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/v0.0.2.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/v0.0.2.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/v0.0.2/dixon-0.0.2_linux_x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+    </div>
+  </div>
+
+  <!-- v0.0.1 -->
+  <div style="border:1px solid #ddd;border-radius:6px;padding:24px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap;">
+      <h2 style="margin:0;">0.0.1</h2>
+      <span class="badge" style="font-size:11px;background:#fff8e1;border-color:#ffe082;color:#6d4c00;">Pre-release</span>
+      <span style="font-size:13px;color:#888;font-family:monospace;">2026-02-13</span>
+    </div>
+    <p style="margin-bottom:16px;font-size:13px;color:#555;">CRYPTO 2026 paper submission version. </p>
+    <p style="margin-bottom:16px;font-size:13px;color:#555;">A C implementation of Dixon resultants for solving polynomial systems over finite fields, built on FLINT. Provides command-line and file-based input with automated solution output.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/0.0.1.tar.gz"> Source code (.tar.gz)</a>
+      <a class="btn" href="https://github.com/DixonRes/DixonRes/archive/refs/tags/0.0.1.zip"> Source code (.zip)</a>
+      <a class="btn btn-outline" href="https://github.com/DixonRes/DixonRes/releases/download/0.0.1/dixon-0.0.1_linux_x86_64.zip"> Binary (.zip, Linux x86_64)</a>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>DRSolve · <a href="https://github.com/drsolve/drsolve" target="_blank">github.com/drsolve/drsolve</a> · © 2026 Haohai Suo</span>
+  <span>GNU General Public License v2.0 or later (GPLv2+)</span>
+</footer>
+
+<script>
+const PAGE_IDS = ['home','usage','sage','install','downloads'];
+
+function showPage(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-tabs button').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-' + id).classList.add('active');
+  const idx = PAGE_IDS.indexOf(id);
+  if (idx >= 0) document.querySelectorAll('.nav-tabs button')[idx].classList.add('active');
+  window.scrollTo(0, 0);
+}
+
+function showSub(btn, id) {
+  const page = btn.closest('.page');
+  page.querySelectorAll('.sub-page').forEach(p => p.classList.remove('active'));
+  page.querySelectorAll('.sub-tabs button').forEach(b => b.classList.remove('active'));
+  document.getElementById('sub-' + id).classList.add('active');
+  btn.classList.add('active');
+}
+
+function copyPre(btn) {
+  const pre = btn.parentElement.querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(() => {
+    btn.textContent = 'copied!';
+    setTimeout(() => btn.textContent = 'copy', 1800);
+  });
+}
+  
+const TRACKS = [
+  { file: 'Piano&Violin/Moon.mp3', label: 'Moon', category: 'Piano&Violin' },
+  { file: 'Piano&Violin/Cloud.mp3', label: 'Cloud', category: 'Piano&Violin' },
+  { file: 'Piano&Violin/Wind.mp3', label: 'Wind', category: 'Piano&Violin' },
+  { file: 'Piano&Violin/Beach.mp3', label: 'Beach', category: 'Piano&Violin' },
+  { file: 'Piano&Violin/Dance.mp3', label: 'Dance', category: 'Piano&Violin' },
+  { file: 'Song/DixonSong.mp3', label: 'Dixon Song', category: 'Song' },
+  { file: 'Song/CryptoStar.mp3', label: 'Crypto Star', category: 'Song' },
+  { file: 'Song/ProveDream.mp3', label: 'Prove Dream', category: 'Song' },
+  { file: 'Song/FHE.mp3', label: 'FHE', category: 'Song' },
+  { file: 'Song/One-WayHash.mp3', label: 'One-Way Hash', category: 'Song' },
+];
+let currentTrack = -1;
+let currentGroup = null;
+const GROUPS = {
+  piano: [0, 1, 2, 3, 4],
+  song: [5, 6, 7, 8, 9],
+};
+
+function toggleMusicMenu() {
+  const menu = document.getElementById('music-menu');
+  menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+}
+
+function playTrack(idx, keepMenuOpen) {
+  const audio = document.getElementById('dixon-audio');
+  if (!keepMenuOpen) document.getElementById('music-menu').style.display = 'none';
+
+  if (idx === currentTrack) {
+    if (audio.paused) { audio.play(); } else { audio.pause(); }
+    updateIndicators();
+    return;
+  }
+
+  currentTrack = idx;
+  audio.src = TRACKS[idx].file;
+  audio.play();
+  updateIndicators();
+}
+
+function selectTrack(idx) {
+  currentGroup = null;
+  playTrack(idx, false);
+}
+
+function playGroup(event, groupName) {
+  event.stopPropagation();
+  const group = GROUPS[groupName];
+  if (!group || !group.length) return;
+  currentGroup = groupName;
+  playTrack(group[0], true);
+}
+
+function advanceGroup() {
+  if (!currentGroup) return false;
+  const group = GROUPS[currentGroup];
+  const idx = group.indexOf(currentTrack);
+  const nextTrack = group[(idx + 1) % group.length];
+  playTrack(nextTrack, true);
+  return true;
+}
+
+function updateIndicators(ended) {
+  const audio = document.getElementById('dixon-audio');
+  TRACKS.forEach((_, i) => {
+    const el = document.getElementById('indicator-' + i);
+    if (!el) return;
+    if (i === currentTrack) {
+      el.textContent = (ended || audio.paused) ? '▶' : '⏸';
+      el.style.color = '#0066cc';
+    } else {
+      el.textContent = '▶';
+      el.style.color = '#111';
+    }
+  });
+}
+
+document.addEventListener('click', function(e) {
+  const wrapper = document.getElementById('music-wrapper');
+  if (wrapper && !wrapper.contains(e.target)) {
+    const menu = document.getElementById('music-menu');
+    if (menu) menu.style.display = 'none';
+  }
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+  const audio = document.getElementById('dixon-audio');
+  if (audio) {
+    audio.addEventListener('play', () => updateIndicators(false));
+    audio.addEventListener('pause', () => updateIndicators(false));
+    audio.addEventListener('ended', () => {
+      if (!advanceGroup()) updateIndicators(true);
+    });
+  }
+});
+  
+</script>
+</body>
+</html>
