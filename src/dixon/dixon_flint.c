@@ -4173,6 +4173,9 @@ static slong dixon_exchange_axis(dixon_exchange_solver_t *solver,
     fq_index_degree_pair *order = flint_malloc((size_t) count * sizeof(*order));
     slong *present = flint_malloc((size_t) count * sizeof(*present));
     mp_limb_t *coeff = flint_malloc((size_t) size * sizeof(*coeff));
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) if(size >= 256)
+#endif
     for (slong i = 0; i < count; i++) {
         weights[i].index = i;
         weights[i].degree = columns
@@ -4243,6 +4246,15 @@ static void dixon_refine_schur_minor(dixon_eval_cache_t *cache,
    needed to reduce subsequent candidates modulo the accepted span. */
 #define DIXON_DEGREE_BLOCK_THRESHOLD 256
 #define DIXON_DEGREE_PANEL_SIZE 128
+
+/* Few external directions favour reusing the Schur-seeded LU, even when
+ * the minor itself is large. Streaming pays for building the entire basis
+ * again on every axis/pass; incremental exchange only solves outsiders. */
+static int dixon_use_schur_exchange(slong size, slong nrows, slong ncols)
+{
+    return size < DIXON_DEGREE_BLOCK_THRESHOLD ||
+           (nrows - size <= 32 && ncols - size <= 32);
+}
 
 static void dixon_permute_basis_prefix(nmod_mat_t lower, slong *perm,
                                        slong rank, const slong *action)
@@ -4412,6 +4424,7 @@ static int dixon_repair_predicted_minor(fq_mvpoly_t ***matrix,
     slong max_c = FLINT_MIN(ncols - s, budget);
     if (max_r < delta || max_c < delta) return 0;
     int success = 0;
+    int use_exchange = dixon_use_schur_exchange(size, nrows, ncols);
     slong *r0 = flint_malloc((size_t) s * sizeof(slong));
     slong *c0 = flint_malloc((size_t) s * sizeof(slong));
     slong *pivots = flint_malloc((size_t) s * sizeof(slong));
@@ -4527,7 +4540,10 @@ static int dixon_repair_predicted_minor(fq_mvpoly_t ***matrix,
                 rows[s + i] = rx[chosen_r[i]];
                 cols[s + i] = cx[chosen_c[i]];
             }
-            if (size < DIXON_DEGREE_BLOCK_THRESHOLD)
+            if (use_exchange)
+                dixon_debug_log("  Degree-aware refinement backend: Schur-seeded exchange (rank=%ld, reserves=%ld/%ld)\n",
+                                size, nrows - size, ncols - size);
+            if (use_exchange)
                 dixon_refine_schur_minor(&cache, nrows, ncols, rows, cols,
                                          lower, upper, x, v, schur, delta, chosen_r, chosen_c);
             flint_free(chosen_c);
@@ -4549,7 +4565,7 @@ static int dixon_repair_predicted_minor(fq_mvpoly_t ***matrix,
     nmod_mat_clear(upper);
     nmod_mat_clear(lower);
     /* Release completion workspaces before allocating the streamed basis. */
-    if (success && size >= DIXON_DEGREE_BLOCK_THRESHOLD)
+    if (success && !use_exchange)
         dixon_refine_streamed_minor(matrix, nrows, ncols, size, rows, cols, params, ctx);
 cleanup_indices:
     flint_free(used_c);
@@ -4787,28 +4803,38 @@ static int dixon_repair_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
     int ok = 0;
     slong *lr = flint_malloc((size_t) size * sizeof(slong));
     slong *lc = flint_malloc((size_t) size * sizeof(slong));
+    double phase_start = get_wall_time();
     dixon_mq_copy_block(local, result, n, ri, rhs, ci, chs, maps[0], maps[1]);
+    dixon_debug_log("  MQ repair candidate copy: %.3fs\n", get_wall_time() - phase_start);
     dixon_info_log("  MQ Step 1 repair: deficit=%ld, adding %ld rows / %ld columns\n",
                    delta, dims[0] - size, dims[1] - size);
     for (int strip = 0; strip < 2; strip++) {
         slong rcount = strip == 0 ? dims[0] - size : size;
         slong ccount = strip == 0 ? dims[1] : dims[1] - size;
         if (!rcount || !ccount) continue;
+        phase_start = get_wall_time();
         fq_mvpoly_t border;
         if (!compute_fq_det_mq_projected_rect(&border, matrix, n + 1,
                 targets[0] + (strip == 0 ? size * n : 0), rcount,
                 targets[1] + (strip == 0 ? 0 : size * n), ccount)) goto cleanup;
+        dixon_debug_log("  MQ repair %s border DP: %.3fs\n",
+                        strip == 0 ? "row" : "column", get_wall_time() - phase_start);
+        phase_start = get_wall_time();
         dixon_mq_copy_block(local, &border, n, ri, rhs, ci, chs, maps[0], maps[1]);
         fq_mvpoly_clear(&border);
+        dixon_debug_log("  MQ repair border insertion: %.3fs\n", get_wall_time() - phase_start);
     }
     for (slong i = 0; i < size; i++) lr[i] = lc[i] = i;
     fq_nmod_t params[1], value;
     fq_nmod_init(params[0], result->ctx); fq_nmod_init(value, result->ctx);
     fq_nmod_set_ui(params[0], point, result->ctx);
+    phase_start = get_wall_time();
     ok = dixon_repair_predicted_minor(local, dims[0], dims[1], lr, lc, size,
                                      lu, perm, s, orders[0], orders[1], sigma,
                                      params, result->ctx);
+    dixon_debug_log("  MQ repair Schur + degree selection: %.3fs\n", get_wall_time() - phase_start);
     if (ok) {
+        phase_start = get_wall_time();
         nmod_mat_t check;
         nmod_mat_init(check, size, size, fq_nmod_ctx_prime(result->ctx));
         for (slong i = 0; i < size; i++) for (slong j = 0; j < size; j++) {
@@ -4819,9 +4845,11 @@ static int dixon_repair_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
         }
         ok = nmod_mat_rank(check) == size;
         nmod_mat_clear(check);
+        dixon_debug_log("  MQ repair final rank verification: %.3fs\n", get_wall_time() - phase_start);
     }
     fq_nmod_clear(value, result->ctx); fq_nmod_clear(params[0], result->ctx);
     if (ok) {
+        phase_start = get_wall_time();
         fq_mvpoly_t repaired;
         fq_mvpoly_init(&repaired, 2 * n, 1, result->ctx);
         slong *exp = flint_malloc((size_t) 2 * n * sizeof(slong));
@@ -4838,6 +4866,7 @@ static int dixon_repair_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
         for (slong i = 0; i < size; i++) {
             rows[i] = indices[0][lr[i]]; cols[i] = indices[1][lc[i]];
         }
+        dixon_debug_log("  MQ repair polynomial rebuild: %.3fs\n", get_wall_time() - phase_start);
     }
 cleanup:
     for (slong i = 0; i < dims[0]; i++) {

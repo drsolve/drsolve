@@ -248,6 +248,34 @@ static void check_large_repair_and_cache_limit(const fq_nmod_ctx_t ctx)
     for (slong i = 0; i < r; i++) for (slong j = 0; j < r; j++)
         nmod_mat_entry(lu, i, j) = matrix[rows[i]][cols[j]] != NULL;
     assert(nmod_mat_rank(lu) == r);
+    /* Same large rank, but only 32 outsiders: exercise the new automatic
+       Schur-seeded dispatch and compare with the streamed greedy result. */
+    slong local_n = r + 32;
+    assert(dixon_use_schur_exchange(r, local_n, local_n));
+    assert(!dixon_use_schur_exchange(r, local_n + 1, local_n));
+    slong *reference_rows = flint_malloc((size_t) r * sizeof(slong));
+    slong *reference_cols = flint_malloc((size_t) r * sizeof(slong));
+    nmod_mat_zero(lu);
+    for (slong i = 0; i < r; i++) {
+        rows[i] = cols[i] = reference_rows[i] = reference_cols[i] = i;
+        if (i < r-1) nmod_mat_entry(lu, i, i) = 1;
+    }
+    reference_rows[r-1] = r;
+    dixon_refine_streamed_minor(matrix, local_n, local_n, r,
+                                reference_rows, reference_cols, params, ctx);
+    rank = nmod_mat_lu(perm, lu, 0);
+    assert(dixon_repair_predicted_minor(matrix, local_n, local_n, rows, cols, r,
+                                       lu, perm, rank, order, order, -1, params, ctx));
+    unsigned char *selected = flint_calloc((size_t) local_n, 1);
+    for (slong i = 0; i < r; i++) selected[reference_rows[i]] = 1;
+    for (slong i = 0; i < r; i++) { assert(selected[rows[i]]); selected[rows[i]] = 0; }
+    for (slong i = 0; i < r; i++) selected[reference_cols[i]] = 1;
+    for (slong i = 0; i < r; i++) { assert(selected[cols[i]]); selected[cols[i]] = 0; }
+    for (slong i = 0; i < r; i++) for (slong j = 0; j < r; j++)
+        nmod_mat_entry(lu, i, j) = matrix[rows[i]][cols[j]] != NULL;
+    assert(nmod_mat_rank(lu) == r);
+    flint_free(selected); flint_free(reference_rows); flint_free(reference_cols);
+    puts("Large local Schur exchange matches streamed degree-aware selection");
     nmod_mat_clear(lu);
     flint_free(perm); flint_free(cols); flint_free(rows); flint_free(order);
     for (slong i = 0; i < n; i++) flint_free(matrix[i]);
