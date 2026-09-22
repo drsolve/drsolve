@@ -91,6 +91,52 @@ static void check_predicted_block(const fq_mvpoly_t *actual, const fq_mvpoly_t *
     flint_free(rows); flint_free(cols);
 }
 
+/* Regression for reserve starvation: the old degree-bound order fills all
+ * 32 slots with degree-five monomials, while a degree-two LU direction is
+ * missing. A useful degree-two Schur direction must survive the new order. */
+static void check_reserve_layers(void)
+{
+    const slong n = 5, count = 132;
+    slong exps[660], tmp[5], actual = 0, map[132], indices[34];
+    monom_t monoms[132];
+    assert(dixon_mq_support(exps, count, &actual, tmp, n, 0, n) && actual == count);
+    slong picked = 0, extreme = 0;
+    for (slong i = 0; i < count; i++) {
+        monoms[i].exp = exps + i*n; map[i] = -1;
+        slong degree = 0;
+        for (slong v = 0; v < n; v++) degree += exps[i*n+v];
+        if (degree == 5) extreme++;
+        if (degree == 2 && picked < 2) { indices[picked] = i; map[i] = picked++; }
+    }
+    assert(picked == 2 && extreme >= 32);
+    slong lost[] = {indices[1]}, opposite[] = {2};
+    dixon_mq_choose_reserve(indices, map, count, 2, 32, monoms, n, lost, opposite, 1, 7);
+    unsigned layers = 0;
+    slong useful = 0;
+    for (slong i = 2; i < 34; i++) {
+        assert(map[indices[i]] == i);
+        slong degree = 0;
+        for (slong v = 0; v < n; v++) degree += monoms[indices[i]].exp[v];
+        layers |= 1U << degree;
+        useful += degree == 2;
+    }
+    assert(useful > 0 && (layers & (layers - 1)) != 0);
+    /* With A=[1], B=C=0, and D nonzero only in the missing degree layer,
+     * old extreme-only reserves give rank(S)=0; the new reserves give 1. */
+    nmod_mat_t schur;
+    nmod_mat_init(schur, 32, 32, 257);
+    for (slong i = 0; i < 32; i++) for (slong j = 0; j < 32; j++) {
+        slong rd = 0, cd = 0;
+        for (slong v = 0; v < n; v++) {
+            rd += monoms[indices[i+2]].exp[v]; cd += monoms[indices[j+2]].exp[v];
+        }
+        nmod_mat_entry(schur,i,j) = rd == 2 && cd == 2;
+    }
+    assert(nmod_mat_rank(schur) == 1);
+    nmod_mat_clear(schur);
+    puts("MQ reserve starvation regression: missing degree layer retained");
+}
+
 /* Force a deficient candidate even over a large prime, and compare the repaired
  * block against a separately computed full Dixon polynomial. Also ask for an
  * impossible rank, checking that a failed repair preserves its input. */
@@ -402,6 +448,7 @@ int main(int argc, char **argv)
         flint_cleanup_master();
         return 0;
     }
+    check_reserve_layers();
     check_local_repair();
     check_coefficients();
     check_entry_points(0);

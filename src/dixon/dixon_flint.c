@@ -4670,6 +4670,44 @@ static void dixon_mq_copy_block(fq_mvpoly_t ***local, const fq_mvpoly_t *poly,
     }
 }
 
+/* A low parameter-degree bound alone favours the extreme, very sparse
+ * monomial layers. Select near the lost LU directions first, then include
+ * complementary and neighbouring degree layers. Actual coefficient degrees
+ * are still optimized by the existing refinement after rank completion. */
+static void dixon_mq_choose_reserve(slong *indices, slong *map, slong count,
+                                   slong size, slong extra, monom_t *monoms,
+                                   slong n, const slong *lost,
+                                   const slong *opposite_degrees,
+                                   slong delta, slong sigma)
+{
+    for (slong k = 0; k < extra; k++) {
+        slong anchor = k % delta;
+        slong wanted = 0;
+        const slong *reference = monoms[lost[anchor]].exp;
+        for (slong v = 0; v < n; v++) wanted += reference[v];
+        if (k >= (extra + 1) / 2) {
+            slong round = (k - (extra + 1) / 2) / delta;
+            slong offset = round == 0 ? 0 : (round & 1) ? (round + 1) / 2 : -round / 2;
+            wanted = FLINT_MAX(0, FLINT_MIN(n, sigma - opposite_degrees[anchor] + offset));
+        }
+        slong best = -1, best_gap = WORD_MAX, best_distance = WORD_MAX, best_degree = -1;
+        for (slong i = 0; i < count; i++) if (map[i] < 0) {
+            slong degree = 0, distance = 0;
+            for (slong v = 0; v < n; v++) {
+                degree += monoms[i].exp[v];
+                distance += FLINT_ABS(monoms[i].exp[v] - reference[v]);
+            }
+            slong gap = FLINT_ABS(degree - wanted);
+            if (gap < best_gap || (gap == best_gap &&
+                (distance < best_distance || (distance == best_distance && degree > best_degree)))) {
+                best = i; best_gap = gap; best_distance = distance; best_degree = degree;
+            }
+        }
+        FLINT_ASSERT(best >= 0);
+        indices[size + k] = best; map[best] = size + k;
+    }
+}
+
 /* Keep the exact candidate, project only two disjoint border strips, then
  * reuse Step 3's Schur completion and actual parameter-degree refinement.
  * Unknown entries are never presented as zeros to that machinery. On failure
@@ -4685,7 +4723,27 @@ static int dixon_repair_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
 {
     slong delta = size - s;
     if (s <= 0 || delta <= 0 || delta > 8) return 0;
-    slong budget = FLINT_MIN(8 * delta, 32);
+    /* Border projections dominate the cost; use up to 32 useful directions
+     * even for a one-dimensional deficit rather than eight extreme monomials. */
+    slong budget = 32;
+    slong lost[2][8], lost_degrees[2][8];
+    for (slong i = 0; i < delta; i++) lost[0][i] = rows[perm[s + i]];
+    slong pivot_row = 0, missing = 0;
+    for (slong j = 0; j < size; j++) {
+        if (pivot_row < s && nmod_mat_entry(lu, pivot_row, j) != 0) pivot_row++;
+        else {
+            if (missing >= delta) return 0;
+            lost[1][missing++] = cols[j];
+        }
+    }
+    if (missing != delta || pivot_row != s) return 0;
+    for (slong i = 0; i < delta; i++) {
+        lost_degrees[0][i] = lost_degrees[1][i] = 0;
+        for (slong v = 0; v < n; v++) {
+            lost_degrees[0][i] += rm[lost[0][i]].exp[v];
+            lost_degrees[1][i] += cm[lost[1][i]].exp[v];
+        }
+    }
     slong counts[] = {nr, nc}, dims[2];
     monom_t *monoms[] = {rm, cm};
     slong *chosen[] = {rows, cols}, *indices[2], *targets[2], *maps[2];
@@ -4696,26 +4754,24 @@ static int dixon_repair_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
         targets[axis] = flint_malloc((size_t) dims[axis] * n * sizeof(slong));
         maps[axis] = flint_malloc((size_t) counts[axis] * sizeof(slong));
         orders[axis] = flint_malloc((size_t) counts[axis] * sizeof(fq_index_degree_pair));
-        for (slong i = 0; i < counts[axis]; i++) {
-            maps[axis][i] = -1;
-            slong degree = 0;
-            for (slong v = 0; v < n; v++) degree += monoms[axis][i].exp[v];
-            /* Every determinant term has total degree <= n+2. Larger axis
-             * degree gives a smaller parameter-degree upper bound. This is
-             * only a reserve ordering proxy; refinement uses exact degrees. */
-            orders[axis][i].index = i;
-            orders[axis][i].degree = n + 2 - degree;
-        }
+        for (slong i = 0; i < counts[axis]; i++) maps[axis][i] = -1;
         for (slong i = 0; i < size; i++) {
             indices[axis][i] = chosen[axis][i];
             maps[axis][chosen[axis][i]] = i;
         }
-        qsort(orders[axis], counts[axis], sizeof(fq_index_degree_pair), compare_fq_degrees);
-        slong k = size;
-        for (slong i = 0; i < counts[axis] && k < dims[axis]; i++) {
-            slong idx = orders[axis][i].index;
-            if (maps[axis][idx] >= 0) continue;
-            indices[axis][k] = idx; maps[axis][idx] = k++;
+        dixon_mq_choose_reserve(indices[axis], maps[axis], counts[axis], size,
+                                dims[axis] - size, monoms[axis], n, lost[axis],
+                                lost_degrees[1 - axis], delta, sigma);
+        if (g_dixon_verbose_level >= 2) {
+            printf("  MQ repair %s: lost degrees", axis ? "columns" : "rows");
+            for (slong i = 0; i < delta; i++) printf(" %ld", lost_degrees[axis][i]);
+            printf("; reserve degrees");
+            for (slong i = size; i < dims[axis]; i++) {
+                slong degree = 0;
+                for (slong v = 0; v < n; v++) degree += monoms[axis][indices[axis][i]].exp[v];
+                printf(" %ld", degree);
+            }
+            printf("\n");
         }
         for (slong i = 0; i < dims[axis]; i++) {
             memcpy(targets[axis] + i * n, monoms[axis][indices[axis][i]].exp, (size_t) n * sizeof(slong));

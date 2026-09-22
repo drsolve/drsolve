@@ -228,8 +228,9 @@ legacy Step 3 first-occurrence candidate. A full-rank specialization verifies
 that minor; maximality still relies on the existing generic rank model. Failed
 verification first tries a bounded local Schur repair when the best sampled
 rank is positive and its deficit is at most 8. Each axis admits at most
-`min(8 * deficit, 32)` extra directions, ordered by a parameter-degree upper
-bound. The original coefficients are retained; two additional projected minor
+32 extra directions, selected near the missing LU directions and across
+complementary/nearby monomial-degree layers. A parameter-degree upper bound
+alone would overselect sparse extreme layers that cannot repair the rank. The original coefficients are retained; two additional projected minor
 DP runs compute only the disjoint border strips. This recomputes the required
 DP states rather than resuming the original run. The resulting complete local
 block uses Step 3's Schur completion and actual parameter-degree-aware exchanges,
