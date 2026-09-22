@@ -1136,7 +1136,7 @@ static int enumerate_box_monomials(monomial_t **out, slong *count,
     return 1;
 }
 
-static int generate_random_verdeg_strings(const long *bounds, slong nvars,
+static int generate_random_vardeg_strings(const long *bounds, slong nvars,
                                           slong npolys,
                                           double density_ratio, int seed_given,
                                           ulong seed, int silent_mode,
@@ -2953,7 +2953,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int    solve_rational_only_mode = 0;
     int    comp_mode   = 0;
     int    rand_mode   = 0;   /* --random / -r */
-    int    random_verdeg = 0; /* --verdeg: per-variable bounds */
+    int    random_vardeg = 0; /* --vardeg: per-variable bounds */
     slong  random_npolys = 0;
     int    random_npolys_given = 0;
     int    ideal_mode  = 0;   /*  --ideal flag */
@@ -3034,9 +3034,9 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         } else if (strcmp(argv[i], "--random") == 0 ||
                    strcmp(argv[i], "-r")       == 0) {
             rand_mode = 1;
-        } else if (strcmp(argv[i], "--verdeg") == 0) {
+        } else if (strcmp(argv[i], "--vardeg") == 0) {
             rand_mode = 1;
-            random_verdeg = 1;
+            random_vardeg = 1;
         } else if ((strcmp(argv[i], "-m") == 0 || strcmp(argv[i], "--m") == 0 || strcmp(argv[i], "--num-equations") == 0) && i + 1 < argc) {
             if (!parse_positive_slong_option(argv[i + 1], &random_npolys)) {
                 fprintf(stderr, "Error: invalid equation count '%s'.\n", argv[i + 1]);
@@ -3331,12 +3331,12 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int solve_verbose_mode = (verbose_level >= 2);
     int debug_mode = (verbose_level >= 2);
 
-    if (random_verdeg && random_homogeneous) {
-        fprintf(stderr, "Error: --verdeg and --homogeneous are mutually exclusive.\n");
+    if (random_vardeg && random_homogeneous) {
+        fprintf(stderr, "Error: --vardeg and --homogeneous are mutually exclusive.\n");
         return 1;
     }
-    if (random_npolys_given && !random_verdeg) {
-        fprintf(stderr, "Error: -m/--num-equations is only supported with --verdeg.\n");
+    if (random_npolys_given && !random_vardeg) {
+        fprintf(stderr, "Error: -m/--num-equations is only supported with --vardeg.\n");
         return 1;
     }
     if (!rand_mode && (random_nvars_given || random_density_given ||
@@ -3859,11 +3859,11 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             goto cleanup_fail;
         }
 
-        if (random_verdeg) {
+        if (random_vardeg) {
             slong n = npolys_rand;
             slong m = random_npolys_given ? random_npolys : n;
             if (random_nvars_given || random_homogeneous) {
-                fprintf(stderr, "Error: --verdeg is incompatible with -n and --homogeneous.\n");
+                fprintf(stderr, "Error: --vardeg is incompatible with -n and --homogeneous.\n");
                 free(degrees_rand);
                 goto cleanup_fail;
             }
@@ -3884,7 +3884,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
                 goto cleanup_success;
             } else {
                 char *gp = NULL, *ge = NULL, *ga = NULL;
-                int ok = generate_random_verdeg_strings(degrees_rand, n, m, random_density,
+                int ok = generate_random_vardeg_strings(degrees_rand, n, m, random_density,
                                                          random_seed_given, random_seed,
                                                          silent_mode, &gp, &ge, &ga);
                 free(degrees_rand);
