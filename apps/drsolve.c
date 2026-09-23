@@ -273,7 +273,7 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    -> --method sets both step 1 and step 4 for backward compatibility\n");
     printf("    -> --mq-step1-simplex enables parallel total-degree MQ interpolation (default off); --no-mq-step1-simplex disables it\n");
     printf("    -> --no-mq-step1-filter disables the default Step 1 coefficient filtering for prime-field, single-parameter MQ systems\n");
-    printf("    -> --mq-step4-schur enables checked MQ Schur compression for prime-field, single-parameter automatic/HNF Step 4 (default off); --no-mq-step4-schur disables it\n");
+    printf("    -> --mq-step4-schur enables checked MQ Schur compression for prime-field, single-parameter automatic/HNF Step 4 (default on); --no-mq-step4-schur disables it\n");
     printf("    -> --fq-det-method (auto|hnf|iter) controls the prime-field univariate polynomial-matrix determinant backend used in fq_poly_mat_det\n");
     printf("    -> --cache limits live minor DP entries (method 0); smaller subproblems are used when full layers do not fit; 0 disables DP\n");
     printf("    -> --array-limit-k <k> caps optimized extension-field array multiplication tables at 2^k entries (0-62)\n");

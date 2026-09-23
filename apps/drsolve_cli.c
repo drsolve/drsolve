@@ -2974,7 +2974,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     long fast_ksy_constant_col = 0;
     int mq_step1_filter = 1;
     int mq_step1_simplex = 0;
-    int mq_step4_schur = 0;
+    int mq_step4_schur = 1;
     int step3_verify_second = 0;
     fq_nmod_poly_det_method_t fq_det_method = FQ_NMOD_POLY_DET_METHOD_AUTO;
     int fq_det_method_explicit = 0;

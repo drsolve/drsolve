@@ -223,11 +223,11 @@ Example:
 ```bash
 ./drsolve --mq-step4-schur -f input.dr -v 2
 ```
-`--mq-step4-schur` opts into checked complementary-block compression for
+Checked complementary-block compression is enabled by default for
 prime-field MQ systems with one retained parameter. It applies to automatic
 Step 4 and `--step4 1`; the smaller determinant uses the existing backend,
 including `--fq-det-method`. Other explicit Step 4 methods are preserved.
-The default is off; `--no-mq-step4-schur` disables it explicitly.
+`--no-mq-step4-schur` disables it explicitly; `--mq-step4-schur` re-enables it.
 
 The compressor factors each constant degree-diagonal block once, solves
 `E X = V` by block back substitution, then forms `A - U X`. It does not
