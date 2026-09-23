@@ -272,6 +272,7 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    -> Available methods: 0.Minor expansion; 1.HNF; 2.Interpolation; 3.Sparse interpolation; 4.Bareiss; 5.Recursive Dixon construction; 6.Balanced split Laplace (experimental)\n");
     printf("    -> --method sets both step 1 and step 4 for backward compatibility\n");
     printf("    -> --no-mq-step1-filter disables the default Step 1 coefficient filtering for prime-field, single-parameter MQ systems\n");
+    printf("    -> --mq-step4-schur enables checked MQ Schur compression for prime-field, single-parameter automatic/HNF Step 4 (default off); --no-mq-step4-schur disables it\n");
     printf("    -> --fq-det-method (auto|hnf|iter) controls the prime-field univariate polynomial-matrix determinant backend used in fq_poly_mat_det\n");
     printf("    -> --cache limits live minor DP entries (method 0); smaller subproblems are used when full layers do not fit; 0 disables DP\n");
     printf("    -> --array-limit-k <k> caps optimized extension-field array multiplication tables at 2^k entries (0-62)\n");
@@ -351,6 +352,8 @@ static int validate_cli_options(int argc, char *argv[])
         {"step3-verify-second", no_argument, NULL, OPT_FLAG},
         {"no-step3-verify-second", no_argument, NULL, OPT_FLAG},
         {"no-mq-step1-filter", no_argument, NULL, OPT_FLAG},
+        {"mq-step4-schur", no_argument, NULL, OPT_FLAG},
+        {"no-mq-step4-schur", no_argument, NULL, OPT_FLAG},
         {"step1", required_argument, NULL, OPT_FLAG},
         {"step4", required_argument, NULL, OPT_FLAG},
         {"threads", required_argument, NULL, OPT_FLAG},

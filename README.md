@@ -216,6 +216,23 @@ Example:
 - Available methods: `0.Recursive`, `1.Kronecker+HNF`, `2.Interpolation`, `3.Sparse interpolation`, `4.Bareiss`, `5.Recursive Dixon construction`
 - `--method` sets both Step 1 and Step 4 for backward compatibility
 
+#### MQ Step 4 Schur compression
+```bash
+./drsolve --mq-step4-schur -f input.dr -v 2
+```
+`--mq-step4-schur` opts into checked complementary-block compression for
+prime-field MQ systems with one retained parameter. It applies to automatic
+Step 4 and `--step4 1`; the smaller determinant uses the existing backend,
+including `--fq-det-method`. Other explicit Step 4 methods are preserved.
+The default is off; `--no-mq-step4-schur` disables it explicitly.
+
+The selected matrix's actual monomial labels are used after reordering or
+repair. Degree checks and nonzero constant pivots certify each compression;
+if the profile is unavailable or the complement is singular, the original
+matrix goes to the normal determinant backend. This option also works with
+`--no-mq-step1-filter`. It does not assume that every random MQ candidate has
+an invertible complement.
+
 #### Resultant construction
 ```bash
 ./drsolve --dixon <args>

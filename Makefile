@@ -157,6 +157,7 @@ MATH_SOURCES = $(SRC_DIR)/dixon/dixon_complexity.c \
                $(SRC_DIR)/determinant/fq_mpoly_mat_det.c \
                $(SRC_DIR)/determinant/fq_multivariate_interpolation.c \
                $(SRC_DIR)/determinant/fq_poly_mat_det.c \
+               $(SRC_DIR)/determinant/mq_poly_mat_det.c \
                $(SRC_DIR)/determinant/fq_sparse_interpolation.c \
                $(SRC_DIR)/determinant/unified_mpoly_det.c \
                $(SRC_DIR)/field/fq_mvpoly.c \
@@ -972,3 +973,18 @@ check-verbose: $(DIXON_TARGET)
         debug-headers debug-libs debug-structure help \
         install install-strip install-headers uninstall \
         check check-verbose
+
+.PHONY: test-mq-step4
+test-mq-step4: $(BUILD_DIR)/mq_poly_mat_det_test $(BUILD_DIR)/dixon_mq_step4_test
+	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/mq_poly_mat_det_test
+	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/dixon_mq_step4_test
+
+$(BUILD_DIR)/mq_poly_mat_det_test: $(SRC_DIR)/test/mq_poly_mat_det_test.c $(SRC_DIR)/determinant/mq_poly_mat_det.c $(SRC_DIR)/mq_poly_mat_det.h
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_poly_mat_det_test.c $(SRC_DIR)/determinant/mq_poly_mat_det.c $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+$(BUILD_DIR)/dixon_mq_step4_test: $(SRC_DIR)/test/dixon_mq_step4_test.c $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/mq_poly_mat_det.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon_mq_step4_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-mq-step4-cli
+test-mq-step4-cli: drsolve-dynamic
+	python3 $(SRC_DIR)/test/dixon_mq_step4_cli_test.py
