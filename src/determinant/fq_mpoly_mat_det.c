@@ -1474,7 +1474,7 @@ typedef struct {
     ulong digit_mask;
     mq_monom_set rows, cols, row_targets, col_targets;
     slong safe_linear_layers;
-    flint_bitcnt_t packed_bits;
+    flint_bitcnt_t packed_bits, arithmetic_bits;
     mq_monom_set packed[4];
 } mq_det_filter;
 
@@ -1638,6 +1638,7 @@ static void mq_filter_prepare_packed(mq_det_filter *f, const nmod_mpoly_ctx_t ct
                                      slong degree_bound)
 {
     flint_bitcnt_t bits = mpoly_fix_bits(1 + FLINT_BIT_COUNT((ulong) degree_bound), ctx->minfo);
+    f->arithmetic_bits = bits;
     if (ctx->minfo->ord != ORD_LEX || bits >= FLINT_BITS ||
         f->nvars > (FLINT_BITS - 1) / bits) return;
     f->packed_bits = bits;
@@ -1740,6 +1741,132 @@ static void mq_filter_poly(nmod_mpoly_t poly, const nmod_mpoly_ctx_t ctx,
         out++;
     }
     _nmod_mpoly_set_length(poly, out, ctx);
+}
+
+/* Merge the sorted streams x^a_i*b directly in native lex packing. This
+ * private kernel is called only for the linear rows of a validated MQ DP.
+ * Its shared degree budget guarantees that adding packed fields cannot carry.
+ */
+typedef struct
+{
+    slong a, b;
+    ulong exp[3];
+} mq_linear_stream;
+static inline int mq_linear_cmp(const ulong *a, const ulong *b, slong words)
+{
+    for (slong w = words; w-- > 0;)
+        if (a[w] != b[w])
+            return a[w] > b[w] ? 1 : -1;
+    return 0;
+}
+static int mq_linear_mul(nmod_mpoly_t out, const nmod_mpoly_t a, const nmod_mpoly_t b,
+                         const nmod_mpoly_ctx_t ctx, const mq_det_filter *f, int truncate)
+{
+    if (!f || !f->arithmetic_bits || a->bits != f->arithmetic_bits ||
+        b->bits != f->arithmetic_bits || ctx->minfo->ord != ORD_LEX || a->length < 2 ||
+        a->length > 2 * f->nvars + 2 || b->length < 256 || out == a || out == b)
+        return 0;
+    slong words = mpoly_words_per_exp(a->bits, ctx->minfo);
+    if (words > 3)
+        return 0;
+    mq_linear_stream heap[2 * FLINT_BITS + 2];
+    slong heaplen = a->length;
+    for (slong i = 0; i < heaplen; i++)
+    {
+        heap[i].a = i;
+        heap[i].b = 0;
+        for (slong w = 0; w < words; w++)
+            heap[i].exp[w] = a->exps[i * words + w] + b->exps[w];
+    }
+    slong offset[2], shift[2], low[2], width = f->nvars * f->arithmetic_bits;
+    slong vo[2 * FLINT_BITS], vs[2 * FLINT_BITS];
+    if (!f->packed_bits)
+        for (slong v = 0; v < 2 * f->nvars; v++)
+            mpoly_gen_offset_shift_sp(vo + v, vs + v, v, f->arithmetic_bits, ctx->minfo);
+    for (slong axis = 0; f->packed_bits && axis < 2; axis++)
+    {
+        mpoly_gen_offset_shift_sp(offset + axis, shift + axis, (axis + 1) * f->nvars - 1,
+                                  f->packed_bits, ctx->minfo);
+        low[axis] =
+            FLINT_MIN(width, ((FLINT_BITS - shift[axis]) / f->packed_bits) * f->packed_bits);
+    }
+    nmod_mpoly_fit_length_reset_bits(out, b->length, f->arithmetic_bits, ctx);
+    slong len = 0;
+    while (heaplen)
+    {
+        ulong key[3];
+        for (slong w = 0; w < words; w++)
+            key[w] = heap[0].exp[w];
+        ulong value = 0;
+        do
+        {
+            mq_linear_stream next = heap[0];
+            value =
+                nmod_add(value, nmod_mul(a->coeffs[next.a], b->coeffs[next.b], ctx->mod), ctx->mod);
+            if (++next.b == b->length)
+                next = heap[--heaplen];
+            else
+                for (slong w = 0; w < words; w++)
+                    next.exp[w] = a->exps[next.a * words + w] + b->exps[next.b * words + w];
+            if (heaplen)
+            {
+                slong pos = 0;
+                for (;;)
+                {
+                    slong child = 2 * pos + 1;
+                    if (child >= heaplen)
+                        break;
+                    if (child + 1 < heaplen &&
+                        mq_linear_cmp(heap[child + 1].exp, heap[child].exp, words) > 0)
+                        child++;
+                    if (mq_linear_cmp(next.exp, heap[child].exp, words) >= 0)
+                        break;
+                    heap[pos] = heap[child];
+                    pos = child;
+                }
+                heap[pos] = next;
+            }
+        } while (heaplen && mq_linear_cmp(heap[0].exp, key, words) == 0);
+        if (!value)
+            continue;
+        if (truncate)
+        {
+            ulong r = 0, c = 0;
+            if (f->packed_bits)
+            {
+                r = mq_packed_axis(key, offset[0], shift[0], low[0], width);
+                c = mq_packed_axis(key, offset[1], shift[1], low[1], width);
+                if (!mq_monom_contains(f->packed, r) || !mq_monom_contains(f->packed + 1, c))
+                    continue;
+            }
+            else
+            {
+                ulong mask = UWORD_MAX >> (FLINT_BITS - f->arithmetic_bits);
+                int keep = 1;
+                for (slong v = 0; v < f->nvars; v++)
+                {
+                    ulong a = (key[vo[v]] >> vs[v]) & mask;
+                    ulong b = (key[vo[f->nvars + v]] >> vs[f->nvars + v]) & mask;
+                    if (a > f->digit_mask || b > f->digit_mask)
+                    {
+                        keep = 0;
+                        break;
+                    }
+                    r |= a << (v * f->bits);
+                    c |= b << (v * f->bits);
+                }
+                if (!keep || !mq_monom_contains(&f->rows, r) || !mq_monom_contains(&f->cols, c))
+                    continue;
+            }
+        }
+        nmod_mpoly_fit_length(out, len + 1, ctx);
+        out->coeffs[len] = value;
+        for (slong w = 0; w < words; w++)
+            out->exps[len * words + w] = key[w];
+        len++;
+    }
+    _nmod_mpoly_set_length(out, len, ctx);
+    return 1;
 }
 
 /* Retain FLINT's packed-exponent multiplication and compact immediately,
@@ -1889,7 +2016,9 @@ static int compute_nmod_mpoly_det_layered_dp(nmod_mpoly_t result, nmod_mpoly_t *
                         ulong child = prefix[j] + suffix[j + 1];
                         if (nmod_mpoly_is_zero(matrix[size - k][cols[j]], ctx) ||
                             nmod_mpoly_is_zero(previous[child], ctx)) continue;
-                        mq_filtered_mul(product, matrix[size - k][cols[j]], previous[child], ctx, layer_filter);
+                        if (!mq_linear_mul(product, matrix[size - k][cols[j]],
+                                           previous[child], ctx, filter, layer_filter != NULL))
+                            mq_filtered_mul(product, matrix[size - k][cols[j]], previous[child], ctx, layer_filter);
                         if (j & 1)
                             nmod_mpoly_sub(sum, current[index], product, ctx);
                         else
@@ -2095,6 +2224,10 @@ int compute_fq_det_mq_projected_rect(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
     nmod_mpoly_t **m = flint_malloc((size_t) size * sizeof(*m));
     for (slong i = 0; i < size; i++) m[i] = flint_malloc((size_t) size * sizeof(**m));
     fq_matrix_mvpoly_to_nmod_mpoly(m, matrix, size, ctx);
+    /* Keep the small linear rows and cached minors in the same safe packing,
+     * avoiding a repack for every shifted stream in the linear merge kernel. */
+    for (slong i = 0; i < size; i++) for (slong j = 0; j < size; j++)
+        nmod_mpoly_repack_bits_inplace(m[i][j], filter.arithmetic_bits, ctx);
     nmod_mpoly_t det;
     nmod_mpoly_init(det, ctx);
     compute_nmod_mpoly_det_minor(det, m, size, ctx,

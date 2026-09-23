@@ -8,13 +8,15 @@
 extern "C" {
 #endif
 
-/* Experimental prime-field MQ compression. B has its h retained indices first
+/* Blocked prime-field MQ compression. B has its h retained indices first
  * on BOTH axes; the remaining complementary block must have degree budget 0.
  * core is an initialized h by h matrix over B's prime field and must not
  * overlap B's storage (including matrix windows). On success,
  * det(B) = *factor * det(core), with factor nonzero. On failure, B, core and
  * *factor are unchanged. Input degrees include all eliminated monomial weights.
  * No generic-rank assumption is used. Caller must supply a prime modulus.
+ * Constant degree-diagonal blocks are factored once; block back substitution
+ * computes E X = V and core = A - U X without a full copy or inverse of E.
  * The solver uses this only with the explicit --mq-step4-schur option.
  */
 int nmod_poly_mat_mq_schur(nmod_poly_mat_t core, ulong *factor, const nmod_poly_mat_t B,

@@ -110,6 +110,35 @@ static void check_layer_certificate(void)
     flint_free(m); fq_nmod_clear(one, ctx); fq_nmod_ctx_clear(ctx);
 }
 
+static void check_linear_kernel(flint_rand_t state, slong n, ulong q)
+{
+    nmod_mpoly_ctx_t ctx;
+    nmod_mpoly_ctx_init(ctx,2*n+1,ORD_LEX,q);
+    slong target[16]; for(slong v=0;v<n;v++)target[v]=1;
+    mq_det_filter f; assert(mq_filter_init(&f,n,target,1,target,1));
+    mq_filter_prepare_packed(&f,ctx,n+2);
+    assert(f.arithmetic_bits);
+    nmod_mpoly_t a,b,x,y;
+    nmod_mpoly_init(a,ctx);nmod_mpoly_init(b,ctx);nmod_mpoly_init(x,ctx);nmod_mpoly_init(y,ctx);
+    ulong exp[33]={0};
+    nmod_mpoly_push_term_ui_ui(a,1,exp,ctx);
+    for(slong v=0;v<2*n+1;v++) {
+        exp[v]=1;nmod_mpoly_push_term_ui_ui(a,1,exp,ctx);exp[v]=0;
+    }
+    nmod_mpoly_sort_terms(a,ctx);nmod_mpoly_combine_like_terms(a,ctx);
+    nmod_mpoly_randtest_bound(b,state,2000,3,ctx);
+    assert(nmod_mpoly_repack_bits_inplace(a,f.arithmetic_bits,ctx));
+    assert(nmod_mpoly_repack_bits_inplace(b,f.arithmetic_bits,ctx));
+    for(int truncate=0;truncate<2;truncate++) {
+        nmod_mpoly_mul(y,a,b,ctx);if(truncate)mq_filter_poly(y,ctx,&f,0);
+        assert(mq_linear_mul(x,a,b,ctx,&f,truncate));
+        assert(nmod_mpoly_equal(x,y,ctx));
+        assert(nmod_mpoly_is_canonical(x,ctx));
+    }
+    nmod_mpoly_clear(a,ctx);nmod_mpoly_clear(b,ctx);nmod_mpoly_clear(x,ctx);nmod_mpoly_clear(y,ctx);
+    mq_filter_clear(&f);nmod_mpoly_ctx_clear(ctx);
+}
+
 int main(void)
 {
     flint_rand_t state;
@@ -118,6 +147,7 @@ int main(void)
     for (int order = ORD_LEX; order <= ORD_DEGREVLEX; order++)
         for (slong i = 0; i < 6; i++) check_packing(state, axes[i], order);
     check_layer_certificate();
+    for(slong n=3;n<=9;n+=2) { check_linear_kernel(state,n,2);check_linear_kernel(state,n,65537); }
     flint_rand_clear(state); flint_cleanup_master();
     puts("MQ packed filtering and safe-layer certificates passed");
     return 0;

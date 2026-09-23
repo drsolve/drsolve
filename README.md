@@ -226,6 +226,12 @@ Step 4 and `--step4 1`; the smaller determinant uses the existing backend,
 including `--fq-det-method`. Other explicit Step 4 methods are preserved.
 The default is off; `--no-mq-step4-schur` disables it explicitly.
 
+The compressor factors each constant degree-diagonal block once, solves
+`E X = V` by block back substitution, then forms `A - U X`. It does not
+copy or update the entire polynomial matrix for scalar pivot elimination.
+The MQ Step 1 path also merges packed linear-product streams directly and
+filters before storing the result; unsupported layouts use FLINT multiplication.
+
 The selected matrix's actual monomial labels are used after reordering or
 repair. Degree checks and nonzero constant pivots certify each compression;
 if the profile is unavailable or the complement is singular, the original
