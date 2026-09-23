@@ -1296,6 +1296,41 @@ static double step1_entry_degree_log2(slong row_idx,
     return log2((double) effective_degree) + var_weight_log2[highest_idx];
 }
 
+/* One quadratic original row and n-1 linear divided-difference rows.
+ * All minors in layers k<n use trailing linear rows, hence total degree <=k
+ * in v=2n-1 variables. Bound the INPUT support to each multiplication; the
+ * entry multiplier has at most v+1 terms (linear) or binom(n+2,2) (root).
+ * This is an arithmetic-work surrogate for fully cached suffix-minor DP,
+ * ignoring polynomial/logarithmic representation overhead and cache eviction.
+ * It does not assume generic rank or successful coefficient projection. */
+static void step1_mq_bounds(dixon_complexity_report_t *report,
+                            const long *degrees, slong n, slong all_vars,
+                            slong elim_vars, slong params)
+{
+    report->step1_mq_total_support_log2 = INFINITY;
+    report->step1_mq_uniform_log2 = INFINITY;
+    report->step1_mq_layered_log2 = INFINITY;
+    if (n < 2 || n > WORD_MAX / 3 || all_vars != n || elim_vars != n - 1 || params != 1)
+        return;
+    for (slong i = 0; i < n; i++) if (degrees[i] != 2) return;
+    report->step1_mq_bounds_applicable = 1;
+    slong v = 2 * n - 1;
+    double quadratic = log2_binomial_upper(n + 2, 2);
+    double linear = log2((double) v + 1.0);
+    report->step1_mq_total_support_log2 = log2_binomial_upper(3 * n, n + 1);
+    report->step1_mq_uniform_log2 = log2((double) n) + (double) n + quadratic
+                                    + report->step1_mq_total_support_log2;
+    double total = -INFINITY, peak = -INFINITY;
+    for (slong k = 1; k <= n; k++) {
+        double input_support = log2_binomial_upper(v + k - 1, k - 1);
+        double work = log2((double) k) + log2_binomial_upper(n, k)
+                      + (k == n ? quadratic : linear) + input_support;
+        total = log2_add_exp(total, work);
+        if (work > peak) { peak = work; report->step1_mq_peak_layer = k; }
+    }
+    report->step1_mq_layered_log2 = total;
+}
+
 void dixon_complexity_report_from_degrees(dixon_complexity_report_t *report,
                                           const long *degrees,
                                           slong num_polys,
@@ -1693,6 +1728,7 @@ void dixon_complexity_report_from_degrees(dixon_complexity_report_t *report,
     report->step1_direct_mpoly_split_log2 =
         ((num_polys > 0) ? (log2((double) num_polys) + (double) num_polys) : 0.0) +
         report->step1_direct_mpoly_mul_proxy_log2;
+    step1_mq_bounds(report, degrees, num_polys, num_all_vars, num_elim_vars, num_parameter_vars);
     report->step1_bareiss_log2 =
         ((num_polys > 1) ? (3.0 * log2((double) num_polys)) : 0.0) +
         2.0 * report->step1_sparse_term_bound_log2;
@@ -2166,9 +2202,46 @@ static void dixon_complexity_write_report_body(
         const dixon_complexity_report_t *report,
         double omega) {
     int verbose_level = g_dixon_verbose_level;
+    /* Detailed reports use a separate view; the public report and -v 1 keep
+     * their original full-size method selection. */
+    dixon_complexity_report_t detailed;
+    int rank_view = 0;
+    if (verbose_level >= 2) {
+        dixon_complexity_report_from_degrees(&detailed, degrees, num_polys,
+            num_all_vars, num_elim, num_parameter_vars, field_characteristic,
+            field_order, omega, 1);
+        if (detailed.step1_mq_bounds_applicable &&
+            detailed.step1_mq_layered_log2 < detailed.step1_best_log2) {
+            detailed.step1_best_log2 = detailed.step1_mq_layered_log2;
+            detailed.step1_best_method = "direct multivariate (MQ layered support bound)";
+        }
+        rank_view = detailed.step4_rank_model_applicable;
+        if (rank_view) {
+            double la = omega * detailed.step4_rank_size_log2;
+            detailed.step4_hnf_log2 = detailed.step4_rank_hnf_log2;
+            detailed.step4_hnf_linear_algebra_log2 = la;
+            detailed.step4_hnf_degree_density_log2 = detailed.step4_rank_hnf_degree_density_log2;
+            detailed.step4_ordinary_probe_cost_log2 = la;
+            detailed.step4_ordinary_probe_phase_log2 = detailed.step4_ordinary_grid_points_log2 + la;
+            detailed.step4_ordinary_interp_log2 = num_parameter_vars > 0
+                ? log2_add_exp(detailed.step4_ordinary_probe_phase_log2,
+                               detailed.step4_ordinary_tensor_phase_log2) : la;
+            detailed.step4_sparse_slp_length_log2 = la;
+            if (isfinite(detailed.step4_sparse_log2)) {
+                double logq = log2_fmpz_upper_bound(field_order);
+                double loglogq = logq > 0 ? log2(logq) : 0;
+                detailed.step4_sparse_log2 = num_parameter_vars > 0
+                    ? log2_add_exp(detailed.step4_sparse_term_bound_log2 + la + loglogq,
+                                   detailed.step4_sparse_term_bound_log2 + 2 * loglogq) : la;
+            }
+            detailed.step4_log2 = select_step4_best_method(&detailed, &detailed.step4_best_method);
+        }
+        detailed.overall_log2 = FLINT_MAX(detailed.step1_best_log2, detailed.step4_log2);
+        report = &detailed;
+    }
     if (verbose_level <= 0) {
         fprintf(fp,
-                "Overall Dixon complexity (selected Step 1/2=%s, Step 4=%s, log2): %.6f\n",
+                "Overall Dixon complexity (selected Step 1=%s, Step 4=%s, log2): %.6f\n",
                 report->step1_best_method ? report->step1_best_method : "unknown",
                 report->step4_best_method ? report->step4_best_method : "unknown",
                 dixon_complexity_best_total_log2(report));
@@ -2212,7 +2285,7 @@ static void dixon_complexity_write_report_body(
     fmpz_fprint(fp, bezout_bound);
     fprintf(fp, "\n");
 
-    fprintf(fp, "\n--- Step 1/2 ---\n");
+    fprintf(fp, "\n--- Step 1 ---\n");
     fprintf(fp, "Cancellation matrix size: %ld x %ld\n", num_polys, num_polys);
     fprintf(fp, "Step 1 indeterminates (2*elim + params): %ld = 2*%ld + %ld\n",
         report->step1_var_count, report->num_elim_vars, report->num_parameter_vars);
@@ -2262,6 +2335,25 @@ static void dixon_complexity_write_report_body(
                 num_polys,
                 ((num_polys > 0) ? (log2((double) num_polys) + (double) num_polys) : 0.0),
                 report->step1_direct_mpoly_mul_proxy_log2);
+    }
+    if (verbose_level >= 2) {
+        if (report->step1_mq_bounds_applicable) {
+            fprintf(fp, "Step 1 MQ full total-degree support bound (log2): %.6f\n",
+                    report->step1_mq_total_support_log2);
+            fprintf(fp, "  n=#equations=%ld, v=2n-1=%ld; total degree <= n+1; Sdeg=binom(3n,n+1).\n",
+                    num_polys, report->step1_var_count);
+            fprintf(fp, "Step 1 MQ cached Laplace uniform total-degree surrogate (log2): %.6f\n",
+                    report->step1_mq_uniform_log2);
+            fprintf(fp, "  Formula: n*2^n*binom(n+2,2)*Sdeg; replaces the legacy rectangular M^2 parameter-support proxy.\n");
+            fprintf(fp, "Step 1 MQ cached Laplace layered total-degree surrogate (log2): %.6f\n",
+                    report->step1_mq_layered_log2);
+            fprintf(fp, "  Formula: sum(k=1..n) k*binom(n,k)*mu_k*binom(v+k-1,k-1).\n");
+            fprintf(fp, "  mu_k=v+1 for k<n; mu_n=binom(n+2,2); trailing k-minors have degree <=k. Peak work layer: %ld/%ld.\n",
+                    report->step1_mq_peak_layer, num_polys);
+            fprintf(fp, "  O* exponential bases: legacy rectangular 32; uniform total-degree 13.5; layered total-degree 8.818300.\n");
+        } else {
+            fprintf(fp, "Step 1 MQ total-degree/layered bounds: unavailable (requires n quadratics, n-1 elimination variables, one parameter).\n");
+        }
     }
     fprintf(fp, "Step 1 Bareiss determinant surrogate (n^3, log2): %.6f\n",
             report->step1_bareiss_log2);
@@ -2571,14 +2663,6 @@ static void dixon_complexity_write_report_body(
             report->step1_best_method ? report->step1_best_method : "unknown",
             report->step1_best_log2);
 
-    if (verbose_level >= 2) {
-        fprintf(fp, "\n--- Step 3 ---\n");
-        fprintf(fp, "Step 3 rank-submatrix extraction by constant specialization and elimination (D^omega, log2): %.6f\n",
-                report->step3_rank_extraction_log2);
-        fprintf(fp, "  Formula: omega*log2(D), where D is the Dixon matrix size before rank reduction.\n");
-        fprintf(fp, "  This cost is charged to the rank-predicted route because the rank-sized Step 4 matrix must first be extracted.\n");
-    }
-
     fprintf(fp, "\n--- Step 4 ---\n");
     fprintf(fp, "Dixon matrix size: ");
     fmpz_fprint(fp, matrix_size);
@@ -2613,6 +2697,12 @@ static void dixon_complexity_write_report_body(
                 }
             }
         }
+        if (rank_view) {
+            fprintf(fp, "Step 4 estimates use rank-predicted matrix size: ");
+            if (exact_rank_available) fmpz_fprint(fp, exact_rank_size);
+            else fprintf(fp, "%ld", report->step4_rank_size);
+            fprintf(fp, "\n");
+        }
         fprintf(fp, "Step 4 matrix-entry parameter degree upper bound per variable: %ld\n",
                 step4_entry_degree_bound);
         fprintf(fp, "Step 4 resultant degree estimate (Bezout): ");
@@ -2638,14 +2728,16 @@ static void dixon_complexity_write_report_body(
                 report->step4_ordinary_interp_log2);
         fprintf(fp, "Step 4 sparse interpolation (log2): %.6f\n",
                 report->step4_sparse_log2);
-        fprintf(fp, "Best Step 4 estimate: %s (log2: %.6f)\n",
+        fprintf(fp, "Best Step 4 estimate: %s%s (log2: %.6f)\n",
                 report->step4_best_method ? report->step4_best_method : "unknown",
+                rank_view ? " (rank prediction)" : "",
                 report->step4_log2);
 
         if (verbose_level >= 2) {
             fprintf(fp, "  HNF formula: omega*log2(M) + log2(s_4)\n");
             fprintf(fp, "  HNF values : M=");
-            fmpz_fprint(fp, matrix_size);
+            if (rank_view && exact_rank_available) fmpz_fprint(fp, exact_rank_size);
+            else fmpz_fprint(fp, matrix_size);
             fprintf(fp, ", omega*log2(M)=%.6f, log2(s_4)=%.6f\n",
                     report->step4_hnf_linear_algebra_log2,
                     report->step4_hnf_degree_density_log2);
@@ -2663,7 +2755,6 @@ static void dixon_complexity_write_report_body(
                 fprintf(fp, ", omega*log2(r_D)=%.6f, log2(s_4(r_D))=%.6f\n",
                         omega * report->step4_rank_size_log2,
                         report->step4_rank_hnf_degree_density_log2);
-                fprintf(fp, "  Rank prediction status: experimental/conjectural; the original M-based estimate remains the rigorous upper-bound template.\n");
             }
 
             fprintf(fp, "  Ordinary formula: soft-O(N_4*M^omega + N_4*sum_i soft-FFT(b_i))\n");
@@ -2722,20 +2813,12 @@ static void dixon_complexity_write_report_body(
     fprintf(fp, "Step 1 best : %s (log2: %.6f)\n",
             report->step1_best_method ? report->step1_best_method : "unknown",
             report->step1_best_log2);
-    fprintf(fp, "Step 4 best : %s (log2: %.6f)\n",
+    fprintf(fp, "Step 4 best : %s%s (log2: %.6f)\n",
             report->step4_best_method ? report->step4_best_method : "unknown",
+            rank_view ? " (rank prediction)" : "",
             report->step4_log2);
     fprintf(fp, "Overall complexity = max(step1/2, step4) (log2): %.6f\n",
             dixon_complexity_best_total_log2(report));
-    if (report->step4_rank_model_applicable) {
-        if (verbose_level >= 2) {
-            fprintf(fp, "Step 3 rank extraction (log2): %.6f\n",
-                    report->step3_rank_extraction_log2);
-            fprintf(fp, "Rank-predicted overall complexity = max(step1/2, step3 extraction, rank-predicted step4 HNF) (log2): %.6f\n",
-                    report->rank_adjusted_overall_log2);
-        }
-    }
-
     fprintf(fp, "\n--- Comparison: Macaulay / Groebner ---\n");
     {
         fmpz_t exact_macaulay_degree, exact_macaulay_rows;
@@ -2779,7 +2862,7 @@ static void dixon_complexity_write_report_body(
         fprintf(fp, "Step 1 direct multivariate cofactor expansion: log2 space ~= log2(n^2) + log2(M^2) = %.6f\n",
                 ((num_polys > 1) ? (2.0 * log2((double) num_polys)) : 0.0) +
                 2.0 * report->det_size_log2);
-        fprintf(fp, "Step 1 cached Laplace / minors DP (layered theoretical optimum): log2 space ~= log2(C(n,floor(n/2))) + log2(M^2) = %.6f\n",
+        fprintf(fp, "Step 1 cached Laplace / minors DP (layered storage, legacy rectangular support): log2 space ~= log2(C(n,floor(n/2))) + log2(M^2) = %.6f\n",
                 log2_binomial_upper(num_polys, num_polys / 2) +
                 2.0 * report->det_size_log2);
         fprintf(fp, "Step 1 Bareiss: log2 space ~= log2(n^2) + log2(M^4) = %.6f\n",
@@ -2802,7 +2885,7 @@ static void dixon_complexity_write_report_body(
             fprintf(fp, "Step 2 recursive block Dixon construction: space model not yet separated from time surrogate in this report\n");
         }
         fprintf(fp, "Step 4 HNF / ordinary / sparse black-box determinant core: log2 space ~= log2(M^2) = %.6f\n",
-                2.0 * report->det_size_log2);
+                2.0 * (rank_view ? report->step4_rank_size_log2 : report->det_size_log2));
         fprintf(fp, "Groebner basis matrix surrogate: log2 space ~= omega-free log2(square size^2) = %.6f\n",
                 (report->macaulay_square_size > 1) ? (2.0 * log2((double) report->macaulay_square_size)) : 0.0);
         if (report->num_parameter_vars == 1) {

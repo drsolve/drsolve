@@ -136,6 +136,12 @@ typedef struct {
     double total_ordinary_log2;
     double total_hnf_log2;
     double total_sparse_log2;
+    /* Full MQ computation bounds; no projected-rank/success assumption. */
+    int step1_mq_bounds_applicable;
+    double step1_mq_total_support_log2;
+    double step1_mq_uniform_log2;
+    double step1_mq_layered_log2;
+    slong step1_mq_peak_layer;
 } dixon_complexity_report_t;
 
 // Function declarations

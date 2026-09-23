@@ -138,6 +138,13 @@ Bezout degree bound, and complexity in bits.
 ./drsolve -c -f input.dr
 ```
 - Prints complexity information
+- For n quadratics in n variables with one remaining parameter, `-v 2` also
+  compares the legacy cached Laplace surrogate with total-degree and per-layer
+  MQ bounds. The detailed report includes the per-layer bound in Step 1 method
+  selection and uses rank-predicted sizes for all Step 4 methods. Its overall
+  estimate is `max(Step 1/2, Step 4)`, with no separate Step 3 extraction charge.
+  `-v 1` retains the original method selection. For example:
+  `./drsolve -c -r '[2]*10' 257 -v 2`.
 - Default output file: `out/comp_YYYYMMDD_HHMMSS.dr`
 - Add `--omega <value>` or `-w <value>` to set the matrix-multiplication exponent
 
