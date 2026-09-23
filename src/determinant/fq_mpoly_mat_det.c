@@ -1869,6 +1869,10 @@ static int mq_linear_mul(nmod_mpoly_t out, const nmod_mpoly_t a, const nmod_mpol
     return 1;
 }
 
+#ifdef DRSOLVE_MQ_SUM_TEST
+#include "../test/mq_sum_experiment.h"
+#endif
+
 /* Retain FLINT's packed-exponent multiplication and compact immediately,
  * before this product enters a sum or feeds the next DP layer. Generating
  * pairs with push_term/sort is substantially slower on dense random MQ. */
@@ -2011,6 +2015,15 @@ static int compute_nmod_mpoly_det_layered_dp(nmod_mpoly_t result, nmod_mpoly_t *
                     for (slong j = k - 1; j > 0; j--)
                         suffix[j] = suffix[j + 1] + choose[cols[j]][j];
 
+#ifdef DRSOLVE_MQ_SUM_TEST
+                    nmod_mpoly_struct *factors[FLINT_BITS], *children[FLINT_BITS];
+                    for (slong j = 0; j < k; j++) {
+                        factors[j] = matrix[size-k][cols[j]];
+                        children[j] = previous[prefix[j] + suffix[j+1]];
+                    }
+                    if (mq_linear_sum(current[index], factors, children, k, ctx,
+                                      filter, layer_filter != NULL)) continue;
+#endif
                     nmod_mpoly_zero(current[index], ctx);
                     for (slong j = 0; j < k; j++) {
                         ulong child = prefix[j] + suffix[j + 1];
@@ -2245,6 +2258,31 @@ int compute_fq_det_mq_projected_rect(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
         flint_free(m[i]);
     }
     flint_free(m); nmod_mpoly_ctx_clear(ctx); mq_filter_clear(&filter);
+    return 1;
+}
+
+int fq_mq_project_full(fq_mvpoly_t *result, const fq_mvpoly_t *full,
+                      const slong *rows, slong row_count,
+                      const slong *cols, slong col_count)
+{
+    slong n=full->nvars/2;
+    if (result==full || full->nvars!=2*n || full->npars!=1 || n<1 || n>=FLINT_BITS ||
+        !rows || !cols || row_count<=0 || col_count<=0 ||
+        row_count>MQ_FILTER_MAX_MONOMS || col_count>MQ_FILTER_MAX_MONOMS) return 0;
+    for(slong i=0;i<row_count*n;i++)if(rows[i]<0 || rows[i]>n+2)return 0;
+    for(slong i=0;i<col_count*n;i++)if(cols[i]<0 || cols[i]>n+2)return 0;
+    mq_det_filter filter;
+    if (!mq_filter_init(&filter,n,rows,row_count,cols,col_count))return 0;
+    fq_mvpoly_init(result,full->nvars,1,full->ctx);
+    ulong exps[2*FLINT_BITS+1];
+    for(slong i=0;i<full->nterms;i++) {
+        const fq_monomial_t *term=full->terms+i;
+        for(slong j=0;j<2*n;j++)exps[j]=term->var_exp[j];
+        exps[2*n]=term->par_exp[0];
+        if (mq_filter_accepts(&filter,exps,1))
+            fq_mvpoly_add_term_fast(result,term->var_exp,term->par_exp,term->coeff);
+    }
+    mq_filter_clear(&filter);
     return 1;
 }
 

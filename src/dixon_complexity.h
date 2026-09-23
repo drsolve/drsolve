@@ -142,6 +142,15 @@ typedef struct {
     double step1_mq_uniform_log2;
     double step1_mq_layered_log2;
     slong step1_mq_peak_layer;
+    double step1_mq_simplex_log2;
+    double step1_mq_simplex_probe_log2;
+    double step1_mq_simplex_transform_log2;
+    slong step1_mq_simplex_extension;
+    double step4_mq_schur_log2;
+    double step4_mq_schur_formation_log2;
+    double step4_mq_core_log2;
+    double step4_mq_verification_log2;
+    slong step4_mq_core_size;
 } dixon_complexity_report_t;
 
 // Function declarations

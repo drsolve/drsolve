@@ -72,8 +72,10 @@ int main(void)
         fq_mvpoly_t *p=random_mq(m,ctx,state),baseline,compressed;
         assert(dixon_mq_step4_eligible(p,m,1));
         check_selected_matrix(p,m);
+        g_dixon_mq_step1_simplex=0;
         g_dixon_mq_step4_schur=0;
         fq_dixon_resultant(&baseline,p,m,1);
+        g_dixon_mq_step1_simplex=1;
         g_dixon_mq_step4_schur=1;
         fq_dixon_resultant_with_names(&compressed,p,m,1,NULL,NULL,NULL);
         same_result(&baseline,&compressed);
@@ -81,6 +83,7 @@ int main(void)
         for(slong i=0;i<=m;i++)fq_mvpoly_clear(p+i);
         flint_free(p);
     }
+    g_dixon_mq_step1_simplex=0;
     fq_nmod_ctx_clear(ctx);flint_rand_clear(state);
     puts("MQ Step 4 integration: selected labels, odd row permutation, unchanged fallback input, both resultant APIs PASS");
     flint_cleanup_master();return 0;

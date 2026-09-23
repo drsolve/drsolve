@@ -29,6 +29,15 @@ static void check_mq_layered_bounds(void)
         assert(fabs(report.step1_mq_total_support_log2 - log2((double) cumulative[n+1])) < 1e-9);
         assert(fabs(report.step1_mq_layered_log2 - (double) log2l(work)) < 1e-9);
         assert(report.step1_mq_layered_log2 <= report.step1_mq_uniform_log2);
+        double probe=pow(n,DIXON_OMEGA)+3.0*n*(n+1)*(n+2)/2+4.0*n*n*(n-1);
+        double transforms=4.0*(2*n-1)*(n+2)*(n+2);
+        assert(report.step1_mq_simplex_extension==1);
+        assert(fabs(report.step1_mq_simplex_log2-log2((double)cumulative[n+1]*(probe+transforms)))<1e-9);
+        assert(isfinite(report.step4_mq_schur_log2));
+        assert(report.step4_mq_schur_log2>=report.step4_mq_core_log2);
+        assert(report.step4_mq_schur_log2>=report.step4_mq_schur_formation_log2);
+        assert(report.step4_mq_schur_log2>=report.step4_mq_verification_log2);
+
         /* New diagnostics must not change the original method selection. */
         double legacy[] = {report.step1_direct_log2, report.step1_direct_mpoly_log2,
             report.step1_direct_mpoly_split_log2, report.step1_bareiss_log2,
@@ -48,6 +57,13 @@ static void check_mq_layered_bounds(void)
         dixon_complexity_report_from_degrees(&report, degrees, n, n+1, n-1, 2, q, q, DIXON_OMEGA, 0);
         assert(!report.step1_mq_bounds_applicable && isinf(report.step1_mq_layered_log2));
     }
+    long small_degrees[]={2,2,2,2,2,2};
+    dixon_complexity_report_t large,small;
+    dixon_complexity_report_from_degrees(&large,small_degrees,6,6,5,1,q,q,DIXON_OMEGA,0);
+    fmpz_set_ui(q,2);
+    dixon_complexity_report_from_degrees(&small,small_degrees,6,6,5,1,q,q,DIXON_OMEGA,0);
+    assert(small.step1_mq_simplex_extension==3);
+    assert(fabs(small.step1_mq_simplex_log2-large.step1_mq_simplex_log2-2*log2(3))<1e-9);
     fmpz_clear(q);
     puts("MQ layered estimates: monomial/subset enumeration and applicability checks passed");
 }

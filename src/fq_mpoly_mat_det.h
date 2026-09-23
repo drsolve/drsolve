@@ -61,6 +61,11 @@ int compute_fq_det_mq_projected(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
                               const slong *cols, slong count);
 
 /* Rectangular counterpart, used for disjoint repair border strips. */
+/* Select exact coefficients from a previously constructed full polynomial. */
+int fq_mq_project_full(fq_mvpoly_t *result, const fq_mvpoly_t *full,
+                      const slong *rows, slong row_count,
+                      const slong *cols, slong col_count);
+
 int compute_fq_det_mq_projected_rect(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
                                    slong size, const slong *rows, slong row_count,
                                    const slong *cols, slong col_count);

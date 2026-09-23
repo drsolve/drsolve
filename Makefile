@@ -158,6 +158,7 @@ MATH_SOURCES = $(SRC_DIR)/dixon/dixon_complexity.c \
                $(SRC_DIR)/determinant/fq_multivariate_interpolation.c \
                $(SRC_DIR)/determinant/fq_poly_mat_det.c \
                $(SRC_DIR)/determinant/mq_poly_mat_det.c \
+               $(SRC_DIR)/determinant/mq_simplex_det.c \
                $(SRC_DIR)/determinant/fq_sparse_interpolation.c \
                $(SRC_DIR)/determinant/unified_mpoly_det.c \
                $(SRC_DIR)/field/fq_mvpoly.c \
@@ -447,7 +448,7 @@ test-mq-filter: $(BUILD_DIR)/dixon_mq_filter_test $(BUILD_DIR)/mq_filter_kernel_
 $(BUILD_DIR)/dixon_mq_filter_test: $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/fq_mpoly_mat_det.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon_mq_filter_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
-$(BUILD_DIR)/mq_filter_kernel_test: $(SRC_DIR)/test/mq_filter_kernel_test.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c $(SRC_DIR)/fq_mpoly_mat_det.h $(DIXON_SHARED_LIB)
+$(BUILD_DIR)/mq_filter_kernel_test: $(SRC_DIR)/test/mq_filter_kernel_test.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c $(SRC_DIR)/test/mq_sum_experiment.h $(SRC_DIR)/fq_mpoly_mat_det.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_filter_kernel_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-minor-dp
@@ -988,3 +989,28 @@ $(BUILD_DIR)/dixon_mq_step4_test: $(SRC_DIR)/test/dixon_mq_step4_test.c $(SRC_DI
 .PHONY: test-mq-step4-cli
 test-mq-step4-cli: drsolve-dynamic
 	python3 $(SRC_DIR)/test/dixon_mq_step4_cli_test.py
+
+# Small exact total-degree interpolation prototype; not a solver backend.
+$(BUILD_DIR)/mq_simplex_bench: $(SRC_DIR)/mq_simplex_det.h $(SRC_DIR)/test/mq_simplex_bench.c $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_simplex_bench.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-mq-simplex test-mq-complexity-cli
+test-mq-simplex: $(BUILD_DIR)/mq_simplex_bench
+	OMP_NUM_THREADS=1 ./$(BUILD_DIR)/mq_simplex_bench 4 7
+	OMP_NUM_THREADS=1 ./$(BUILD_DIR)/mq_simplex_bench 5 65537
+	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/mq_simplex_bench 5 65537 4
+	OMP_NUM_THREADS=1 ./$(BUILD_DIR)/mq_simplex_bench 4 2
+
+test-mq-complexity-cli:
+	python3 $(SRC_DIR)/test/mq_complexity_cli_test.py
+
+# Reproducible experimental CLI builds; neither kernel is enabled in drsolve.
+$(BUILD_DIR)/mq-sum-direct-cli: $(CLI_SOURCES) $(MATH_SOURCES) $(SRC_DIR)/test/mq_sum_experiment.h $(PML_BUILD_PREREQS)
+	$(CC) $(ALL_CFLAGS) -DDRSOLVE_MQ_SUM_TEST=1 -o $@ $(CLI_SOURCES) $(MATH_SOURCES) $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS)
+
+$(BUILD_DIR)/mq-sum-products-cli: $(CLI_SOURCES) $(MATH_SOURCES) $(SRC_DIR)/test/mq_sum_experiment.h $(PML_BUILD_PREREQS)
+	$(CC) $(ALL_CFLAGS) -DDRSOLVE_MQ_SUM_TEST=2 -o $@ $(CLI_SOURCES) $(MATH_SOURCES) $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS)
+
+.PHONY: test-mq-simplex-cli
+test-mq-simplex-cli:
+	python3 $(SRC_DIR)/test/mq_simplex_cli_test.py

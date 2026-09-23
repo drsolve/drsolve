@@ -1331,6 +1331,87 @@ static void step1_mq_bounds(dixon_complexity_report_t *report,
     report->step1_mq_layered_log2 = total;
 }
 
+/* Blocking square multiplication gives a rectangular multiplication bound.
+ * Keep the classical bound as well: padding need not win for small blocks. */
+static double mq_rect_work(double r, double k, double c, double omega)
+{
+    if (r <= 0 || k <= 0 || c <= 0) return 0;
+    double b = fmin(r, fmin(k,c));
+    return fmin(r*k*c, ceil(r/b)*ceil(k/b)*ceil(c/b)*pow(b,omega));
+}
+
+static void mq_improved_bounds(dixon_complexity_report_t *report,
+                               const long *degrees, slong n,
+                               const fmpz_t field_order, double omega)
+{
+    report->step1_mq_simplex_log2 = INFINITY;
+    report->step1_mq_simplex_probe_log2 = INFINITY;
+    report->step1_mq_simplex_transform_log2 = INFINITY;
+    report->step4_mq_schur_log2 = INFINITY;
+    report->step4_mq_schur_formation_log2 = INFINITY;
+    report->step4_mq_core_log2 = INFINITY;
+    report->step4_mq_verification_log2 = INFINITY;
+    if (!report->step1_mq_bounds_applicable) return;
+    double D = (double)n+1, v = 2.0*n-1;
+    /* N simplex points. Count ALL entries, numerical determinants, and both
+     * Newton transforms. Classical fiber transforms suffice for O*(6.75^n).
+     * Extension arithmetic uses a conservative quadratic degree surrogate. */
+    slong extension = 1;
+    if (fmpz_cmp_ui(field_order,2) >= 0) {
+        fmpz_t cardinality; fmpz_init_set(cardinality,field_order);
+        while (fmpz_cmp_ui(cardinality,(ulong)n+2) < 0) {
+            fmpz_mul(cardinality,cardinality,field_order); extension++;
+        }
+        fmpz_clear(cardinality);
+    } else return;
+    report->step1_mq_simplex_extension = extension;
+    double scale = 2*log2((double)extension);
+    double entry_work = 3.0*n*(n+1.0)*(n+2.0)/2 + 4.0*n*n*(n-1.0);
+    double probe = log2_add_exp(omega*log2((double)n),log2(entry_work));
+    double transform = log2(4*v*(D+1)*(D+1));
+    report->step1_mq_simplex_probe_log2 = report->step1_mq_total_support_log2+probe+scale;
+    report->step1_mq_simplex_transform_log2 = report->step1_mq_total_support_log2+transform+scale;
+    report->step1_mq_simplex_log2 = log2_add_exp(report->step1_mq_simplex_probe_log2,
+                                               report->step1_mq_simplex_transform_log2);
+
+    /* Canonical degree-paired candidate, including construction of its Schur
+     * complement and the numerical candidate verification, not just det(core).
+     * Coefficient convolution is classical here; constant matrix products use
+     * the square-block bound above. This remains an arithmetic surrogate. */
+    slong *R=NULL,*H=NULL,nr=0,nh=0,sigma=0,rank=0;
+    if (!dixon_rank_profile_from_degrees(&R,&nr,&H,&nh,&sigma,&rank,degrees,n,n-1)) return;
+    slong h_size=0; for(slong d=0;d<nh;d++) h_size+=H[d];
+    double h=(double)h_size;
+    if (h_size <= 0) {flint_free(R);flint_free(H);return;}
+    double *blocks=flint_calloc((size_t)nr,sizeof(double));
+    for(slong d=0;d<nr;d++) {
+        slong other=sigma-d,low=FLINT_MIN(d,other);
+        if(other>=0 && other<nr)
+            blocks[d]=FLINT_MAX(0,FLINT_MIN(R[d],R[other])-(low<nh?H[low]:0));
+    }
+    double formation=(double)rank*rank*(sigma+1.0),e=rank-h;
+    for(slong d=0;d<nr;d++) if(blocks[d]>0) {
+        double b=blocks[d];
+        formation+=pow(b,omega); /* factor/invert the constant diagonal block */
+        formation+=(sigma-d+1.0)*mq_rect_work(b,b,h,omega);
+        for(slong j=d+1;j<nr;j++) if(blocks[j]>0)
+            formation+=(j-d+1.0)*(sigma-j+1.0)*mq_rect_work(b,blocks[j],h,omega);
+        formation+=(d+1.0)*(sigma-d+1.0)*mq_rect_work(h,b,h,omega);
+    }
+    formation+=(e*h+h*h)*(sigma+1.0);
+    report->step4_mq_core_size=h_size;
+    report->step4_mq_schur_formation_log2=log2(formation);
+    /* ceil(2^n/h) without forming 2^n when n is large. */
+    double avg=(double)n-log2(h);
+    double degree=avg<52 ? log2(ceil(exp2(avg))) : avg+1;
+    report->step4_mq_core_log2=omega*log2(h)+degree;
+    report->step4_mq_verification_log2=log2_add_exp(omega*log2((double)rank),
+                                                   log2((double)n)+2*log2((double)rank));
+    report->step4_mq_schur_log2=log2_add_exp(report->step4_mq_schur_formation_log2,
+        log2_add_exp(report->step4_mq_core_log2,report->step4_mq_verification_log2));
+    flint_free(blocks);flint_free(R);flint_free(H);
+}
+
 void dixon_complexity_report_from_degrees(dixon_complexity_report_t *report,
                                           const long *degrees,
                                           slong num_polys,
@@ -1729,6 +1810,7 @@ void dixon_complexity_report_from_degrees(dixon_complexity_report_t *report,
         ((num_polys > 0) ? (log2((double) num_polys) + (double) num_polys) : 0.0) +
         report->step1_direct_mpoly_mul_proxy_log2;
     step1_mq_bounds(report, degrees, num_polys, num_all_vars, num_elim_vars, num_parameter_vars);
+    mq_improved_bounds(report, degrees, num_polys, field_order, omega);
     report->step1_bareiss_log2 =
         ((num_polys > 1) ? (3.0 * log2((double) num_polys)) : 0.0) +
         2.0 * report->step1_sparse_term_bound_log2;
@@ -2215,9 +2297,17 @@ static void dixon_complexity_write_report_body(
             detailed.step1_best_log2 = detailed.step1_mq_layered_log2;
             detailed.step1_best_method = "direct multivariate (MQ layered support bound)";
         }
+        if (detailed.step1_mq_simplex_log2 < detailed.step1_best_log2) {
+            detailed.step1_best_log2 = detailed.step1_mq_simplex_log2;
+            detailed.step1_best_method = "MQ total-degree simplex interpolation";
+        }
         rank_view = detailed.step4_rank_model_applicable;
         if (rank_view) {
             double la = omega * detailed.step4_rank_size_log2;
+            if (detailed.step1_mq_bounds_applicable) {
+                detailed.step4_rank_hnf_degree_density_log2 = log2((double)num_polys+1);
+                detailed.step4_rank_hnf_log2 = la + detailed.step4_rank_hnf_degree_density_log2;
+            }
             detailed.step4_hnf_log2 = detailed.step4_rank_hnf_log2;
             detailed.step4_hnf_linear_algebra_log2 = la;
             detailed.step4_hnf_degree_density_log2 = detailed.step4_rank_hnf_degree_density_log2;
@@ -2235,6 +2325,10 @@ static void dixon_complexity_write_report_body(
                                    detailed.step4_sparse_term_bound_log2 + 2 * loglogq) : la;
             }
             detailed.step4_log2 = select_step4_best_method(&detailed, &detailed.step4_best_method);
+            if (detailed.step4_mq_schur_log2 < detailed.step4_log2) {
+                detailed.step4_log2 = detailed.step4_mq_schur_log2;
+                detailed.step4_best_method = "MQ blocked Schur + core determinant";
+            }
         }
         detailed.overall_log2 = FLINT_MAX(detailed.step1_best_log2, detailed.step4_log2);
         report = &detailed;
@@ -2350,7 +2444,13 @@ static void dixon_complexity_write_report_body(
             fprintf(fp, "  Formula: sum(k=1..n) k*binom(n,k)*mu_k*binom(v+k-1,k-1).\n");
             fprintf(fp, "  mu_k=v+1 for k<n; mu_n=binom(n+2,2); trailing k-minors have degree <=k. Peak work layer: %ld/%ld.\n",
                     report->step1_mq_peak_layer, num_polys);
-            fprintf(fp, "  O* exponential bases: legacy rectangular 32; uniform total-degree 13.5; layered total-degree 8.818300.\n");
+            fprintf(fp, "Step 1 MQ simplex interpolation (log2): %.6f\n",
+                    report->step1_mq_simplex_log2);
+            fprintf(fp, "  Full entry evaluation + numerical determinants: %.6f; Newton transforms: %.6f; extension degree: %ld.\n",
+                    report->step1_mq_simplex_probe_log2, report->step1_mq_simplex_transform_log2,
+                    report->step1_mq_simplex_extension);
+            fprintf(fp, "  Formula: Sdeg*(n^omega + 3*n*binom(n+2,2) + 4*n^2*(n-1) + 4*(2*n-1)*(n+2)^2)*extension_degree^2.\n");
+            fprintf(fp, "  O* exponential bases: legacy rectangular 32; uniform total-degree 13.5; layered total-degree 8.818300; simplex interpolation 6.75.\n");
         } else {
             fprintf(fp, "Step 1 MQ total-degree/layered bounds: unavailable (requires n quadratics, n-1 elimination variables, one parameter).\n");
         }
@@ -2703,6 +2803,8 @@ static void dixon_complexity_write_report_body(
             else fprintf(fp, "%ld", report->step4_rank_size);
             fprintf(fp, "\n");
         }
+        if (rank_view && report->step1_mq_bounds_applicable)
+            step4_entry_degree_bound = num_polys+1;
         fprintf(fp, "Step 4 matrix-entry parameter degree upper bound per variable: %ld\n",
                 step4_entry_degree_bound);
         fprintf(fp, "Step 4 resultant degree estimate (Bezout): ");
@@ -2728,6 +2830,13 @@ static void dixon_complexity_write_report_body(
                 report->step4_ordinary_interp_log2);
         fprintf(fp, "Step 4 sparse interpolation (log2): %.6f\n",
                 report->step4_sparse_log2);
+        if (verbose_level >= 2 && isfinite(report->step4_mq_schur_log2)) {
+            fprintf(fp, "Step 4 MQ blocked Schur + core determinant (log2): %.6f\n",
+                    report->step4_mq_schur_log2);
+            fprintf(fp, "  Core size: %ld; formation: %.6f; core determinant: %.6f; verification: %.6f (log2).\n",
+                    report->step4_mq_core_size, report->step4_mq_schur_formation_log2,
+                    report->step4_mq_core_log2, report->step4_mq_verification_log2);
+        }
         fprintf(fp, "Best Step 4 estimate: %s%s (log2: %.6f)\n",
                 report->step4_best_method ? report->step4_best_method : "unknown",
                 rank_view ? " (rank prediction)" : "",

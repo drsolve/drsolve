@@ -271,6 +271,7 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    Example: %s --step3-verify-second \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
     printf("    -> Available methods: 0.Minor expansion; 1.HNF; 2.Interpolation; 3.Sparse interpolation; 4.Bareiss; 5.Recursive Dixon construction; 6.Balanced split Laplace (experimental)\n");
     printf("    -> --method sets both step 1 and step 4 for backward compatibility\n");
+    printf("    -> --mq-step1-simplex enables parallel total-degree MQ interpolation (default off); --no-mq-step1-simplex disables it\n");
     printf("    -> --no-mq-step1-filter disables the default Step 1 coefficient filtering for prime-field, single-parameter MQ systems\n");
     printf("    -> --mq-step4-schur enables checked MQ Schur compression for prime-field, single-parameter automatic/HNF Step 4 (default off); --no-mq-step4-schur disables it\n");
     printf("    -> --fq-det-method (auto|hnf|iter) controls the prime-field univariate polynomial-matrix determinant backend used in fq_poly_mat_det\n");
@@ -351,6 +352,8 @@ static int validate_cli_options(int argc, char *argv[])
         {"no-fast-ksy", no_argument, NULL, OPT_FLAG},
         {"step3-verify-second", no_argument, NULL, OPT_FLAG},
         {"no-step3-verify-second", no_argument, NULL, OPT_FLAG},
+        {"mq-step1-simplex", no_argument, NULL, OPT_FLAG},
+        {"no-mq-step1-simplex", no_argument, NULL, OPT_FLAG},
         {"no-mq-step1-filter", no_argument, NULL, OPT_FLAG},
         {"mq-step4-schur", no_argument, NULL, OPT_FLAG},
         {"no-mq-step4-schur", no_argument, NULL, OPT_FLAG},

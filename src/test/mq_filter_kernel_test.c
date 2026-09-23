@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Exercise private packing/proof helpers without exposing test library APIs. */
+#define DRSOLVE_MQ_SUM_TEST 1
 #include "../determinant/fq_mpoly_mat_det.c"
 #include <assert.h>
 
@@ -135,6 +136,28 @@ static void check_linear_kernel(flint_rand_t state, slong n, ulong q)
         assert(nmod_mpoly_equal(x,y,ctx));
         assert(nmod_mpoly_is_canonical(x,ctx));
     }
+    nmod_mpoly_t extra, product;
+    nmod_mpoly_init(extra,ctx);nmod_mpoly_init(product,ctx);
+    nmod_mpoly_randtest_bound(extra,state,1800,3,ctx);
+    assert(nmod_mpoly_repack_bits_inplace(extra,f.arithmetic_bits,ctx));
+    nmod_mpoly_struct *aa[] = {a,a,a,a};
+    nmod_mpoly_struct *bb[] = {b,extra,extra,b};
+    for(mq_sum_experiment_mode=1;mq_sum_experiment_mode<=2;mq_sum_experiment_mode++)
+    for(slong count=2;count<=4;count++) for(int truncate=0;truncate<2;truncate++) {
+        nmod_mpoly_zero(y,ctx);
+        for(slong j=0;j<count;j++) {
+            nmod_mpoly_mul(product,aa[j],bb[j],ctx);
+            if(j&1)nmod_mpoly_sub(y,y,product,ctx);
+            else nmod_mpoly_add(y,y,product,ctx);
+        }
+        if(truncate)mq_filter_poly(y,ctx,&f,0);
+        assert(mq_linear_sum(x,aa,bb,count,ctx,&f,truncate));
+        assert(nmod_mpoly_equal(x,y,ctx));
+        assert(nmod_mpoly_is_canonical(x,ctx));
+        if(count==4)assert(nmod_mpoly_is_zero(x,ctx));
+    }
+    assert(!mq_linear_sum(a,aa,bb,4,ctx,&f,0));
+    nmod_mpoly_clear(extra,ctx);nmod_mpoly_clear(product,ctx);
     nmod_mpoly_clear(a,ctx);nmod_mpoly_clear(b,ctx);nmod_mpoly_clear(x,ctx);nmod_mpoly_clear(y,ctx);
     mq_filter_clear(&f);nmod_mpoly_ctx_clear(ctx);
 }

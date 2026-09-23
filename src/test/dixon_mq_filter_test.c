@@ -173,6 +173,7 @@ static void check_local_repair(void)
     }
     slong rank = nmod_mat_rank(evaluated);
     assert(rank > 0 && rank < count);
+    for (int cached = 0; cached <= 1; cached++)
     for (int failure = 0; failure <= 1; failure++) {
         slong size = rank + failure, s = 0;
         slong rows[14], cols[14], saved_rows[14], saved_cols[14], perm[14];
@@ -200,7 +201,7 @@ static void check_local_repair(void)
         fq_mvpoly_t projected;
         assert(compute_fq_det_mq_projected(&projected, a, n+1, tr, tc, size));
         int ok = dixon_repair_mq_projection(&projected, a, n, rm, nr, cm, nc,
-                         ri, rhs, ci, chs, rows, cols, size, lu, perm, s, 1, n+2);
+                         ri, rhs, ci, chs, rows, cols, size, lu, perm, s, 1, n+2, cached ? &full : NULL);
         assert(ok == !failure);
         if (ok) check_predicted_block(&projected, &full, n);
         else {

@@ -140,9 +140,12 @@ Bezout degree bound, and complexity in bits.
 - Prints complexity information
 - For n quadratics in n variables with one remaining parameter, `-v 2` also
   compares the legacy cached Laplace surrogate with total-degree and per-layer
-  MQ bounds. The detailed report includes the per-layer bound in Step 1 method
-  selection and uses rank-predicted sizes for all Step 4 methods. Its overall
-  estimate is `max(Step 1/2, Step 4)`, with no separate Step 3 extraction charge.
+  MQ bounds. Step 1 selects the smallest estimate including total-degree simplex
+  interpolation, charging entry evaluation, numerical determinants, Newton
+  transforms, and any extension-field arithmetic. Step 4 compares rank-sized
+  methods with blocked Schur formation, the core determinant, and verification;
+  its MQ entry-degree bound is `n+1`. The overall estimate is
+  `max(Step 1/2, Step 4)`, with no separate Step 3 extraction charge.
   `-v 1` retains the original method selection. For example:
   `./drsolve -c -r '[2]*10' 257 -v 2`.
 - Default output file: `out/comp_YYYYMMDD_HHMMSS.dr`
@@ -231,6 +234,33 @@ The compressor factors each constant degree-diagonal block once, solves
 copy or update the entire polynomial matrix for scalar pivot elimination.
 The MQ Step 1 path also merges packed linear-product streams directly and
 filters before storing the result; unsupported layouts use FLINT multiplication.
+
+Enable total-degree interpolation in Step 1 explicitly with:
+
+```bash
+./drsolve --mq-step1-simplex --mq-step4-schur --threads 4 -f input.dr -v 2
+```
+
+`--mq-step1-simplex` is off by default; `--no-mq-step1-simplex` disables it.
+It uses `--threads` for matrix-entry evaluation, numerical determinants, and
+independent interpolation fibers. Candidate verification and Schur repair reuse
+the full interpolated polynomial, so failed selection does not recompute it.
+`--no-mq-step1-filter` retains the full polynomial for the ordinary extraction
+path. Other explicit Step 1 backends take precedence.
+
+The current implementation requires a prime field with `p > n+1`, one retained
+parameter, and MQ divided differences, where `n` is the equation count. It falls
+back to the existing Step 1 backend for other inputs or when the dense simplex
+workspace exceeds 16,777,216 points (covering through `n=9`). It does not yet
+implement extension-field interpolation. Verbosity two reports each stage's
+wall time and the fallback reason when applicable.
+
+`make build/mq_simplex_bench` builds a full-coefficient differential benchmark;
+for example `./build/mq_simplex_bench 8 65537 4` compares the production engine
+with DP using four threads. The whole-minor merge experiments remain separate:
+`make build/mq-sum-direct-cli` and `make build/mq-sum-products-cli`. Neither merge
+kernel is enabled in the normal solver. See
+[the experiment report](paper/rank/STEP1_EXPERIMENTS.md) for timings and commands.
 
 The selected matrix's actual monomial labels are used after reordering or
 repair. Degree checks and nonzero constant pivots certify each compression;

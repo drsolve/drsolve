@@ -8,6 +8,7 @@
 
 #include "dixon_flint.h"
 #include "mq_poly_mat_det.h"
+#include "mq_simplex_det.h"
 
 /* Internal row-basis state used only by the Dixon implementation. */
 typedef struct {
@@ -46,6 +47,7 @@ rational_root_scan_mode_t g_rational_root_scan_mode = RATIONAL_ROOT_SCAN_AUTO;
 int g_dixon_fast_use_ksy_precondition = 0;
 slong g_dixon_fast_ksy_constant_col = 0;
 int g_dixon_mq_step1_filter = 1;
+int g_dixon_mq_step1_simplex = 0;
 int g_dixon_mq_step4_schur = 0;
 int g_dixon_step3_second_verification = 0;
 slong g_dixon_det_cache_limit = 1024;
@@ -4737,7 +4739,8 @@ static int dixon_repair_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
                                      hash_entry_t **ci, slong chs,
                                      slong *rows, slong *cols, slong size,
                                      const nmod_mat_t lu, const slong *perm,
-                                     slong s, ulong point, slong sigma)
+                                     slong s, ulong point, slong sigma,
+                                     const fq_mvpoly_t *full)
 {
     slong delta = size - s;
     if (s <= 0 || delta <= 0 || delta > 8) return 0;
@@ -4816,9 +4819,11 @@ static int dixon_repair_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
         if (!rcount || !ccount) continue;
         phase_start = get_wall_time();
         fq_mvpoly_t border;
-        if (!compute_fq_det_mq_projected_rect(&border, matrix, n + 1,
-                targets[0] + (strip == 0 ? size * n : 0), rcount,
-                targets[1] + (strip == 0 ? 0 : size * n), ccount)) goto cleanup;
+        const slong *tr=targets[0]+(strip==0?size*n:0);
+        const slong *tc=targets[1]+(strip==0?0:size*n);
+        int border_ok=full ? fq_mq_project_full(&border,full,tr,rcount,tc,ccount)
+                           : compute_fq_det_mq_projected_rect(&border,matrix,n+1,tr,rcount,tc,ccount);
+        if (!border_ok) goto cleanup;
         dixon_debug_log("  MQ repair %s border DP: %.3fs\n",
                         strip == 0 ? "row" : "column", get_wall_time() - phase_start);
         phase_start = get_wall_time();
@@ -4890,9 +4895,9 @@ cleanup:
  * certifies non-singularity of this block, not an upper bound on full rank.
  * Deficient candidates first get a bounded, complete local Schur repair.
  * Only if that fails does the caller compute the FULL polynomial. */
-static int dixon_try_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
+static int dixon_try_mq_projection_from_full(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
                                    const fq_mvpoly_t *polys, slong nvars,
-                                   slong npars, det_method_t method)
+                                   slong npars, det_method_t method, const fq_mvpoly_t *full)
 {
     if (!g_dixon_mq_step1_filter ||
         method != DET_METHOD_RECURSIVE || npars != 1 || nvars < 2 ||
@@ -4964,8 +4969,8 @@ static int dixon_try_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
             memcpy(target_rows + i * nvars, rm[rows[i]].exp, (size_t) nvars * sizeof(slong));
             memcpy(target_cols + i * nvars, cm[cols[i]].exp, (size_t) nvars * sizeof(slong));
         }
-        computed = compute_fq_det_mq_projected(result, matrix, nvars + 1,
-                                               target_rows, target_cols, rank);
+        computed = full ? fq_mq_project_full(result,full,target_rows,rank,target_cols,rank)
+                        : compute_fq_det_mq_projected(result,matrix,nvars+1,target_rows,target_cols,rank);
         ok = computed;
     }
     if (ok) {
@@ -5019,7 +5024,7 @@ static int dixon_try_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
         }
         if (!ok && have_best) {
             ok = dixon_repair_mq_projection(result, matrix, nvars, rm, nr, cm, nc,
-                     ri, rhs, ci, chs, rows, cols, rank, best, best_perm, best_s, best_point, sigma);
+                     ri, rhs, ci, chs, rows, cols, rank, best, best_perm, best_s, best_point, sigma, full);
             if (ok) dixon_info_log("  MQ Step 1 Schur repair verified (degree-aware selection)\n");
         }
         if (have_best) nmod_mat_clear(best);
@@ -5030,13 +5035,45 @@ static int dixon_try_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
     if (computed && !ok) fq_mvpoly_clear(result);
     if (computed)
         dixon_info_log("  MQ Step 1 projection: %ld x %ld candidate %s\n", rank, rank,
-                       ok ? "verified" : "failed; recomputing full Dixon polynomial");
+                       ok ? "verified" : full ? "failed; reusing full Dixon polynomial" : "failed; recomputing full Dixon polynomial");
     flint_free(target_rows); flint_free(target_cols);
     flint_free(rows); flint_free(cols);
     free_monom_index(ri, rhs); free_monom_index(ci, chs);
     flint_free(rm); flint_free(cm);
     flint_free(tmp); flint_free(reverse); flint_free(exps);
     return ok;
+}
+
+static int dixon_try_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
+                                   const fq_mvpoly_t *polys, slong nvars,
+                                   slong npars, det_method_t method)
+{
+    return dixon_try_mq_projection_from_full(result,matrix,polys,nvars,npars,method,NULL);
+}
+
+/* A full simplex polynomial is local to this call. Candidate extraction and
+ * every repair border reuse it; failed verification never recomputes it. */
+static int dixon_compute_step1(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
+                               const fq_mvpoly_t *polys, slong nvars,
+                               slong npars, det_method_t method)
+{
+    if (g_dixon_mq_step1_simplex) {
+        mq_simplex_stats stats={0};fq_mvpoly_t full;
+        if (method==DET_METHOD_RECURSIVE && npars==1 &&
+            compute_fq_det_mq_simplex(&full,matrix,nvars+1,&stats)) {
+            dixon_info_log("  MQ Step 1 simplex: points=%ld, threads=%ld, total=%.6fs\n",stats.points,stats.threads,stats.total);
+            dixon_info_log("    setup=%.6fs, entry evaluation=%.6fs, determinants=%.6fs, interpolation=%.6fs, packing=%.6fs (wall)\n",
+                stats.setup,stats.entry_eval,stats.determinants,stats.interpolation,stats.packing);
+            int verified=dixon_try_mq_projection_from_full(result,matrix,polys,nvars,npars,method,&full);
+            if (verified) fq_mvpoly_clear(&full);
+            else *result=full;
+            return verified;
+        }
+        dixon_info_log("  MQ Step 1 simplex: fallback (%s)\n",stats.reason?stats.reason:"requires automatic/minor Step 1 and one parameter");
+    }
+    int verified=dixon_try_mq_projection(result,matrix,polys,nvars,npars,method);
+    if (!verified)compute_fq_cancel_matrix_det(result,matrix,nvars,npars,method);
+    return verified;
 }
 
 /* Metadata belongs to one selected matrix, never to a global monomial order.
@@ -6105,10 +6142,8 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
         dixon_debug_log("  Computing cancellation matrix determinant using %s...\n",
                         dixon_det_method_name(step1_method));
     }
-    int projected_verified = dixon_try_mq_projection(&d_poly, modified_M_mvpoly,
+    int projected_verified = dixon_compute_step1(&d_poly, modified_M_mvpoly,
                                 polys, nvars, npars, step1_method);
-    if (!projected_verified)
-        compute_fq_cancel_matrix_det(&d_poly, modified_M_mvpoly, nvars, npars, step1_method);
     
     if (g_dixon_verbose_level >= 1 && d_poly.nterms <= 100) {
         dixon_info_log("  Dixon polynomial: %ld terms\n", d_poly.nterms);
@@ -6303,10 +6338,8 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     dixon_info_log("  Determinant method: %s\n", dixon_det_method_name(step1_method));
     dixon_debug_log("  Computing cancellation matrix determinant using %s...\n",
                     dixon_det_method_name(step1_method));
-    int projected_verified = dixon_try_mq_projection(&d_poly, modified_M_mvpoly,
+    int projected_verified = dixon_compute_step1(&d_poly, modified_M_mvpoly,
                                 polys, nvars, npars, step1_method);
-    if (!projected_verified)
-        compute_fq_cancel_matrix_det(&d_poly, modified_M_mvpoly, nvars, npars, step1_method);
     
     if (g_dixon_verbose_level >= 1 && d_poly.nterms <= 100) {
         dixon_info_log("  Dixon polynomial: %ld terms\n", d_poly.nterms);
