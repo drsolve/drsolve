@@ -5273,6 +5273,8 @@ static int dixon_mq_step4_try(fq_nmod_poly_t det, const fq_nmod_poly_mat_t matri
     return ok;
 }
 
+#include "dixon_projected_matrix.h"
+
 static void extract_fq_coefficient_matrix_from_dixon_impl(fq_mvpoly_t ***coeff_matrix,
                                               fq_nmod_poly_mat_t *poly_matrix_out,
                                               slong *row_indices, slong *col_indices,
@@ -5357,6 +5359,39 @@ static void extract_fq_coefficient_matrix_from_dixon_impl(fq_mvpoly_t ***coeff_m
         free_monom_index(dual_index, dual_hash_size);
         if (x_monoms) flint_free(x_monoms);
         if (dual_monoms) flint_free(dual_monoms);
+        return;
+    }
+
+    int direct_projected = projected_verified && npars == 1 && poly_matrix_out != NULL
+                           && nx_monoms == ndual_monoms;
+#ifdef DRSOLVE_MQ_STEP2_TEST
+    if (dixon_step2_test_force_generic) direct_projected = 0;
+#endif
+    if (direct_projected) {
+        dixon_debug_log("  Filling verified projection directly into univariate matrix...\n");
+        slong content = dixon_projected_poly_matrix(*poly_matrix_out, row_indices,
+                             col_indices, nx_monoms, dixon_poly, term_rows, term_cols);
+        *coeff_matrix = NULL;
+        *matrix_size = nx_monoms;
+        if (extracted_x_power) *extracted_x_power = content;
+        if (content > 0) {
+            const char *v = (par_names && par_names[0]) ? par_names[0] : "x";
+            dixon_info_log("  Pre-selection full-matrix %s-content: %s^%ld\n",v,v,content);
+        }
+        flint_free(term_rows); flint_free(term_cols);
+        dixon_maybe_print_parallel_step_time("Step 2",
+            (double)(clock()-step2_cpu_start)/CLOCKS_PER_SEC,get_wall_time()-step2_wall_start);
+        clock_t direct_cpu = clock(); double direct_wall = get_wall_time();
+        dixon_info_log("\nStep 3: Extract maximal-rank submatrix\n");
+        dixon_debug_log("  Using MQ candidate verified in Step 1\n");
+        dixon_info_log("  Submatrix size: %ld x %ld\n",nx_monoms,nx_monoms);
+        if (mq_profile)
+            dixon_mq_step4_prepare(mq_profile,x_monoms,dual_monoms,row_indices,
+                                  col_indices,nx_monoms,nvars,degrees);
+        free_monom_index(x_index,x_hash_size); free_monom_index(dual_index,dual_hash_size);
+        flint_free(x_monoms); flint_free(dual_monoms); flint_free(d0); flint_free(d1);
+        dixon_maybe_print_parallel_step_time("Step 3",
+            (double)(clock()-direct_cpu)/CLOCKS_PER_SEC,get_wall_time()-direct_wall);
         return;
     }
 

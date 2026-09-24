@@ -1089,3 +1089,13 @@ test-mq-rank: $(BUILD_DIR)/mq_rank_kernel_test $(BUILD_DIR)/mq_layout_bench
 .PHONY: test-mq-rank-cli
 test-mq-rank-cli: drsolve-dynamic
 	python3 $(SRC_DIR)/test/mq_rank_cli_test.py
+
+# Verified MQ projection can construct the final univariate matrix directly.
+$(BUILD_DIR)/dixon/dixon_flint.o: $(SRC_DIR)/dixon/dixon_projected_matrix.h
+
+$(BUILD_DIR)/dixon_projected_matrix_test: $(SRC_DIR)/test/dixon_projected_matrix_test.c $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/dixon/dixon_projected_matrix.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon_projected_matrix_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-dixon-projected-matrix
+test-dixon-projected-matrix: $(BUILD_DIR)/dixon_projected_matrix_test
+	./$(BUILD_DIR)/dixon_projected_matrix_test

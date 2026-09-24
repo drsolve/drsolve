@@ -320,6 +320,14 @@ projection filters, absent parameter support, or excess workspace fall back
 to ordinary hash construction. `--no-mq-step1-shared` also disables this path.
 See [the implementation measurements and checks](src/test/MQ_RANK_BUDGET.md).
 
+For a verified Step 1 projection with one parameter and univariate matrix
+output, Step 2 constructs the final `fq_nmod_poly_mat` directly. It obtains
+row/column parameter content and degree ordering from the Dixon terms, avoiding
+the intermediate matrix of `fq_mvpoly_t` entries and its duplicated term
+storage. Other extraction paths keep the existing implementation. The input
+Dixon polynomial remains caller-owned, and the Step 4 representation is
+unchanged. See [direct Step 2 construction](src/test/MQ_STEP2_DIRECT.md).
+
 Use `--no-mq-step1-shared` to select the previous sparse DP, or
 `--mq-step1-shared` to re-enable sharing. This is independent of
 `--no-mq-step1-filter`, and explicit Step 1 backends such as pencil, simplex,
