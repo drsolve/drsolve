@@ -121,7 +121,7 @@ int main(void)
             fq_nmod_ctx_clear(ctx);
         }
     }
-    /* Cross the parallel chunk threshold with duplicate terms, checking
+    /* Cross the parallel metadata threshold with duplicate terms, checking
      * deterministic last-write ordering and consuming cleanup. */
     omp_set_num_threads(4); synthetic(257,1,20000);
     unsetenv("DRSOLVE_PREDICT_REORDER");

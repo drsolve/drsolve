@@ -117,7 +117,7 @@ measurement was performed on this machine. With `-v 2`, the new path reports:
 Released source Dixon terms and term maps; allocating native prime-field matrix...
 ```
 
-## Step 2 scan and fill optimization
+## Step 2 scan and fill experiment (packing superseded below)
 
 Native metadata scans now use contiguous logical chunks with private row/column
 minima/maxima and row counts. Row counts are collected in the row-valuation
@@ -172,3 +172,31 @@ previous `drsolve` and `libdrsolve.so`, pins library loading via
 `src/test/data/mq_layout/step2_speed_final.json`; the earlier parallel-free
 experiment is in `step2_speed.json`. Separate runs had different machine load
 and must not be combined as a paired comparison.
+
+
+## Restore streaming consumption after n=11 regression
+
+User measurements at n=11, F257, 16 threads show total Step 2 wall time rising
+from 64.127 s to 91.987 s. In the experimental version, packing alone took
+61.416 s and separate source release took 13.283 s; metadata took 0.864 s and
+matrix fill took 4.802 s. The small n=8 measurements did not predict this
+regression. These timings do not establish whether page faults, memory
+bandwidth or allocator/locality effects were responsible.
+
+Native packing now restores the original serial streaming traversal: copy a
+term into its row's compact buffer, then immediately free that term's source
+allocations. This removes the second traversal for destruction and avoids
+requiring every source allocation to remain live until the compact buffer is
+fully populated. Per-worker packing offsets are removed. Parallel metadata
+scans and direct coefficient-buffer filling remain enabled. No full-sized
+intermediate coefficient matrix is reintroduced.
+
+Verbose output reports `Step 2 direct pack/release` as one combined phase,
+without per-term clock overhead. Matrix initialization, filling and cleanup
+retain separate timers. The large n=11 case must be measured on the user's
+machine; no restored n=11 speed or peak RSS is claimed here.
+
+After restoring streaming consumption, the dynamic library and CLI rebuilt
+successfully. All 21 generic/direct comparisons, 17 consuming native matrix
+comparisons, 102 native determinant checks and the Step 4 integration suite
+passed. No large-memory performance test was run.

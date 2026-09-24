@@ -77,8 +77,8 @@ static slong dixon_projected_poly_matrix(fq_nmod_poly_mat_t out,
         rp[i]=cp[i]=WORD_MAX;
         rd[i]=(fq_index_degree_pair){i,-1}; cd[i]=(fq_index_degree_pair){i,-1};
     }
-    /* Fixed contiguous chunks need no atomics and preserve per-row term order.
-     * Merge row counting with valuation scanning; reuse counts as pack offsets. */
+    /* Fixed contiguous chunks need no atomics.
+     * Merge row counting with valuation scanning. */
     #pragma omp parallel for if(workers>1) num_threads(workers) schedule(static)
     for(slong w=0;w<workers;w++) {
         slong *minimum=scratch+(size_t)w*size, *count=counts+(size_t)w*size;
@@ -97,11 +97,6 @@ static slong dixon_projected_poly_matrix(fq_nmod_poly_mat_t out,
         }
         if(rp[r]==WORD_MAX) rp[r]=0;
         offset[r+1]+=offset[r];
-        slong position=offset[r];
-        for(slong w=0;w<workers;w++) {
-            slong count=counts[(size_t)w*size+r];
-            counts[(size_t)w*size+r]=position; position+=count;
-        }
     }
     /* Column valuations depend on completed row valuations. */
     #pragma omp parallel for if(workers>1) num_threads(workers) schedule(static)
@@ -160,34 +155,23 @@ static slong dixon_projected_poly_matrix(fq_nmod_poly_mat_t out,
         ulong prime=fq_nmod_ctx_prime(poly->ctx);
         dixon_prime_term *packed=flint_malloc(offset[size]*sizeof(*packed));
         /* Monomial labels were packed independently during support collection.
-         * No source term is needed after this consuming conversion. */
-        #pragma omp parallel for if(workers>1) num_threads(workers) schedule(static)
-        for(slong w=0;w<workers;w++) {
-            slong *cursor=counts+(size_t)w*size;
-            slong begin=(nt/workers)*w+FLINT_MIN(w,nt%workers);
-            slong end=begin+nt/workers+(w<nt%workers);
-            for(slong t=begin;t<end;t++) {
-                fq_monomial_t *term=consume->terms+t;
-                if(term_rows[t]>=0) {
-                    slong r=term_rows[t],c=term_cols[t];
-                    slong d=(term->par_exp?term->par_exp[0]:0)-rp[r]-cp[c];
-                    packed[cursor[r]++]=(dixon_prime_term){cmap[c],d,nmod_poly_get_coeff_ui(term->coeff,0)};
-                }
-            }
-        }
-        dixon_debug_log("  Step 2 direct pack: %.3fs\n",get_wall_time()-phase);
-        phase=get_wall_time();
-        /* Source objects often share an allocator arena. Concurrent frees
-         * contend on its locks; keep destruction serial and packing parallel. */
+         * Consume serially: release each source allocation immediately after
+         * packing it, instead of retaining all source terms until packing ends.
+         * This also preserves per-row last-write order for duplicate terms. */
         for(slong t=0;t<nt;t++) {
             fq_monomial_t *term=consume->terms+t;
+            if(term_rows[t]>=0) {
+                slong r=term_rows[t],c=term_cols[t];
+                slong d=(term->par_exp?term->par_exp[0]:0)-rp[r]-cp[c];
+                packed[write[r]++]=(dixon_prime_term){cmap[c],d,nmod_poly_get_coeff_ui(term->coeff,0)};
+            }
             fq_nmod_clear(term->coeff,poly->ctx);
             flint_free(term->var_exp); flint_free(term->par_exp);
         }
         flint_free(consume->terms); consume->terms=NULL; consume->nterms=consume->alloc=0;
         flint_free(write); flint_free(term_rows); flint_free(term_cols);
         dixon_debug_log("  Released source Dixon terms and term maps; allocating native prime-field matrix...\n");
-        dixon_debug_log("  Step 2 direct source release: %.3fs\n",get_wall_time()-phase);
+        dixon_debug_log("  Step 2 direct pack/release: %.3fs (serial streaming)\n",get_wall_time()-phase);
         phase=get_wall_time();
         nmod_poly_mat_init(*prime_out,size,size,prime);
         dixon_debug_log("  Step 2 direct matrix init: %.3fs\n",get_wall_time()-phase);
