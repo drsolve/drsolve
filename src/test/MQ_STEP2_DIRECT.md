@@ -200,3 +200,38 @@ After restoring streaming consumption, the dynamic library and CLI rebuilt
 successfully. All 21 generic/direct comparisons, 17 consuming native matrix
 comparisons, 102 native determinant checks and the Step 4 integration suite
 passed. No large-memory performance test was run.
+
+
+## Optional bounded row staging
+
+A subsequent user n=11 run measured 73.866 s total Step 2, of which streaming
+pack/release took 58.422 s and matrix filling took 2.172 s. Restoring streaming
+helped versus 91.987 s, but did not recover the original 64.127 s measurement.
+Run-to-run effects and the remaining code differences have not been isolated.
+
+`DRSOLVE_STEP2_PACK_BUFFER=1` enables experimental row staging. Up to 32 compact
+records per row accumulate in a small buffer before a contiguous copy to that
+row's final packed range. This aims to reduce scattered writes into the large
+packed buffer. Source allocations are still released immediately per term;
+row order, full-width indices/degrees/coefficients and duplicate last-write
+semantics are preserved. Partial batches flush at the end. Staging records
+plus occupancy counters are bounded by 8 MiB; capacity shrinks as matrix order
+increases, falling back to ordinary streaming when fewer than two records per
+row fit. There is no new restriction on supported n or field size.
+
+The default remains ordinary serial streaming. Both paths report staging
+capacity and combined pack/release time. This experiment cannot eliminate the
+per-term allocator calls, and its large-case performance is not yet measured.
+Compare the same seed, field and thread count on the large-memory machine:
+
+```sh
+DRSOLVE_STEP2_PACK_BUFFER=0 ./drsolve -r '[2]*11' 257 --seed 1790242205 --threads 16 --time -v 2
+DRSOLVE_STEP2_PACK_BUFFER=1 ./drsolve -r '[2]*11' 257 --seed 1790242205 --threads 16 --time -v 2
+```
+
+Validation: both disabled and enabled staging passed all 21 generic/direct,
+17 consuming-native and 102 determinant comparisons. The repeated-term
+fixture now varies coefficients and uses 80,004 terms so that row tails also
+exercise partial batch flushing. The Step 4 integration suite passed with
+staging enabled. Library/CLI builds completed without warnings. No n=11 test
+was run locally.

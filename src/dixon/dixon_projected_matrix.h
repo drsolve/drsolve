@@ -154,6 +154,19 @@ static slong dixon_projected_poly_matrix(fq_nmod_poly_mat_t out,
         FLINT_ASSERT(consume == poly && fq_nmod_ctx_degree(poly->ctx)==1);
         ulong prime=fq_nmod_ctx_prime(poly->ctx);
         dixon_prime_term *packed=flint_malloc(offset[size]*sizeof(*packed));
+        /* Optional bounded staging reduces scattered writes to the large
+         * row-grouped output. Keep the measured streaming path as default. */
+        const char *buffer_env=getenv("DRSOLVE_STEP2_PACK_BUFFER");
+        slong capacity=0;
+        if(buffer_env && strcmp(buffer_env,"1")==0 && size>0) {
+            size_t per_row=(8U*1024U*1024U)/(size_t)size;
+            if(per_row>sizeof(slong))
+                capacity=FLINT_MIN(32,(per_row-sizeof(slong))/sizeof(dixon_prime_term));
+            if(capacity<2) capacity=0;
+        }
+        dixon_prime_term *staging=capacity ? flint_malloc((size_t)size*capacity*sizeof(*staging)) : NULL;
+        slong *used=capacity ? flint_calloc(size,sizeof(*used)) : NULL;
+        dixon_debug_log("  Step 2 direct pack staging: %ld records/row\n",capacity);
         /* Monomial labels were packed independently during support collection.
          * Consume serially: release each source allocation immediately after
          * packing it, instead of retaining all source terms until packing ends.
@@ -163,11 +176,24 @@ static slong dixon_projected_poly_matrix(fq_nmod_poly_mat_t out,
             if(term_rows[t]>=0) {
                 slong r=term_rows[t],c=term_cols[t];
                 slong d=(term->par_exp?term->par_exp[0]:0)-rp[r]-cp[c];
-                packed[write[r]++]=(dixon_prime_term){cmap[c],d,nmod_poly_get_coeff_ui(term->coeff,0)};
+                dixon_prime_term record={cmap[c],d,nmod_poly_get_coeff_ui(term->coeff,0)};
+                if(capacity) {
+                    dixon_prime_term *batch=staging+(size_t)r*capacity;
+                    batch[used[r]++]=record;
+                    if(used[r]==capacity) {
+                        memcpy(packed+write[r],batch,capacity*sizeof(*batch));
+                        write[r]+=capacity; used[r]=0;
+                    }
+                } else packed[write[r]++]=record;
             }
             fq_nmod_clear(term->coeff,poly->ctx);
             flint_free(term->var_exp); flint_free(term->par_exp);
         }
+        if(capacity) for(slong r=0;r<size;r++) {
+            memcpy(packed+write[r],staging+(size_t)r*capacity,used[r]*sizeof(*staging));
+            write[r]+=used[r];
+        }
+        flint_free(staging); flint_free(used);
         flint_free(consume->terms); consume->terms=NULL; consume->nterms=consume->alloc=0;
         flint_free(write); flint_free(term_rows); flint_free(term_cols);
         dixon_debug_log("  Released source Dixon terms and term maps; allocating native prime-field matrix...\n");

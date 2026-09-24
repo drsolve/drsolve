@@ -330,6 +330,9 @@ Public extraction calls and extension fields retain the non-consuming
 `fq_nmod_poly_mat` path; other extraction cases keep the generic implementation.
 With `-v 2`, direct Step 2 reports metadata, combined streaming packing/source-release, matrix
 initialization, filling and cleanup times separately.
+For experimental Step 2 row-buffered packing, set `DRSOLVE_STEP2_PACK_BUFFER=1`.
+This uses at most 8 MiB of staging storage while retaining streaming source
+release. It is off by default; large-case speedup has not been established.
 See [direct Step 2 construction](src/test/MQ_STEP2_DIRECT.md).
 
 Use `--no-mq-step1-shared` to select the previous sparse DP, or

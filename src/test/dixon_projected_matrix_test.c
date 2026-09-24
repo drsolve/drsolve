@@ -90,9 +90,11 @@ static void synthetic(ulong prime, slong extension, slong repeats)
     fq_nmod_t coeff; fq_nmod_init(coeff,ctx);
     fq_nmod_gen(coeff,ctx); if(fq_nmod_is_zero(coeff,ctx)) fq_nmod_one(coeff,ctx);
     slong powers[2][2]={{5,7},{4,5}};
-    for(slong repeat=0;repeat<repeats;repeat++)
-    for(slong r=0;r<2;r++) for(slong c=0;c<2;c++) {
-        slong e[2]={r,c}; fq_mvpoly_add_term_fast(&poly,e,&powers[r][c],coeff);
+    for(slong repeat=0;repeat<repeats;repeat++) {
+        if(repeats>1) fq_nmod_set_ui(coeff,1+(repeat%(prime-1)),ctx);
+        for(slong r=0;r<2;r++) for(slong c=0;c<2;c++) {
+            slong e[2]={r,c}; fq_mvpoly_add_term_fast(&poly,e,&powers[r][c],coeff);
+        }
     }
     /* Original parameter exponents must remain caller-owned and unchanged. */
     compare_paths(&poly,1,NULL,0,10);
@@ -122,8 +124,9 @@ int main(void)
         }
     }
     /* Cross the parallel metadata threshold with duplicate terms, checking
-     * deterministic last-write ordering and consuming cleanup. */
-    omp_set_num_threads(4); synthetic(257,1,20000);
+     * deterministic last-write ordering and consuming cleanup. The row length
+     * is not a multiple of 32, exercising partial staging flushes as well. */
+    omp_set_num_threads(4); synthetic(257,1,20001);
     unsetenv("DRSOLVE_PREDICT_REORDER");
     flint_rand_clear(rng); flint_cleanup_master();
     puts("Direct projected matrix: 21 generic/direct comparisons, 17 consuming native comparisons and 102 native determinant checks PASS");
