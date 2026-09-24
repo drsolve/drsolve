@@ -7,6 +7,8 @@
 
 void mq_layout_configure(int enabled, int profile, int rotate);
 int mq_layout_shared_calls(void);
+double mq_layout_plan_seconds(void);
+double mq_layout_arithmetic_seconds(void);
 
 static int layout_compute(fq_mvpoly_t *out, fq_mvpoly_t **matrix,
                            fq_mvpoly_t *polys, slong n, int projected)
@@ -38,7 +40,8 @@ int main(int argc, char **argv)
     int verified = layout_compute(&actual, a, p, n, projected);
     double seconds = omp_get_wtime()-start;
     int shared_calls = mq_layout_shared_calls();
-    if (shared == 4 && !rotate && prime == 65537) assert(shared_calls > 0);
+    if (shared >= 4 && !rotate && prime == 65537) assert(shared_calls > 0);
+    double plan_seconds = mq_layout_plan_seconds(), arithmetic_seconds = mq_layout_arithmetic_seconds();
     struct rusage usage; getrusage(RUSAGE_SELF, &usage);
     nmod_mpoly_ctx_t ctx; nmod_mpoly_ctx_init(ctx, 2*n-1, ORD_LEX, prime);
     nmod_mpoly_t x, y; nmod_mpoly_init(x, ctx); nmod_mpoly_init(y, ctx);
@@ -59,9 +62,9 @@ int main(int argc, char **argv)
         hash = (hash ^ x->coeffs[t])*UINT64_C(1099511628211);
         for (slong v = 0; v < 2*n-1; v++) hash = (hash ^ exp[v])*UINT64_C(1099511628211);
     }
-    printf("{\"kind\":\"run\",\"n\":%ld,\"q\":%lu,\"seed\":%lu,\"threads\":%d,\"shared\":%d,\"projected\":%d,\"verified\":%d,\"quadratic_first\":%d,\"profile\":%d,\"audit\":%d,\"seconds\":%.9f,\"peak_rss_kib_before_audit\":%ld,\"terms\":%ld,\"fingerprint\":\"%016llx\"}\n",
+    printf("{\"kind\":\"run\",\"n\":%ld,\"q\":%lu,\"seed\":%lu,\"threads\":%d,\"shared\":%d,\"projected\":%d,\"verified\":%d,\"quadratic_first\":%d,\"profile\":%d,\"audit\":%d,\"seconds\":%.9f,\"peak_rss_kib_before_audit\":%ld,\"terms\":%ld,\"fingerprint\":\"%016llx\",\"plan_seconds\":%.9f,\"arithmetic_seconds\":%.9f}\n",
         n, prime, seed, threads, shared, projected, verified, rotate, profile, audit, seconds,
-        usage.ru_maxrss, actual.nterms, (unsigned long long)hash);
+        usage.ru_maxrss, actual.nterms, (unsigned long long)hash, plan_seconds, arithmetic_seconds);
     nmod_mpoly_clear(x, ctx); nmod_mpoly_clear(y, ctx); nmod_mpoly_ctx_clear(ctx);
     fq_mvpoly_clear(&actual); clear_input(p, m, a, n-1);
     fq_nmod_ctx_clear(fq); flint_rand_clear(rng); flint_cleanup_master(); return 0;

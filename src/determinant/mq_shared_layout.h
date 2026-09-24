@@ -4,14 +4,37 @@
 
 #ifdef DRSOLVE_MQ_LAYOUT_TEST
 static int mq_shared_test_used;
+static int mq_shared_test_variant;
+static double mq_shared_test_plan_seconds, mq_shared_test_arithmetic_seconds;
 #endif
+
+/* Test variants 0..7 use explicit flags: compact keys, sharding, ordering.
+ * Variant 8 (benchmark mode 12) follows the retained production policy. */
+static int mq_shared_variant(void)
+{
+#ifdef DRSOLVE_MQ_LAYOUT_TEST
+    if (mq_shared_test_variant < 8) return mq_shared_test_variant;
+#endif
+    /* Enable compact keys and sharding for every admitted size; each
+     * optimization retains its packing or transition-count eligibility check. */
+    return 3;
+}
+static size_t mq_shared_parallel_threshold(void)
+{
+#ifdef DRSOLVE_MQ_LAYOUT_TEST
+    if (mq_shared_test_variant < 8) return 32768;
+#endif
+    return 1000000;
+}
 
 typedef struct {
     ulong *keys;
-    uint32_t *table;
+    uint32_t *table; /* May be NULL after construction; later layers only need keys. */
     size_t count, capacity, buckets;
     slong words;
     flint_bitcnt_t bits;
+    unsigned hash_shift;
+    int sorted;
 } mq_shared_support;
 
 static size_t mq_shared_hash(const ulong *key, slong words)
@@ -26,14 +49,14 @@ static void mq_shared_rehash(mq_shared_support *s, size_t buckets)
     s->buckets = buckets;
     s->table = flint_calloc(buckets, sizeof(uint32_t));
     for (size_t i = 0; i < s->count; i++) {
-        size_t pos = mq_shared_hash(s->keys+i*s->words, s->words) & (buckets-1);
+        size_t pos = (mq_shared_hash(s->keys+i*s->words, s->words) >> s->hash_shift) & (buckets-1);
         while (s->table[pos]) pos = (pos+1) & (buckets-1);
         s->table[pos] = (uint32_t)i+1;
     }
 }
 static uint32_t mq_shared_find(const mq_shared_support *s, const ulong *key)
 {
-    size_t pos = mq_shared_hash(key, s->words) & (s->buckets-1);
+    size_t pos = (mq_shared_hash(key, s->words) >> s->hash_shift) & (s->buckets-1);
     while (s->table[pos]) {
         uint32_t id = s->table[pos]-1;
         if (!memcmp(key, s->keys+(size_t)id*s->words, s->words*sizeof(ulong))) return id;
@@ -41,10 +64,10 @@ static uint32_t mq_shared_find(const mq_shared_support *s, const ulong *key)
     }
     return UINT32_MAX;
 }
-static uint32_t mq_shared_insert(mq_shared_support *s, const ulong *key)
+static uint32_t mq_shared_insert_hashed(mq_shared_support *s, const ulong *key, size_t hash)
 {
     if (2*(s->count+1) >= s->buckets) mq_shared_rehash(s, 2*s->buckets);
-    size_t pos = mq_shared_hash(key, s->words) & (s->buckets-1);
+    size_t pos = (hash >> s->hash_shift) & (s->buckets-1);
     while (s->table[pos]) {
         uint32_t id = s->table[pos]-1;
         if (!memcmp(key, s->keys+(size_t)id*s->words, s->words*sizeof(ulong))) return id;
@@ -59,6 +82,10 @@ static uint32_t mq_shared_insert(mq_shared_support *s, const ulong *key)
     s->table[pos] = (uint32_t)s->count+1;
     return (uint32_t)s->count++;
 }
+static uint32_t mq_shared_insert(mq_shared_support *s, const ulong *key)
+{
+    return mq_shared_insert_hashed(s, key, mq_shared_hash(key, s->words));
+}
 static void mq_shared_empty(mq_shared_support *s, flint_bitcnt_t bits, slong words)
 {
     memset(s, 0, sizeof(*s)); s->bits = bits; s->words = words;
@@ -67,10 +94,26 @@ static void mq_shared_empty(mq_shared_support *s, flint_bitcnt_t bits, slong wor
 static void mq_shared_support_init(mq_shared_support *s, const nmod_mpoly_ctx_t ctx, slong degree)
 {
     flint_bitcnt_t bits = mpoly_fix_bits(1+FLINT_BIT_COUNT((ulong)degree), ctx->minfo);
+    if ((mq_shared_variant() & 1) && degree < 16 && ctx->minfo->nvars <= 16)
+        bits = 4;
     slong words = mpoly_words_per_exp(bits, ctx->minfo);
     FLINT_ASSERT(words <= 3);
     mq_shared_empty(s, bits, words);
     ulong zero[3] = {0}; mq_shared_insert(s, zero);
+}
+/* Internal four-bit keys do not use FLINT's minimum exponent field width.
+ * The admitted total degree is <16, so field-wise addition cannot carry. */
+static void mq_shared_read_key(ulong *key, const nmod_mpoly_t p, slong term,
+                               const mq_shared_support *s, const nmod_mpoly_ctx_t ctx)
+{
+    if (s->bits == 4) {
+        ulong exp[FLINT_BITS];
+        nmod_mpoly_get_term_exp_ui(exp, p, term, ctx);
+        key[0] = 0;
+        for (slong v = 0; v < ctx->minfo->nvars; v++) key[0] = (key[0] << 4) | exp[v];
+    } else {
+        memcpy(key, p->exps+term*s->words, s->words*sizeof(ulong));
+    }
 }
 static void mq_shared_support_clear(mq_shared_support *s)
 {
@@ -87,17 +130,36 @@ static void mq_shared_row(mq_shared_support *shifts, nmod_mpoly_t *row,
     mq_shared_empty(shifts, previous->bits, previous->words);
     nmod_mpoly_t p; nmod_mpoly_init(p, ctx);
     for (slong col = 0; col < n; col++) {
-        int packed = nmod_mpoly_repack_bits(p, row[col], previous->bits, ctx);
+        int packed = nmod_mpoly_repack_bits(p, row[col], mpoly_fix_bits(previous->bits, ctx->minfo), ctx);
         FLINT_ASSERT(packed); (void)packed;
-        for (slong t = 0; t < p->length; t++)
-            mq_shared_insert(shifts, p->exps+t*previous->words);
+        for (slong t = 0; t < p->length; t++) {
+            ulong key[3]; mq_shared_read_key(key, p, t, previous, ctx);
+            mq_shared_insert(shifts, key);
+        }
     }
     nmod_mpoly_clear(p, ctx);
+}
+static inline ulong mq_shared_spread_nibbles(ulong code)
+{
+    code &= UWORD(0xffffffff);
+    code = (code | (code << 16)) & UWORD(0x0000ffff0000ffff);
+    code = (code | (code << 8)) & UWORD(0x00ff00ff00ff00ff);
+    return (code | (code << 4)) & UWORD(0x0f0f0f0f0f0f0f0f);
 }
 static int mq_shared_keep(const ulong *key, const mq_det_filter *f,
                           const nmod_mpoly_ctx_t ctx, flint_bitcnt_t bits)
 {
     if (!f) return 1;
+    if (bits == 4 && f->packed_bits == 8 && f->nvars <= 7) {
+        /* Spread seven nibbles into FLINT's eight-bit fields in registers. */
+        ulong mask = (UWORD(1) << (4*f->nvars))-1;
+        for (slong axis = 0; axis < 2; axis++) {
+            ulong code = (key[0] >> (4*(1+(1-axis)*f->nvars))) & mask;
+            code = mq_shared_spread_nibbles(code);
+            if (!mq_monom_contains(&f->packed[axis], code)) return 0;
+        }
+        return 1;
+    }
     if (f->packed_bits == bits) {
         slong width = f->nvars*bits;
         for (slong axis = 0; axis < 2; axis++) {
@@ -110,15 +172,69 @@ static int mq_shared_keep(const ulong *key, const mq_det_filter *f,
         return 1;
     }
     ulong exp[64];
-    mpoly_get_monomial_ui(exp, key, bits, ctx->minfo);
+    if (bits == 4)
+        for (slong v = 0; v < ctx->minfo->nvars; v++)
+            exp[v] = (key[0] >> (4*(ctx->minfo->nvars-1-v))) & 15;
+    else mpoly_get_monomial_ui(exp, key, bits, ctx->minfo);
     return mq_filter_accepts(f, exp, 0);
 }
 static uint32_t *mq_shared_next(mq_shared_support *next, const mq_shared_support *prev,
                                 const mq_shared_support *shifts, const mq_det_filter *f,
-                                const nmod_mpoly_ctx_t ctx, int maps)
+                                const nmod_mpoly_ctx_t ctx, int maps, int parallel)
 {
     mq_shared_empty(next, prev->bits, prev->words);
     uint32_t *map = maps ? flint_malloc(shifts->count*prev->count*sizeof(uint32_t)) : NULL;
+    unsigned workers = 1, hash_shift = 0;
+#ifdef _OPENMP
+    if ((mq_shared_variant() & 2) && parallel && maps &&
+        shifts->count*prev->count >= mq_shared_parallel_threshold() && !omp_in_parallel()) {
+        unsigned limit = FLINT_MIN(8, omp_get_max_threads());
+        while (2*workers <= limit) { workers *= 2; hash_shift++; }
+    }
+#endif
+    if (workers > 1 && shifts->count*prev->count <= UINT32_MAX/workers) {
+        mq_shared_support shards[8];
+        uint32_t offsets[8];
+        for (unsigned owner = 0; owner < workers; owner++) {
+            mq_shared_empty(&shards[owner], prev->bits, prev->words);
+            shards[owner].hash_shift = hash_shift;
+        }
+        /* A key belongs to exactly one shard. No locks and no duplicate keys
+         * across shards. Each map cell also has exactly one writer. Scanning
+         * sums per shard trades cheap packed additions for synchronization. */
+        #pragma omp parallel for num_threads(workers) schedule(static)
+        for (unsigned owner = 0; owner < workers; owner++) {
+            for (size_t a = 0; a < shifts->count; a++) for (size_t b = 0; b < prev->count; b++) {
+                ulong key[3];
+                for (slong w = 0; w < prev->words; w++)
+                    key[w] = shifts->keys[a*prev->words+w]+prev->keys[b*prev->words+w];
+                size_t hash = mq_shared_hash(key, prev->words);
+                if ((hash & (workers-1)) != owner) continue;
+                uint32_t id = UINT32_MAX;
+                if (mq_shared_keep(key, f, ctx, prev->bits))
+                    id = mq_shared_insert_hashed(&shards[owner], key, hash)*workers+owner;
+                map[a*prev->count+b] = id;
+            }
+        }
+        /* Previous layers only require keys, not their construction hash
+         * tables. Concatenate disjoint supports and remap encoded local IDs. */
+        flint_free(next->table); next->table = NULL; next->buckets = 0;
+        for (unsigned owner = 0; owner < workers; owner++) {
+            offsets[owner] = next->count; next->count += shards[owner].count;
+        }
+        next->capacity = next->count;
+        next->keys = flint_malloc(next->count*next->words*sizeof(ulong));
+        for (unsigned owner = 0; owner < workers; owner++) {
+            if (shards[owner].count)
+                memcpy(next->keys+(size_t)offsets[owner]*next->words, shards[owner].keys,
+                       shards[owner].count*next->words*sizeof(ulong));
+            mq_shared_support_clear(&shards[owner]);
+        }
+        #pragma omp parallel for num_threads(workers) schedule(static)
+        for (size_t i = 0; i < shifts->count*prev->count; i++)
+            if (map[i] != UINT32_MAX) map[i] = offsets[map[i] & (workers-1)]+(map[i] >> hash_shift);
+        return map;
+    }
     for (size_t a = 0; a < shifts->count; a++) for (size_t b = 0; b < prev->count; b++) {
         ulong key[3];
         for (slong w = 0; w < prev->words; w++)
@@ -128,6 +244,49 @@ static uint32_t *mq_shared_next(mq_shared_support *next, const mq_shared_support
     }
     return map;
 }
+
+#ifdef DRSOLVE_MQ_LAYOUT_TEST
+/* Stable byte radix sort of indices. Sorting the common basis makes every
+ * fixed-monomial transition monotone, improving coefficient-array locality.
+ * Construction hash tables are no longer needed after transitions exist. */
+static void mq_shared_order(mq_shared_support *s, uint32_t *map, size_t entries, int parallel)
+{
+    if (!s->count) return;
+    uint32_t *order = flint_malloc(s->count*sizeof(uint32_t));
+    uint32_t *scratch = flint_malloc(s->count*sizeof(uint32_t));
+    uint32_t *inverse = flint_malloc(s->count*sizeof(uint32_t));
+    ulong used[3] = {0};
+    for (size_t i = 0; i < s->count; i++) {
+        order[i] = i;
+        for (slong w = 0; w < s->words; w++) used[w] |= s->keys[i*s->words+w];
+    }
+    for (slong w = 0; w < s->words; w++) for (unsigned shift = 0; shift < FLINT_BITS; shift += 8) {
+        if (!((used[w] >> shift) & 255)) continue;
+        size_t counts[256] = {0}, positions[256];
+        for (size_t i = 0; i < s->count; i++)
+            counts[(s->keys[(size_t)order[i]*s->words+w] >> shift) & 255]++;
+        positions[0] = 0;
+        for (unsigned b = 1; b < 256; b++) positions[b] = positions[b-1]+counts[b-1];
+        for (size_t i = 0; i < s->count; i++) {
+            unsigned b = (s->keys[(size_t)order[i]*s->words+w] >> shift) & 255;
+            scratch[positions[b]++] = order[i];
+        }
+        uint32_t *swap = order; order = scratch; scratch = swap;
+    }
+    ulong *keys = flint_malloc(s->count*s->words*sizeof(ulong));
+    for (size_t i = 0; i < s->count; i++) {
+        uint32_t old = order[s->count-1-i];
+        inverse[old] = i;
+        memcpy(keys+i*s->words, s->keys+(size_t)old*s->words, s->words*sizeof(ulong));
+    }
+    #pragma omp parallel for if(parallel && entries >= 32768) schedule(static)
+    for (size_t i = 0; i < entries; i++)
+        if (map[i] != UINT32_MAX) map[i] = inverse[map[i]];
+    flint_free(order); flint_free(scratch); flint_free(inverse);
+    flint_free(s->keys); flint_free(s->table);
+    s->keys = keys; s->capacity = s->count; s->table = NULL; s->buckets = 0; s->sorted = 1;
+}
+#endif
 
 /* Saturating total-degree simplex size. Only small admitted sizes reach the
  * allocator; rejection leaves the caller's output untouched. */
@@ -206,7 +365,14 @@ static int mq_shared_admit(nmod_mpoly_t **matrix, slong n,
         if (count > budget/sizeof(ulong)/current ||
             previous_count > budget/sizeof(ulong)/previous) ok = 0;
         if (ok) {
-            size_t bytes = (count*current+previous_count*previous+n*shifts.count)*sizeof(ulong)
+            /* The plan is built BEFORE current coefficients exist. Disjoint
+             * shard capacities/hash tables plus concatenation use at most
+             * 3*current*words limbs + 4*current uint32 slots (and metadata).
+             * The serial support bound plus current coefficient allowance
+             * dominates this: count>=4 and words<=3. Reserve 64 KiB for the
+             * <=8 shards' small tables/capacity rounding and stack metadata.
+             * Compact keys only decrease this native-packing estimate. */
+            size_t bytes = 65536+(count*current+previous_count*previous+n*shifts.count)*sizeof(ulong)
                 +shifts.count*previous*sizeof(uint32_t)
                 +mq_shared_support_bound(current, words)
                 +mq_shared_support_bound(previous, words)
@@ -226,14 +392,25 @@ static int mq_shared_admit(nmod_mpoly_t **matrix, slong n,
 static void mq_shared_pack(nmod_mpoly_t out, const ulong *coeffs,
                            const mq_shared_support *s, const nmod_mpoly_ctx_t ctx)
 {
-    nmod_mpoly_fit_length_reset_bits(out, s->count, s->bits, ctx);
+    flint_bitcnt_t bits = mpoly_fix_bits(s->bits, ctx->minfo);
+    slong words = mpoly_words_per_exp(bits, ctx->minfo);
+    nmod_mpoly_fit_length_reset_bits(out, s->count, bits, ctx);
     slong len = 0;
     for (size_t i = 0; i < s->count; i++) if (coeffs[i]) {
         out->coeffs[len] = coeffs[i];
-        memcpy(out->exps+len*s->words, s->keys+i*s->words, s->words*sizeof(ulong)); len++;
+        if (s->bits == 4 && bits == 8) {
+            out->exps[len*words] = mq_shared_spread_nibbles(s->keys[i]);
+            if (words == 2) out->exps[len*words+1] = mq_shared_spread_nibbles(s->keys[i] >> 32);
+        } else if (s->bits == 4) {
+            ulong exp[FLINT_BITS];
+            for (slong v = 0; v < ctx->minfo->nvars; v++)
+                exp[v] = (s->keys[i] >> (4*(ctx->minfo->nvars-1-v))) & 15;
+            mpoly_set_monomial_ui(out->exps+len*words, exp, bits, ctx->minfo);
+        } else memcpy(out->exps+len*words, s->keys+i*s->words, s->words*sizeof(ulong));
+        len++;
     }
     _nmod_mpoly_set_length(out, len, ctx);
-    nmod_mpoly_sort_terms(out, ctx);
+    if (!s->sorted) nmod_mpoly_sort_terms(out, ctx);
 }
 
 /* Shared support and coefficients for all layers, including the root.
@@ -256,7 +433,16 @@ static int mq_shared_det(nmod_mpoly_t result, nmod_mpoly_t **matrix, slong n,
         slong count = k == n ? n : (slong)choose[n][k];
         mq_shared_support shifts, next;
         mq_shared_row(&shifts, matrix[n-k], n, &prev, ctx);
-        uint32_t *map = mq_shared_next(&next, &prev, &shifts, f, ctx, 1);
+#ifdef DRSOLVE_MQ_LAYOUT_TEST
+        double plan_start = omp_get_wtime();
+#endif
+        uint32_t *map = mq_shared_next(&next, &prev, &shifts, f, ctx, 1, parallel);
+#ifdef DRSOLVE_MQ_LAYOUT_TEST
+        if (mq_shared_variant() & 4)
+            mq_shared_order(&next, map, shifts.count*prev.count, parallel);
+        mq_shared_test_plan_seconds += omp_get_wtime()-plan_start;
+        double arithmetic_start = omp_get_wtime();
+#endif
         if (!next.count) {
             flint_free(map); flint_free(values);
             mq_shared_support_clear(&prev); mq_shared_support_clear(&shifts);
@@ -266,10 +452,11 @@ static int mq_shared_det(nmod_mpoly_t result, nmod_mpoly_t **matrix, slong n,
         ulong *factors = flint_calloc(n*shifts.count, sizeof(ulong));
         nmod_mpoly_t tmp; nmod_mpoly_init(tmp, ctx);
         for (slong c = 0; c < n; c++) {
-            int packed = nmod_mpoly_repack_bits(tmp, matrix[n-k][c], prev.bits, ctx);
+            int packed = nmod_mpoly_repack_bits(tmp, matrix[n-k][c], mpoly_fix_bits(prev.bits, ctx->minfo), ctx);
             FLINT_ASSERT(packed); (void)packed;
             for (slong t = 0; t < tmp->length; t++) {
-                uint32_t id = mq_shared_find(&shifts, tmp->exps+t*prev.words);
+                ulong key[3]; mq_shared_read_key(key, tmp, t, &prev, ctx);
+                uint32_t id = mq_shared_find(&shifts, key);
                 FLINT_ASSERT(id != UINT32_MAX); factors[c*shifts.count+id] = tmp->coeffs[t];
             }
         }
@@ -326,6 +513,9 @@ static int mq_shared_det(nmod_mpoly_t result, nmod_mpoly_t **matrix, slong n,
             mq_shared_pack(result, output, &next, ctx);
         }
         flint_free(map); flint_free(factors); flint_free(values);
+#ifdef DRSOLVE_MQ_LAYOUT_TEST
+        mq_shared_test_arithmetic_seconds += omp_get_wtime()-arithmetic_start;
+#endif
         mq_shared_support_clear(&prev); mq_shared_support_clear(&shifts);
         prev = next; values = output;
         if (k == n) { flint_free(values); mq_shared_support_clear(&prev); return 1; }

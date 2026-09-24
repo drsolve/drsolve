@@ -71,9 +71,10 @@ The benchmark's `shared` argument selects:
   the final polynomial once.
 * **3:** Mode 2 plus delayed modular reduction when its bound fits one limb.
   All other cases use ordinary `nmod_mul`/`nmod_add`.
-* **4:** The production backend, including input validation and workspace
-  preflight. In n=7/8 F65537 audits the driver asserts that this backend was
-  actually entered, preventing unnoticed fallback from passing the audit.
+* **4:** The original production native-key/serial backend, including input
+  validation and workspace preflight, retained as the baseline for later
+  ablations. In n=7/8 F65537 audits, modes >=4 assert that the shared backend
+  was actually entered, preventing unnoticed fallback from passing the audit.
 
 For delayed reduction each fixed monomial shift is injective. A destination
 coefficient receives at most k times the number of shifts products in a
@@ -189,7 +190,7 @@ integration, fallback, packing, and filter-certificate regressions.
 ```
 make build/mq_layout_bench
 # n threads shared projected quadratic-first profile audit seed prime
-./build/mq_layout_bench 8 4 3 1 0 0 1 132 65537
+./build/mq_layout_bench 8 4 12 1 0 0 1 132 65537
 make test-mq-layout
 python3 src/test/mq_layout_bench.py profile --output /tmp/mq-layout-profiles.json
 python3 src/test/mq_layout_bench.py timing --output /tmp/mq-layout-timings.json
@@ -234,6 +235,108 @@ python3 src/test/mq_layout_bench.py production --output /tmp/mq-shared-audits.js
 ./drsolve --no-mq-step1-shared --threads 4 -r --seed 12345 -n 8 '[2]*8' 65537
 ```
 
-The next optimization targets are faster/parallel index construction and
-reducing the root's per-cofactor coefficient buffers. Both need fresh paired
-measurements; the historical tables above describe the experimental variants.
+The following iteration optimizes index construction. Reducing the root's
+per-cofactor coefficient buffers remains a separate candidate.
+
+## Compact keys and parallel map construction
+
+The production policy measured in this section kept n<=7 on its previous
+shared-array path (see the later default-policy update below).
+For n>=8 it used a four-bit internal exponent representation when all fields
+fit one limb and the admitted total degree is below 16. For n=8, the 15
+variables fit in 60 bits, replacing two native FLINT exponent words with one.
+Addition is safe because the degree bound rules out carries between fields.
+Input and output still use ordinary FLINT packing; nibble spreading converts
+internal fields back to eight-bit fields, including the x/y filter keys.
+Larger layouts retain native exponent packing.
+
+Maps with at least 1,000,000 shift/child pairs can be built in parallel. The
+number of shards is the largest power of two not exceeding the thread count,
+capped at eight. Hash ownership partitions the resulting monomials into
+disjoint sets. Each shard scans the packed sums and inserts only its own keys
+into a private hash table; it also owns the corresponding map entries. There
+are no hash-table locks or cross-shard duplicate keys. Local hash buckets use
+the hash bits above the ownership bits to avoid clustering. After construction,
+concatenate the disjoint supports, remap local IDs, and discard shard tables.
+Arithmetic uses the ordinary shared coefficient-array recurrence.
+
+The conservative 256 MiB admission limit is retained with 64 KiB reserved for
+small shard tables/rounding. Map construction finishes before current-layer
+coefficient arrays are allocated. That unused coefficient allowance, together
+with the existing support bound, covers the shard keys/hash tables and their
+concatenation buffer; compact packing only decreases the native-width bound.
+The limit remains a workspace admission estimate, not a whole-process RSS cap.
+
+Three experiments were kept separately to avoid selecting results from
+different runs as if they were paired:
+
+* [maps_timings.json](data/mq_layout/maps_timings.json): three-repeat ablation
+  of native/compact keys and serial/sharded maps, using a 32,768-pair threshold.
+* [ordered_timings.json](data/mq_layout/ordered_timings.json): adds a common
+  radix-sorted monomial order and remaps transitions. This makes each fixed
+  shift's writes monotone and reduces arithmetic time, but extra sorting/map
+  remapping does not consistently improve total time. It remains test-only.
+* [maps_final.json](data/mq_layout/maps_final.json): five-repeat check of the
+  compact/sharded variant with the original low threshold. n=8 improved, but
+  n=7 four-thread median time increased from 0.0742 to 0.0800 seconds. This
+  motivated retaining the original n<=7 path and raising the shard threshold.
+
+The recorded **five-repeat interleaved** comparison used benchmark mode 4 for
+the previous production shared-index implementation and mode 12 for the policy
+at measurement time. Field F65537, seed (132,941), same host and timing boundaries as above:
+
+| n | Threads | Previous shared, s | Retained policy, s | Previous / retained | Previous RSS MiB | Retained RSS MiB |
+|---:|---:|---:|---:|---:|---:|---:|
+| 7 | 1 | 0.09339 | 0.09817 | Same algorithm | 25.21 | 25.28 |
+| 7 | 4 | 0.08070 | 0.09554 | Same algorithm | 24.89 | 24.91 |
+| 8 | 1 | 0.88817 | 0.67590 | 1.31x | 109.35 | 109.42 |
+| 8 | 4 | 0.81259 | 0.50147 | 1.62x | 109.06 | 117.32 |
+
+In that recorded comparison, n=7 took the same native-key serial construction
+in both modes;
+its timing differences illustrate the system-load noise, not an algorithmic
+benefit or a reason to enable the new plan there. For n=8 with four threads,
+median map-building time fell from 0.5023 to 0.1758 seconds. Arithmetic plus
+packing rose from 0.1920 to 0.2135 seconds, while total time improved. The
+extra roughly 8 MiB process peak is a tradeoff of the parallel shard buffers
+and allocator lifetimes. Stage medians need not sum to the total median.
+
+Raw final comparison: [maps_policy.json](data/mq_layout/maps_policy.json).
+These are local results for the tested input, not portable speed guarantees.
+
+The variant audit passed 37 exact comparisons, including the rejected sorting
+experiment: [maps_audits.json](data/mq_layout/maps_audits.json). The retained
+policy passed another 29 exact comparisons against sparse DP, including full
+and projected n=7/8 outputs, two seeds, n=8 over F2/F7/a near-full-word prime,
+and thread counts 3 and 16:
+[maps_policy_audits.json](data/mq_layout/maps_policy_audits.json).
+The kernel regression also compares every transition against serial construction
+for a three-word layout, with/without filtering and 3/4/16 requested threads.
+
+Benchmark modes 5/6/7 select compact, sharded, and combined construction;
+9/11 add experimental ordering; **12 follows the actual production policy**.
+Modes 4..11 are benchmark ablations, not public solver switches. Reproduction:
+
+```
+make build/mq_layout_bench
+python3 src/test/mq_layout_bench.py maps-policy --repeats 5 --output /tmp/maps-policy.json
+python3 src/test/mq_layout_bench.py maps-audit --output /tmp/maps-audit.json
+python3 src/test/mq_layout_bench.py production --output /tmp/maps-policy-audit.json
+make test-mq-layout test-mq-filter test-minor-dp test-mq-shared-cli
+```
+
+## Size-independent default policy
+
+At user request, production now enables compact keys and sharded map
+construction for every admitted n, removing the n>=8 performance gate. Compact
+keys still require all four-bit fields to fit in one word and total degree
+below 16; otherwise native packing is used. Parallel construction still
+requires at least 1,000,000 transition pairs and enough threads. The matrix
+shape, native packing and 256 MiB workspace admission checks remain in force;
+ineligible inputs fall back to sparse DP.
+
+`--no-mq-step1-shared` disables the shared backend and its optimizations;
+`--mq-step1-shared` re-enables it. Benchmark mode 12 follows this updated
+production policy. No tests or benchmarks were rerun for this policy change,
+as requested; the measurements and audits above refer to the earlier policy
+and do not establish performance for larger n or the new n<=7 default.

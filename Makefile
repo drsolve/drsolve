@@ -1065,8 +1065,8 @@ $(BUILD_DIR)/mq_layout_bench: $(SRC_DIR)/test/mq_layout_bench.c $(SRC_DIR)/test/
 
 .PHONY: test-mq-layout
 test-mq-layout: $(BUILD_DIR)/mq_layout_bench
-	./$(BUILD_DIR)/mq_layout_bench 7 1 4 1 0 0 1 132 65537
-	./$(BUILD_DIR)/mq_layout_bench 8 4 4 0 0 0 1 132 65537
+	./$(BUILD_DIR)/mq_layout_bench 7 1 12 1 0 0 1 132 65537
+	./$(BUILD_DIR)/mq_layout_bench 8 4 12 0 0 0 1 132 65537
 	./$(BUILD_DIR)/mq_layout_bench 5 1 3 1 1 0 1 12345 2
 	./$(BUILD_DIR)/mq_layout_bench 5 1 3 1 0 0 1 12345 18446744073709551557
 

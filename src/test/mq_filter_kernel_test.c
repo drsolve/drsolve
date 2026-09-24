@@ -162,6 +162,54 @@ static void check_linear_kernel(flint_rand_t state, slong n, ulong q)
     mq_filter_clear(&f);nmod_mpoly_ctx_clear(ctx);
 }
 
+static void check_shared_shards(void)
+{
+    nmod_mpoly_ctx_t ctx; nmod_mpoly_ctx_init(ctx, 19, ORD_LEX, 65537);
+    mq_shared_support prev, shifts;
+    mq_shared_support_init(&prev, ctx, 16); /* Native three-word fallback. */
+    assert(prev.words == 3);
+    mq_shared_empty(&shifts, prev.bits, prev.words);
+    ulong exp[64] = {0}, key[3];
+    for (unsigned mask = 0; mask < 65536; mask++) {
+        for (slong v = 0; v < 16; v++) exp[v] = (mask >> v) & 1;
+        mpoly_set_monomial_ui(key, exp, prev.bits, ctx->minfo);
+        mq_shared_insert(&prev, key);
+    }
+    memset(exp, 0, sizeof(exp)); memset(key, 0, sizeof(key)); mq_shared_insert(&shifts, key);
+    for (slong v = 0; v < 16; v++) {
+        exp[v] = 1; mpoly_set_monomial_ui(key, exp, prev.bits, ctx->minfo);
+        mq_shared_insert(&shifts, key); exp[v] = 0;
+    }
+    slong target[9]; for (slong v = 0; v < 9; v++) target[v] = 1;
+    mq_det_filter filter; assert(mq_filter_init(&filter, 9, target, 1, target, 1));
+    mq_filter_prepare_packed(&filter, ctx, 16);
+    int saved = omp_get_max_threads();
+    for (int projected = 0; projected < 2; projected++) {
+        const mq_det_filter *f = projected ? &filter : NULL;
+        mq_shared_support reference;
+        uint32_t *expected = mq_shared_next(&reference, &prev, &shifts, f, ctx, 1, 0);
+        int threads[] = {3, 4, 16};
+        for (unsigned t = 0; t < 3; t++) {
+            omp_set_num_threads(threads[t]);
+            mq_shared_support actual;
+            uint32_t *map = mq_shared_next(&actual, &prev, &shifts, f, ctx, 1, 1);
+            assert(actual.count == reference.count && actual.table == NULL);
+            for (size_t i = 0; i < prev.count*shifts.count; i++) {
+                assert((map[i] == UINT32_MAX) == (expected[i] == UINT32_MAX));
+                if (map[i] != UINT32_MAX)
+                    assert(!memcmp(actual.keys+(size_t)map[i]*actual.words,
+                                   reference.keys+(size_t)expected[i]*reference.words,
+                                   actual.words*sizeof(ulong)));
+            }
+            flint_free(map); mq_shared_support_clear(&actual);
+        }
+        flint_free(expected); mq_shared_support_clear(&reference);
+    }
+    omp_set_num_threads(saved);
+    mq_filter_clear(&filter); mq_shared_support_clear(&prev); mq_shared_support_clear(&shifts);
+    nmod_mpoly_ctx_clear(ctx);
+}
+
 static void check_shared_admission(void)
 {
     for (slong n = 8; n <= 9; n++) {
@@ -213,6 +261,7 @@ int main(void)
         for (slong i = 0; i < 6; i++) check_packing(state, axes[i], order);
     check_layer_certificate();
     check_shared_admission();
+    check_shared_shards();
     for(slong n=3;n<=9;n+=2) { check_linear_kernel(state,n,2);check_linear_kernel(state,n,65537); }
     flint_rand_clear(state); flint_cleanup_master();
     puts("MQ packed filtering and safe-layer certificates passed");

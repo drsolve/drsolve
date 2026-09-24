@@ -302,6 +302,13 @@ conservative preflight bounds the backend's arrays, maps, support tables and
 output allowance to 256 MiB; this is not a process-RSS limit. Unsupported shapes,
 packing, or larger bounds fall back to the existing sparse minor DP.
 
+For all admitted sizes, compact exponent keys and parallel map construction
+are enabled by default. Four-bit exponent fields are used when they fit in one
+word and the degree bound permits them; larger layouts use native packing.
+Transition maps with at least 1,000,000 pairs can use independent hash shards
+to build their indices in parallel. There is no n-based performance gate;
+the shape, packing and workspace admission checks above still apply.
+
 Use `--no-mq-step1-shared` to select the previous sparse DP, or
 `--mq-step1-shared` to re-enable sharing. This is independent of
 `--no-mq-step1-filter`, and explicit Step 1 backends such as pencil, simplex,

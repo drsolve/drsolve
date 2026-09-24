@@ -12,20 +12,49 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("phase", choices=("profile", "timing", "row-order", "audit", "production"))
+    parser.add_argument("phase", choices=("profile", "timing", "row-order", "audit", "production", "maps-timing", "maps-audit", "ordered-timing", "maps-final", "maps-policy"))
     parser.add_argument("--output", type=pathlib.Path, required=True)
     parser.add_argument("--repeats", type=int, default=3)
     args = parser.parse_args()
     configs = []
-    if args.phase == "production":
+    if args.phase in ("maps-timing", "ordered-timing", "maps-final", "maps-policy"):
+        for n in (7, 8):
+            for threads in (1, 4):
+                for repeat in range(args.repeats):
+                    modes = (4, 5, 6, 7) if args.phase == "maps-timing" else (4, 7, 9, 11)
+                    if args.phase == "maps-final": modes = (4, 7)
+                    if args.phase == "maps-policy": modes = (4, 12)
+                    if repeat % 2: modes = tuple(reversed(modes))
+                    for mode in modes:
+                        configs.append((n, threads, mode, 1, 0, 0, 0, 132, 65537))
+    elif args.phase == "maps-audit":
+        for n in (7, 8):
+            for mode in (5, 6, 9, 11):
+                configs.append((n, 4, mode, 1, 0, 0, 1, 132, 65537))
+            for threads in (1, 4):
+                for projected in (0, 1):
+                    for seed in (132, 12345):
+                        configs.append((n, threads, 7, projected, 0, 0, 1, seed, 65537))
+        for prime in (2, 7, 101, 18446744073709551557):
+            for projected in (0, 1):
+                configs.append((5, 4, 7, projected, 0, 0, 1, 12345, prime))
+        configs.append((7, 4, 7, 0, 0, 0, 1, 132, 2))
+        for threads in (3, 16):
+            for projected in (0, 1):
+                configs.append((7, threads, 7, projected, 0, 0, 1, 12345, 65537))
+    elif args.phase == "production":
         for n in (7, 8):
             for threads in (1, 4):
                 for projected in (0, 1):
                     for seed in (132, 12345):
-                        configs.append((n, threads, 4, projected, 0, 0, 1, seed, 65537))
+                        configs.append((n, threads, 12, projected, 0, 0, 1, seed, 65537))
         for prime in (2, 7, 101, 18446744073709551557):
             for projected in (0, 1):
-                configs.append((5, 1, 4, projected, 0, 0, 1, 12345, prime))
+                configs.append((5, 1, 12, projected, 0, 0, 1, 12345, prime))
+        for prime in (2, 7, 18446744073709551557):
+            configs.append((8, 4, 12, 0, 0, 0, 1, 132, prime))
+        for threads in (3, 16):
+            configs.append((8, threads, 12, 1, 0, 0, 1, 132, 65537))
     elif args.phase == "profile":
         for n in (7, 8):
             for rotate in (0, 1):
@@ -81,7 +110,7 @@ def main():
         args.output.write_text(json.dumps(output, indent=2) + "\n")
         print(f"{i+1}/{len(configs)} n={config[0]} threads={config[1]} mode={config[2]} "
               f"rotate={config[4]} {run['seconds']:.4f}s", flush=True)
-    if args.phase in ("timing", "row-order"):
+    if args.phase in ("timing", "row-order", "maps-timing", "ordered-timing", "maps-final", "maps-policy"):
         groups = {}
         for item in output["runs"]:
             run = item["records"][-1]
@@ -89,6 +118,8 @@ def main():
             groups.setdefault(key, []).append(run)
         output["medians"] = [dict(n=key[0], threads=key[1], shared=key[2], quadratic_first=key[3],
                                   seconds=statistics.median(r["seconds"] for r in runs),
+                                  plan_seconds=statistics.median(r.get("plan_seconds", 0) for r in runs),
+                                  arithmetic_seconds=statistics.median(r.get("arithmetic_seconds", 0) for r in runs),
                                   peak_rss_mib=statistics.median(r["peak_rss_kib_before_audit"] for r in runs)/1024)
                              for key, runs in sorted(groups.items())]
         args.output.write_text(json.dumps(output, indent=2) + "\n")
