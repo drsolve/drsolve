@@ -1099,3 +1099,13 @@ $(BUILD_DIR)/dixon_projected_matrix_test: $(SRC_DIR)/test/dixon_projected_matrix
 .PHONY: test-dixon-projected-matrix
 test-dixon-projected-matrix: $(BUILD_DIR)/dixon_projected_matrix_test
 	./$(BUILD_DIR)/dixon_projected_matrix_test
+
+$(BUILD_DIR)/dixon/dixon_flint.o: $(SRC_DIR)/dixon/dixon_compact_matrix.h $(SRC_DIR)/mq_compact.h
+$(BUILD_DIR)/determinant/fq_mpoly_mat_det.o: $(SRC_DIR)/determinant/mq_compact_output.h $(SRC_DIR)/mq_compact.h
+
+$(BUILD_DIR)/mq_compact_test: $(SRC_DIR)/test/mq_compact_test.c $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/dixon/dixon_compact_matrix.h $(SRC_DIR)/mq_compact.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_compact_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-mq-compact
+test-mq-compact: $(BUILD_DIR)/mq_compact_test
+	./$(BUILD_DIR)/mq_compact_test

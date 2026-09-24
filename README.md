@@ -320,19 +320,25 @@ projection filters, absent parameter support, or excess workspace fall back
 to ordinary hash construction. `--no-mq-step1-shared` also disables this path.
 See [the implementation measurements and checks](src/test/MQ_RANK_BUDGET.md).
 
-For a verified Step 1 projection with one parameter, the prime-field resultant
-pipeline constructs `nmod_poly_mat` directly. It packs the Dixon terms into
-scalar records and releases the source terms and term maps before allocating
-the matrix. Row/column content, degree ordering and Schur labels are preserved.
-Step 4 stays in the native prime-field representation; successful Schur
-compression releases the large matrix before taking the core determinant.
-Public extraction calls and extension fields retain the non-consuming
-`fq_nmod_poly_mat` path; other extraction cases keep the generic implementation.
-With `-v 2`, direct Step 2 reports metadata, combined streaming packing/source-release, matrix
-initialization, filling and cleanup times separately.
-For experimental Step 2 row-buffered packing, set `DRSOLVE_STEP2_PACK_BUFFER=1`.
-This uses at most 8 MiB of staging storage while retaining streaming source
-release. It is off by default; large-case speedup has not been established.
+For a verified MQ minor-DP projection over a prime field with one parameter,
+the resultant pipeline now keeps compact row storage between Steps 1 and 2.
+Step 1 emits contiguous `(column, degree, coefficient)` records directly from
+the native determinant, with support labels stored once. Step 2 reads these
+rows directly into `nmod_poly_mat`, skipping generic per-term objects, support
+recollection and repacking. Set `DRSOLVE_MQ_COMPACT=0` to restore the previous
+streaming conversion for comparison. This representation adds no n-dependent
+packing restriction; existing MQ backend eligibility checks still apply.
+
+Candidate verification is unchanged; candidates needing the existing repair
+path are materialized into the conventional representation. Other Step 1
+backends and public extraction calls retain their existing paths. Row/column
+content, degree ordering and Schur labels are preserved. Step 4 stays in the
+native prime-field representation; successful Schur compression releases the
+large matrix before taking the core determinant.
+
+With `-v 2`, compact output assembly and Step 2 metadata, matrix initialization,
+filling and buffer release have separate timings. `DRSOLVE_STEP2_PACK_BUFFER`
+only affects the older conversion path; compact construction bypasses it.
 See [direct Step 2 construction](src/test/MQ_STEP2_DIRECT.md).
 
 Use `--no-mq-step1-shared` to select the previous sparse DP, or

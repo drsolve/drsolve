@@ -2274,7 +2274,9 @@ static void compute_fq_det_nmod_minor_direct(fq_mvpoly_t *result,
 /* Compute exactly the requested coefficient block, without claiming anything
  * about its rank. On ineligibility/budget failure, leave result untouched.
  * Each axis contains its own count of exponent vectors of length size-1. */
-int compute_fq_det_mq_projected_rect(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
+#include "mq_compact_output.h"
+
+static int compute_fq_det_mq_projected_impl(fq_mvpoly_t *result, fq_mq_compact *compact, fq_mvpoly_t **matrix,
                                    slong size, const slong *rows, slong row_count,
                                    const slong *cols, slong col_count)
 {
@@ -2323,11 +2325,19 @@ int compute_fq_det_mq_projected_rect(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
         size >= PARALLEL_THRESHOLD && omp_get_max_threads() > 1,
         g_dixon_det_cache_limit, &filter);
     mq_filter_poly(det, ctx, &filter, 1);
-    nmod_mpoly_to_fq_mvpoly(result, det, nv, 1, ctx, fq);
+    if (compact) {
+        double start=get_wall_time();
+        mq_compact_from_nmod(compact,det,ctx,size-1,row_count,col_count);
+        if(g_dixon_verbose_level>=2)
+            printf("  MQ compact output: %.3fs, %ld rows x %ld columns, %.1f MiB records\n",
+                get_wall_time()-start,compact->nrows,compact->ncols,
+                (double)compact->nterms*sizeof(*compact->terms)/(1024.0*1024.0));
+    }
+    else nmod_mpoly_to_fq_mvpoly(result, det, nv, 1, ctx, fq);
     if (g_dixon_verbose_level >= 2)
         printf("  MQ projected minor DP: targets=%ld x %ld, closures=%ld x %ld, output=%ld terms\n",
                filter.row_targets.count, filter.col_targets.count,
-               filter.rows.count, filter.cols.count, result->nterms);
+               filter.rows.count, filter.cols.count, compact ? compact->nterms : result->nterms);
     nmod_mpoly_clear(det, ctx);
     for (slong i = 0; i < size; i++) {
         for (slong j = 0; j < size; j++) nmod_mpoly_clear(m[i][j], ctx);
@@ -2335,6 +2345,18 @@ int compute_fq_det_mq_projected_rect(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
     }
     flint_free(m); nmod_mpoly_ctx_clear(ctx); mq_filter_clear(&filter);
     return 1;
+}
+
+int compute_fq_det_mq_projected_rect(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
+    slong size, const slong *rows, slong nr, const slong *cols, slong nc)
+{
+    return compute_fq_det_mq_projected_impl(result,NULL,matrix,size,rows,nr,cols,nc);
+}
+
+int compute_fq_det_mq_compact(fq_mq_compact *out, fq_mvpoly_t **matrix,
+    slong size, const slong *rows, slong nr, const slong *cols, slong nc)
+{
+    return compute_fq_det_mq_projected_impl(NULL,out,matrix,size,rows,nr,cols,nc);
 }
 
 int fq_mq_project_full(fq_mvpoly_t *result, const fq_mvpoly_t *full,

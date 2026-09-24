@@ -235,3 +235,65 @@ fixture now varies coefficients and uses 80,004 terms so that row tails also
 exercise partial batch flushing. The Step 4 integration suite passed with
 staging enabled. Library/CLI builds completed without warnings. No n=11 test
 was run locally.
+
+
+## Compact Step 1-to-Step 2 handoff (current default)
+
+The optional row-staging experiment was slower on the user's large case. The
+new default removes the representation conversion that it attempted to speed
+up. It applies to the existing prime-field, one-parameter, verified MQ minor-DP
+path when Step 4 uses a native univariate matrix. Explicit alternative Step 1
+backends retain their previous paths. `DRSOLVE_MQ_COMPACT=0` restores the legacy
+streaming conversion; `DRSOLVE_STEP2_PACK_BUFFER` has no effect on compact data.
+
+The filtered native determinant is canonical ORD_LEX, so terms with equal
+original-variable support are already contiguous. Output assembly creates:
+
+* one array of `(slong column, slong degree, ulong coefficient)` records;
+* row offsets, and one exponent vector per distinct row/column support.
+
+Support IDs preserve first-occurrence order, including the column order used
+by the old extractor. Full exponent vectors are hashed; no additional packed
+axis/word-size admission condition is introduced. The records occupy 24 bytes
+per term on the 64-bit build (about 2.18 GiB for 97,708,413 terms), plus small
+support/offset arrays. This describes the handoff payload, not total peak RSS.
+Assembly temporarily coexists with the native DP result, and matrix filling
+coexists with the compact records; neither phase creates a generic polynomial
+or a second term-sized index/packing array.
+
+Rank verification evaluates the records directly into the same candidate
+matrix, at the same points and in the same target ordering. If a deficient
+candidate requires local Schur repair, only then materialize its conventional
+polynomial and continue the old repair path. Rejected candidates release all
+compact storage before full-Dixon fallback. Successful compact candidates keep
+an empty, safely clearable conventional placeholder in the caller.
+
+Step 2 scans contiguous records for valuations and degree ordering, then fills
+native polynomial rows in parallel. It preserves parameter content and Schur
+permutation signs. No support recollection, term-map allocation, per-term
+object destruction or row repacking occurs. The compact term buffer is freed
+before Step 3, and support labels after profile preparation. Debug degree
+reports use the support labels and cached parameter degree. Very small verbose
+polynomial displays may materialize at most 100 terms for printing.
+
+Validation:
+
+* `make test-mq-compact`: primes 2, 3, 257, eliminated-variable counts 2–5,
+  1/4 threads, rectangular projections, exact materialization, native matrix
+  coefficients and Schur profiles, reorder enabled/disabled, positive content,
+  repaired/rejected candidates and an identically singular full fallback.
+* Existing projected-matrix tests: 21 generic/direct, 17 consuming native,
+  102 native determinant checks; existing Step 4 integration passed.
+* Complete n=7/8 CLI results match with compact disabled/enabled (F257,
+  seed 1790242205, 4 threads). Three interleaved runs per mode:
+
+| Equations | Legacy Step 2 median | Compact Step 2 median | Legacy Step 1+2 median | Compact Step 1+2 median |
+|---:|---:|---:|---:|---:|
+| 7 | 0.034 s | 0.005 s | 0.083 s | 0.045 s |
+| 8 | 0.151 s | 0.022 s | 0.574 s | 0.330 s |
+
+These are small local measurements, with millisecond-resolution CLI timers;
+they do not predict n=11 speed or memory usage. No n=11 run was attempted.
+Reproduce with `python3 src/test/mq_compact_bench.py --output /tmp/compact.json`.
+At verbosity 2, `MQ compact output` reports assembly time and payload size;
+`Using compact Step 1 rows directly` confirms the new Step 2 path.

@@ -56,7 +56,7 @@ static void dixon_mq_native_det(fq_nmod_poly_t out, nmod_poly_mat_t matrix,
     fq_nmod_clear(coefficient,ctx); nmod_poly_clear(det);
 }
 
-typedef struct { slong column, degree; ulong coefficient; } dixon_prime_term;
+typedef fq_mq_compact_term dixon_prime_term;
 
 static slong dixon_projected_poly_matrix(fq_nmod_poly_mat_t out,
     nmod_poly_mat_t *prime_out, fq_mvpoly_t *consume,

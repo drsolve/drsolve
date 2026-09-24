@@ -7,6 +7,7 @@
 
 #ifndef FQ_MPOLY_MAT_DET_H
 #define FQ_MPOLY_MAT_DET_H
+#include "mq_compact.h"
 
 #ifdef _OPENMP
 #include <omp.h>

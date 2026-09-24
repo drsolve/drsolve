@@ -4915,7 +4915,7 @@ static int dixon_mq_pencil_project(fq_mvpoly_t *result,fq_mvpoly_t **matrix,
 
 static int dixon_try_mq_projection_from_full(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
                                    const fq_mvpoly_t *polys, slong nvars,
-                                   slong npars, det_method_t method, const fq_mvpoly_t *full)
+                                   slong npars, det_method_t method, const fq_mvpoly_t *full, fq_mq_compact *compact)
 {
     if (!g_dixon_mq_step1_filter ||
         method != DET_METHOD_RECURSIVE || npars != 1 || nvars < 2 ||
@@ -4990,9 +4990,12 @@ static int dixon_try_mq_projection_from_full(fq_mvpoly_t *result, fq_mvpoly_t **
         computed = full ? fq_mq_project_full(result,full,target_rows,rank,target_cols,rank)
                         : g_dixon_mq_step1_pencil
                         ? dixon_mq_pencil_project(result,matrix,nvars+1,target_rows,rank,target_cols,rank)
+                        : compact
+                        ? compute_fq_det_mq_compact(compact,matrix,nvars+1,target_rows,rank,target_cols,rank)
                         : compute_fq_det_mq_projected(result,matrix,nvars+1,target_rows,target_cols,rank);
         ok = computed;
     }
+    int materialized = computed && !(compact && compact->nvars);
     if (ok) {
         slong *rmap = flint_malloc((size_t) nr * sizeof(slong));
         slong *cmap = flint_malloc((size_t) nc * sizeof(slong));
@@ -5019,6 +5022,29 @@ static int dixon_try_mq_projection_from_full(fq_mvpoly_t *result, fq_mvpoly_t **
             for (slong d = 1; d <= nvars + 2; d++)
                 powers[d] = nmod_mul(powers[d - 1], point, values->mod);
             nmod_mat_zero(values);
+            if (compact && compact->nvars) {
+                slong *cr=flint_malloc(compact->nrows*sizeof(slong));
+                slong *cc=flint_malloc(compact->ncols*sizeof(slong));
+                for(slong r=0;r<compact->nrows;r++) {
+                    slong id=lookup_monom_index(ri,rhs,compact->rows+r*nvars,nvars);
+                    FLINT_ASSERT(id>=0 && rmap[id]>=0); cr[r]=rmap[id];
+                }
+                for(slong c=0;c<compact->ncols;c++) {
+                    slong id=lookup_monom_index(ci,chs,compact->cols+c*nvars,nvars);
+                    FLINT_ASSERT(id>=0 && cmap[id]>=0); cc[c]=cmap[id];
+                }
+                for(slong r=0;r<compact->nrows;r++)
+                    for(slong t=compact->offset[r];t<compact->offset[r+1];t++) {
+                        const fq_mq_compact_term *term=compact->terms+t;
+                        FLINT_ASSERT(term->degree<=nvars+2);
+                        if(point==0 && term->degree) continue;
+                        ulong coeff=term->coefficient;
+                        if(point>1 && term->degree) coeff=nmod_mul(coeff,powers[term->degree],values->mod);
+                        ulong *entry=nmod_mat_entry_ptr(values,cr[r],cc[term->column]);
+                        *entry=nmod_add(*entry,coeff,values->mod);
+                    }
+                flint_free(cr); flint_free(cc);
+            } else
             for (slong t = 0; t < result->nterms; t++) {
                 const fq_monomial_t *term = &result->terms[t];
                 ulong power = term->par_exp ? term->par_exp[0] : 0;
@@ -5043,6 +5069,10 @@ static int dixon_try_mq_projection_from_full(fq_mvpoly_t *result, fq_mvpoly_t **
             }
         }
         if (!ok && have_best) {
+            if(compact && compact->nvars) {
+                fq_mq_compact_materialize(result,compact,polys[0].ctx);
+                fq_mq_compact_clear(compact); materialized=1;
+            }
             ok = dixon_repair_mq_projection(result, matrix, nvars, rm, nr, cm, nc,
                      ri, rhs, ci, chs, rows, cols, rank, best, best_perm, best_s, best_point, sigma, full);
             if (ok) dixon_info_log("  MQ Step 1 Schur repair verified (degree-aware selection)\n");
@@ -5052,7 +5082,12 @@ static int dixon_try_mq_projection_from_full(fq_mvpoly_t *result, fq_mvpoly_t **
         nmod_mat_clear(values);
         flint_free(rmap); flint_free(cmap);
     }
-    if (computed && !ok) fq_mvpoly_clear(result);
+    if (computed && !ok) {
+        if(materialized) fq_mvpoly_clear(result);
+        if(compact) fq_mq_compact_clear(compact);
+    }
+    /* The caller still owns a safely clearable conventional placeholder. */
+    if(ok && compact && compact->nvars) fq_mvpoly_init(result,2*nvars,1,polys[0].ctx);
     if (computed)
         dixon_info_log("  MQ Step 1 projection: %ld x %ld candidate %s\n", rank, rank,
                        ok ? "verified" : full ? "failed; reusing full Dixon polynomial" : "failed; recomputing full Dixon polynomial");
@@ -5068,14 +5103,14 @@ static int dixon_try_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
                                    const fq_mvpoly_t *polys, slong nvars,
                                    slong npars, det_method_t method)
 {
-    return dixon_try_mq_projection_from_full(result,matrix,polys,nvars,npars,method,NULL);
+    return dixon_try_mq_projection_from_full(result,matrix,polys,nvars,npars,method,NULL,NULL);
 }
 
 /* A full experimental-backend polynomial is local to this call. Candidate extraction and
  * every repair border reuse it; failed verification never recomputes it. */
 static int dixon_compute_step1(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
                                const fq_mvpoly_t *polys, slong nvars,
-                               slong npars, det_method_t method)
+                               slong npars, det_method_t method, fq_mq_compact *compact)
 {
     if (g_dixon_mq_step1_pencil) {
         if(dixon_try_mq_projection(result,matrix,polys,nvars,npars,method))return 1;
@@ -5085,7 +5120,7 @@ static int dixon_compute_step1(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
             dixon_info_log("  MQ Step 1 pencil: size=%ld, threads=%ld, total=%.6fs\n",stats.size,stats.threads,stats.total);
             dixon_info_log("    normalization=%.6fs, recurrence=%.6fs, assembly=%.6fs, peak matrix terms=%ld\n",
                 stats.normalization,stats.recurrence,stats.assembly,stats.peak_terms);
-            int verified=dixon_try_mq_projection_from_full(result,matrix,polys,nvars,npars,method,&full);
+            int verified=dixon_try_mq_projection_from_full(result,matrix,polys,nvars,npars,method,&full,NULL);
             if (verified)fq_mvpoly_clear(&full);else *result=full;
             return verified;
         }
@@ -5097,14 +5132,14 @@ static int dixon_compute_step1(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
             dixon_info_log("  MQ Step 1 simplex: points=%ld, threads=%ld, total=%.6fs\n",stats.points,stats.threads,stats.total);
             dixon_info_log("    setup=%.6fs, entry evaluation=%.6fs, determinants=%.6fs, interpolation=%.6fs, packing=%.6fs (wall)\n",
                 stats.setup,stats.entry_eval,stats.determinants,stats.interpolation,stats.packing);
-            int verified=dixon_try_mq_projection_from_full(result,matrix,polys,nvars,npars,method,&full);
+            int verified=dixon_try_mq_projection_from_full(result,matrix,polys,nvars,npars,method,&full,NULL);
             if (verified) fq_mvpoly_clear(&full);
             else *result=full;
             return verified;
         }
         dixon_info_log("  MQ Step 1 simplex: fallback (%s)\n",stats.reason?stats.reason:"requires automatic/minor Step 1 and one parameter");
     }
-    int verified=dixon_try_mq_projection(result,matrix,polys,nvars,npars,method);
+    int verified=dixon_try_mq_projection_from_full(result,matrix,polys,nvars,npars,method,NULL,compact);
     if (!verified)compute_fq_cancel_matrix_det(result,matrix,nvars,npars,method);
     return verified;
 }
@@ -5274,6 +5309,7 @@ static int dixon_mq_step4_try(fq_nmod_poly_t det, const fq_nmod_poly_mat_t matri
 }
 
 #include "dixon_projected_matrix.h"
+#include "dixon_compact_matrix.h"
 
 static void extract_fq_coefficient_matrix_from_dixon_impl(fq_mvpoly_t ***coeff_matrix,
                                               fq_nmod_poly_mat_t *poly_matrix_out,
@@ -6219,9 +6255,13 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
         dixon_debug_log("  Computing cancellation matrix determinant using %s...\n",
                         dixon_det_method_name(step1_method));
     }
+    fq_mq_compact compact={0};
     int projected_verified = dixon_compute_step1(&d_poly, modified_M_mvpoly,
-                                polys, nvars, npars, step1_method);
+                                polys, nvars, npars, step1_method,
+                                dixon_compact_enabled(npars) ? &compact : NULL);
     
+    if(compact.nvars) dixon_print_compact(&compact,polys[0].ctx,NULL,NULL,NULL);
+    else {
     if (g_dixon_verbose_level >= 1 && d_poly.nterms <= 100) {
         dixon_info_log("  Dixon polynomial: %ld terms\n", d_poly.nterms);
         fq_mvpoly_print_expanded(&d_poly, "  DixonPoly", 1);
@@ -6230,6 +6270,7 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     }
     if (g_dixon_debug_mode) {
         print_dixon_poly_actual_degrees(&d_poly, nvars, npars, NULL, NULL);
+    }
     }
     dixon_maybe_print_step_method_time("Step 1",
                                        step1_method,
@@ -6262,6 +6303,10 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     int try_mq_step4 = g_dixon_mq_step4_schur && use_poly_matrix &&
                       dixon_mq_step4_eligible(polys, nvars, npars);
     long *rank_degrees = dixon_polynomial_degrees(polys, nvars + 1, nvars);
+    if(compact.nvars)
+        dixon_extract_compact_matrix(prime_matrix,&matrix_size,&extracted_x_power,
+            &compact,rank_degrees,try_mq_step4 ? &mq_profile : NULL,NULL);
+    else
     extract_fq_coefficient_matrix_from_dixon_impl(&coeff_matrix,
                                             use_poly_matrix && !use_prime_matrix ? &poly_matrix : NULL,
                                             row_indices, col_indices,
@@ -6422,9 +6467,13 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     dixon_info_log("  Determinant method: %s\n", dixon_det_method_name(step1_method));
     dixon_debug_log("  Computing cancellation matrix determinant using %s...\n",
                     dixon_det_method_name(step1_method));
+    fq_mq_compact compact={0};
     int projected_verified = dixon_compute_step1(&d_poly, modified_M_mvpoly,
-                                polys, nvars, npars, step1_method);
+                                polys, nvars, npars, step1_method,
+                                dixon_compact_enabled(npars) ? &compact : NULL);
     
+    if(compact.nvars) dixon_print_compact(&compact,polys[0].ctx,var_names,par_names,gen_name);
+    else {
     if (g_dixon_verbose_level >= 1 && d_poly.nterms <= 100) {
         dixon_info_log("  Dixon polynomial: %ld terms\n", d_poly.nterms);
         fq_mvpoly_print_with_names(&d_poly, "  DixonPoly", var_names, par_names, gen_name, 1);
@@ -6433,6 +6482,7 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     }
     if (g_dixon_debug_mode) {
         print_dixon_poly_actual_degrees(&d_poly, nvars, npars, var_names, par_names);
+    }
     }
     dixon_maybe_print_step_method_time("Step 1",
                                        step1_method,
@@ -6455,6 +6505,10 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     int try_mq_step4 = g_dixon_mq_step4_schur && use_poly_matrix &&
                       dixon_mq_step4_eligible(polys, nvars, npars);
     long *rank_degrees = dixon_polynomial_degrees(polys, nvars + 1, nvars);
+    if(compact.nvars)
+        dixon_extract_compact_matrix(prime_matrix,&matrix_size,&extracted_x_power,
+            &compact,rank_degrees,try_mq_step4 ? &mq_profile : NULL,par_names);
+    else
     extract_fq_coefficient_matrix_from_dixon_impl(&coeff_matrix,
                                             use_poly_matrix && !use_prime_matrix ? &poly_matrix : NULL,
                                             row_indices, col_indices,

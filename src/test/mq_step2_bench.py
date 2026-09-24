@@ -31,13 +31,14 @@ with tempfile.TemporaryDirectory(prefix='mq-step2-') as tmp:
                            '--threads', str(threads), '--time', '-v', '2', '-o', str(out)]
                 result = subprocess.run(command, cwd=ROOT, env=env, text=True, capture_output=True,
                                         check=True, timeout=180)
-                assert 'Released source Dixon terms' in result.stdout
+                assert ('Released source Dixon terms' in result.stdout or
+                        'Using compact Step 1 rows directly' in result.stdout)
                 match = re.search(r'Step 2 time: CPU time: ([\d.]+) seconds \| Wall time: ([\d.]+)', result.stdout)
                 assert match, result.stdout
                 canonical = '\n'.join(s for s in out.read_text().splitlines() if not s.startswith('Time: '))
                 if records: assert canonical == records[0]['result']
                 record = dict(label=label, threads=threads, repeat=repeat, cpu=float(match[1]), wall=float(match[2]),
-                              phases=[s for s in result.stdout.splitlines() if 'Step 2 direct' in s], result=canonical)
+                              phases=[s for s in result.stdout.splitlines() if 'Step 2 direct' in s or 'Step 2 compact' in s], result=canonical)
                 records.append(record)
                 a.output.parent.mkdir(parents=True, exist_ok=True)
                 a.output.write_text(json.dumps(records, indent=2)+'\n')
