@@ -9,6 +9,7 @@
 #include "dixon_flint.h"
 #include "mq_poly_mat_det.h"
 #include "mq_simplex_det.h"
+#include "mq_pencil_det.h"
 
 /* Internal row-basis state used only by the Dixon implementation. */
 typedef struct {
@@ -48,6 +49,7 @@ int g_dixon_fast_use_ksy_precondition = 0;
 slong g_dixon_fast_ksy_constant_col = 0;
 int g_dixon_mq_step1_filter = 1;
 int g_dixon_mq_step1_simplex = 0;
+int g_dixon_mq_step1_pencil = 0;
 int g_dixon_mq_step4_schur = 1;
 int g_dixon_step3_second_verification = 0;
 slong g_dixon_det_cache_limit = 1024;
@@ -4895,6 +4897,20 @@ cleanup:
  * certifies non-singularity of this block, not an upper bound on full rank.
  * Deficient candidates first get a bounded, complete local Schur repair.
  * Only if that fails does the caller compute the FULL polynomial. */
+static int dixon_mq_pencil_project(fq_mvpoly_t *result,fq_mvpoly_t **matrix,
+    slong size,const slong *rows,slong nr,const slong *cols,slong nc)
+{
+    mq_pencil_stats stats={0};
+    if(!compute_fq_det_mq_pencil_projected(result,matrix,size,rows,nr,cols,nc,&stats)) {
+        dixon_info_log("  MQ Step 1 pencil: fallback (%s)\n",stats.reason?stats.reason:"unsupported projection");
+        return compute_fq_det_mq_projected_rect(result,matrix,size,rows,nr,cols,nc);
+    }
+    dixon_info_log("  MQ Step 1 pencil: size=%ld, threads=%ld, total=%.6fs\n",stats.size,stats.threads,stats.total);
+    dixon_info_log("    normalization=%.6fs, recurrence=%.6fs, assembly=%.6fs, peak matrix terms=%ld (closure projected)\n",
+        stats.normalization,stats.recurrence,stats.assembly,stats.peak_terms);
+    return 1;
+}
+
 static int dixon_try_mq_projection_from_full(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
                                    const fq_mvpoly_t *polys, slong nvars,
                                    slong npars, det_method_t method, const fq_mvpoly_t *full)
@@ -4970,6 +4986,8 @@ static int dixon_try_mq_projection_from_full(fq_mvpoly_t *result, fq_mvpoly_t **
             memcpy(target_cols + i * nvars, cm[cols[i]].exp, (size_t) nvars * sizeof(slong));
         }
         computed = full ? fq_mq_project_full(result,full,target_rows,rank,target_cols,rank)
+                        : g_dixon_mq_step1_pencil
+                        ? dixon_mq_pencil_project(result,matrix,nvars+1,target_rows,rank,target_cols,rank)
                         : compute_fq_det_mq_projected(result,matrix,nvars+1,target_rows,target_cols,rank);
         ok = computed;
     }
@@ -5051,13 +5069,26 @@ static int dixon_try_mq_projection(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
     return dixon_try_mq_projection_from_full(result,matrix,polys,nvars,npars,method,NULL);
 }
 
-/* A full simplex polynomial is local to this call. Candidate extraction and
+/* A full experimental-backend polynomial is local to this call. Candidate extraction and
  * every repair border reuse it; failed verification never recomputes it. */
 static int dixon_compute_step1(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
                                const fq_mvpoly_t *polys, slong nvars,
                                slong npars, det_method_t method)
 {
-    if (g_dixon_mq_step1_simplex) {
+    if (g_dixon_mq_step1_pencil) {
+        if(dixon_try_mq_projection(result,matrix,polys,nvars,npars,method))return 1;
+        mq_pencil_stats stats={0};fq_mvpoly_t full;
+        if (method==DET_METHOD_RECURSIVE && npars==1 &&
+            compute_fq_det_mq_pencil(&full,matrix,nvars+1,&stats)) {
+            dixon_info_log("  MQ Step 1 pencil: size=%ld, threads=%ld, total=%.6fs\n",stats.size,stats.threads,stats.total);
+            dixon_info_log("    normalization=%.6fs, recurrence=%.6fs, assembly=%.6fs, peak matrix terms=%ld\n",
+                stats.normalization,stats.recurrence,stats.assembly,stats.peak_terms);
+            int verified=dixon_try_mq_projection_from_full(result,matrix,polys,nvars,npars,method,&full);
+            if (verified)fq_mvpoly_clear(&full);else *result=full;
+            return verified;
+        }
+        dixon_info_log("  MQ Step 1 pencil: fallback (%s)\n",stats.reason?stats.reason:"requires automatic/minor Step 1 and one parameter");
+    } else if (g_dixon_mq_step1_simplex) {
         mq_simplex_stats stats={0};fq_mvpoly_t full;
         if (method==DET_METHOD_RECURSIVE && npars==1 &&
             compute_fq_det_mq_simplex(&full,matrix,nvars+1,&stats)) {

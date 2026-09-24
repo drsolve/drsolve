@@ -2974,6 +2974,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     long fast_ksy_constant_col = 0;
     int mq_step1_filter = 1;
     int mq_step1_simplex = 0;
+    int mq_step1_pencil = 0;
     int mq_step4_schur = 1;
     int step3_verify_second = 0;
     fq_nmod_poly_det_method_t fq_det_method = FQ_NMOD_POLY_DET_METHOD_AUTO;
@@ -3201,8 +3202,12 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             i++;
         } else if (strcmp(argv[i], "--no-fast-ksy") == 0) {
             fast_ksy_precondition = 0;
+        } else if (strcmp(argv[i], "--mq-step1-pencil") == 0) {
+            mq_step1_pencil = 1; mq_step1_simplex = 0;
+        } else if (strcmp(argv[i], "--no-mq-step1-pencil") == 0) {
+            mq_step1_pencil = 0;
         } else if (strcmp(argv[i], "--mq-step1-simplex") == 0) {
-            mq_step1_simplex = 1;
+            mq_step1_simplex = 1; mq_step1_pencil = 0;
         } else if (strcmp(argv[i], "--no-mq-step1-simplex") == 0) {
             mq_step1_simplex = 0;
         } else if (strcmp(argv[i], "--mq-step4-schur") == 0) {
@@ -4153,6 +4158,7 @@ random_done:
     g_dixon_fast_ksy_constant_col = fast_ksy_constant_col;
     g_dixon_mq_step1_filter = mq_step1_filter;
     g_dixon_mq_step1_simplex = mq_step1_simplex;
+    g_dixon_mq_step1_pencil = mq_step1_pencil;
     g_dixon_mq_step4_schur = mq_step4_schur;
     g_dixon_step3_second_verification = step3_verify_second;
     g_dixon_det_cache_limit = det_cache_limit;

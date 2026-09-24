@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+#include "mq_coefficient_filter.h"
 /* Method reference for the stored-minor expansion path: Gentleman and
  * Johnson. https://dl.acm.org/doi/10.1145/355694.355696
  */
@@ -1741,6 +1742,31 @@ static void mq_filter_poly(nmod_mpoly_t poly, const nmod_mpoly_ctx_t ctx,
         out++;
     }
     _nmod_mpoly_set_length(poly, out, ctx);
+}
+
+/* Shared with the pencil recurrence: same order ideal and exact targets. */
+void *mq_coefficient_filter_create(slong nvars,const slong *rows,slong nr,
+    const slong *cols,slong nc,const nmod_mpoly_ctx_t ctx,slong degree_bound)
+{
+    mq_det_filter *f=flint_malloc(sizeof(*f));
+    if(!mq_filter_init(f,nvars,rows,nr,cols,nc)){flint_free(f);return NULL;}
+    mq_filter_prepare_packed(f,ctx,degree_bound);return f;
+}
+void mq_coefficient_filter_apply(nmod_mpoly_t poly,const nmod_mpoly_ctx_t ctx,
+    const void *filter,int target)
+{
+    if(filter)mq_filter_poly(poly,ctx,filter,target);
+}
+void mq_coefficient_filter_destroy(void *filter)
+{
+    if(filter){mq_filter_clear(filter);flint_free(filter);}
+}
+
+void mq_coefficient_filter_repack(nmod_mpoly_t poly,const nmod_mpoly_ctx_t ctx,
+    const void *filter)
+{
+    const mq_det_filter *f=filter;
+    if(f)nmod_mpoly_repack_bits_inplace(poly,f->arithmetic_bits,ctx);
 }
 
 /* Merge the sorted streams x^a_i*b directly in native lex packing. This

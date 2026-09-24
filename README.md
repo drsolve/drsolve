@@ -219,6 +219,41 @@ Example:
 - Available methods: `0.Recursive`, `1.Kronecker+HNF`, `2.Interpolation`, `3.Sparse interpolation`, `4.Bareiss`, `5.Recursive Dixon construction`
 - `--method` sets both Step 1 and Step 4 for backward compatibility
 
+#### Experimental MQ Step 1 degree recurrence
+
+```bash
+./drsolve --mq-step1-pencil --threads 4 -f input.dr -v 2
+```
+
+`--mq-step1-pencil` enables a Faddeev-LeVerrier degree recurrence instead of
+subset-minor DP. It normalizes the parameter coefficient matrix by constant
+column operations to obtain a lower block `tI+L`, then constructs the determinant
+and adjugate border terms using two successive polynomial-matrix layers.
+The constant determinant scale is preserved exactly. Parameter coefficients
+are accumulated in separate degree buckets. With the default MQ prediction,
+intermediate matrices are projected to the candidate's downward closure using
+the shared packed coefficient filter. Final contributions are filtered
+before bucket accumulation. Candidate verification and degree-aware Schur repair
+remain enabled; missing repair strips are computed by projected minor DP.
+
+This option is off by default; `--no-mq-step1-pencil` disables it. It currently
+requires prime characteristic `p > n-1`, one parameter, and full row rank of the
+linear rows' parameter coefficient matrix (`n` is the equation count). Other
+explicit Step 1 backends take precedence. Unsupported inputs fall back to the
+existing backend. A conservative bound of 33,554,432 coefficient slots protects
+the two dense recurrence matrices; this permits `n=8,9`, while `n=10` currently
+falls back. `--no-mq-step1-filter` computes the complete pencil determinant.
+If candidate repair fails, the complete determinant is computed as a fallback.
+This remains an experimental backend; see the paired timings in the research
+note before selecting it for performance.
+
+`--threads` parallelizes independent matrix entries and border products.
+`-v 2` reports normalization, recurrence, assembly, and peak matrix term count.
+When both experimental Step 1 options are supplied, the last enabling option
+(`--mq-step1-pencil` or `--mq-step1-simplex`) wins. Run
+`make test-mq-pencil test-mq-pencil-cli` for exactness and fallback tests.
+See [the degree-DP research and measurements](paper/rank/STEP1_DP_STRUCTURE.md).
+
 #### MQ Step 4 Schur compression
 ```bash
 ./drsolve --mq-step4-schur -f input.dr -v 2

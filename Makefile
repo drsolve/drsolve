@@ -159,6 +159,7 @@ MATH_SOURCES = $(SRC_DIR)/dixon/dixon_complexity.c \
                $(SRC_DIR)/determinant/fq_poly_mat_det.c \
                $(SRC_DIR)/determinant/mq_poly_mat_det.c \
                $(SRC_DIR)/determinant/mq_simplex_det.c \
+               $(SRC_DIR)/determinant/mq_pencil_det.c \
                $(SRC_DIR)/determinant/fq_sparse_interpolation.c \
                $(SRC_DIR)/determinant/unified_mpoly_det.c \
                $(SRC_DIR)/field/fq_mvpoly.c \
@@ -1014,3 +1015,18 @@ $(BUILD_DIR)/mq-sum-products-cli: $(CLI_SOURCES) $(MATH_SOURCES) $(SRC_DIR)/test
 .PHONY: test-mq-simplex-cli
 test-mq-simplex-cli:
 	python3 $(SRC_DIR)/test/mq_simplex_cli_test.py
+
+$(BUILD_DIR)/mq_pencil_test: $(SRC_DIR)/test/mq_pencil_test.c $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/mq_pencil_det.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_pencil_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-mq-pencil test-mq-pencil-cli
+test-mq-pencil: $(BUILD_DIR)/mq_pencil_test
+	./$(BUILD_DIR)/mq_pencil_test 2 2 1
+	./$(BUILD_DIR)/mq_pencil_test 4 3 1
+	./$(BUILD_DIR)/mq_pencil_test 4 5 1
+	./$(BUILD_DIR)/mq_pencil_test 4 65537 1
+	./$(BUILD_DIR)/mq_pencil_test 5 65537 4
+	./$(BUILD_DIR)/mq_pencil_test 6 101 4
+
+test-mq-pencil-cli:
+	python3 $(SRC_DIR)/test/mq_pencil_cli_test.py
