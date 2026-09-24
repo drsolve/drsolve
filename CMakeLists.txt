@@ -609,6 +609,9 @@ set(MATH_SOURCES
   src/determinant/fq_mpoly_mat_det.c
   src/determinant/fq_multivariate_interpolation.c
   src/determinant/fq_poly_mat_det.c
+  src/determinant/mq_poly_mat_det.c
+  src/determinant/mq_simplex_det.c
+  src/determinant/mq_pencil_det.c
   src/determinant/fq_sparse_interpolation.c
   src/determinant/unified_mpoly_det.c
   src/field/fq_mvpoly.c
