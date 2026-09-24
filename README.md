@@ -302,12 +302,21 @@ conservative preflight bounds the backend's arrays, maps, support tables and
 output allowance to 256 MiB; this is not a process-RSS limit. Unsupported shapes,
 packing, or larger bounds fall back to the existing sparse minor DP.
 
-For all admitted sizes, compact exponent keys and parallel map construction
-are enabled by default. Four-bit exponent fields are used when they fit in one
-word and the degree bound permits them; larger layouts use native packing.
-Transition maps with at least 1,000,000 pairs can use independent hash shards
-to build their indices in parallel. There is no n-based performance gate;
-the shape, packing and workspace admission checks above still apply.
+For all admitted sizes, shared indices use native FLINT exponent packing,
+including multiword keys. Transition maps with at least 1,000,000 pairs can use
+independent hash shards to build their indices in parallel. There is no n-based
+performance gate; the shape, packing and workspace admission checks above still
+apply. Shared indices avoid duplicating monomial indexing across minors, but do
+not remove the exponential subset count of the DP.
+
+Direct indices replace hash-based support construction by default for eligible
+projected shared Step 1 DP: disable with `--no-mq-step1-rank`, re-enable with
+`--mq-step1-rank`. They use separate x/y axis transitions and
+parameter offsets with native multiword exponent keys, retaining the full
+transition map. The shared backend's eligibility limits still apply; missing
+projection filters, absent parameter support, or excess workspace fall back
+to ordinary hash construction. `--no-mq-step1-shared` also disables this path.
+See [the implementation measurements and checks](src/test/MQ_RANK_BUDGET.md).
 
 Use `--no-mq-step1-shared` to select the previous sparse DP, or
 `--mq-step1-shared` to re-enable sharing. This is independent of

@@ -7,6 +7,7 @@
 
 void mq_layout_configure(int enabled, int profile, int rotate);
 int mq_layout_shared_calls(void);
+int mq_layout_rank_layers(void);
 double mq_layout_plan_seconds(void);
 double mq_layout_arithmetic_seconds(void);
 
@@ -40,6 +41,9 @@ int main(int argc, char **argv)
     int verified = layout_compute(&actual, a, p, n, projected);
     double seconds = omp_get_wtime()-start;
     int shared_calls = mq_layout_shared_calls();
+    int rank_layers = mq_layout_rank_layers();
+    if (shared == 13 && projected && prime == 65537) assert(rank_layers >= n);
+    printf("{\"kind\":\"rank_usage\",\"layers\":%d}\n", rank_layers);
     if (shared >= 4 && !rotate && prime == 65537) assert(shared_calls > 0);
     double plan_seconds = mq_layout_plan_seconds(), arithmetic_seconds = mq_layout_arithmetic_seconds();
     struct rusage usage; getrusage(RUSAGE_SELF, &usage);

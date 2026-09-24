@@ -21,27 +21,27 @@ def main():
         for n in (7, 8):
             for threads in (1, 4):
                 for repeat in range(args.repeats):
-                    modes = (4, 5, 6, 7) if args.phase == "maps-timing" else (4, 7, 9, 11)
-                    if args.phase == "maps-final": modes = (4, 7)
+                    modes = (4, 6) if args.phase == "maps-timing" else (4, 6, 8, 10)
+                    if args.phase == "maps-final": modes = (4, 6)
                     if args.phase == "maps-policy": modes = (4, 12)
                     if repeat % 2: modes = tuple(reversed(modes))
                     for mode in modes:
                         configs.append((n, threads, mode, 1, 0, 0, 0, 132, 65537))
     elif args.phase == "maps-audit":
         for n in (7, 8):
-            for mode in (5, 6, 9, 11):
+            for mode in (4, 6, 8, 10):
                 configs.append((n, 4, mode, 1, 0, 0, 1, 132, 65537))
             for threads in (1, 4):
                 for projected in (0, 1):
                     for seed in (132, 12345):
-                        configs.append((n, threads, 7, projected, 0, 0, 1, seed, 65537))
+                        configs.append((n, threads, 6, projected, 0, 0, 1, seed, 65537))
         for prime in (2, 7, 101, 18446744073709551557):
             for projected in (0, 1):
-                configs.append((5, 4, 7, projected, 0, 0, 1, 12345, prime))
-        configs.append((7, 4, 7, 0, 0, 0, 1, 132, 2))
+                configs.append((5, 4, 6, projected, 0, 0, 1, 12345, prime))
+        configs.append((7, 4, 6, 0, 0, 0, 1, 132, 2))
         for threads in (3, 16):
             for projected in (0, 1):
-                configs.append((7, threads, 7, projected, 0, 0, 1, 12345, 65537))
+                configs.append((7, threads, 6, projected, 0, 0, 1, 12345, 65537))
     elif args.phase == "production":
         for n in (7, 8):
             for threads in (1, 4):

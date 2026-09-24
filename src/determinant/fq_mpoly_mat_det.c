@@ -1916,6 +1916,9 @@ static void mq_filtered_mul(nmod_mpoly_t out, const nmod_mpoly_t a,
  * The entry limit excludes arithmetic temporaries and matrix views.
  */
 #include "mq_shared_layout.h"
+#ifdef DRSOLVE_MQ_SUPPORT_TEST
+#include "../test/mq_support_count.h"
+#endif
 #ifdef DRSOLVE_MQ_LAYOUT_TEST
 #include "../test/mq_layout_experiment.h"
 #endif

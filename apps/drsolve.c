@@ -271,6 +271,7 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    Example: %s --step3-verify-second \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
     printf("    -> Available methods: 0.Minor expansion; 1.HNF; 2.Interpolation; 3.Sparse interpolation; 4.Bareiss; 5.Recursive Dixon construction; 6.Balanced split Laplace (experimental)\n");
     printf("    -> --method sets both step 1 and step 4 for backward compatibility\n");
+    printf("    -> MQ direct indices for eligible projected shared DP are default on; --no-mq-step1-rank disables them\n");
     printf("    -> MQ shared-index Step 1 DP is default on when eligible; --no-mq-step1-shared disables it\n");
     printf("    -> --mq-step1-pencil enables experimental MQ degree recurrence (default off); --no-mq-step1-pencil disables it\n");
     printf("    -> --mq-step1-simplex enables parallel total-degree MQ interpolation (default off); --no-mq-step1-simplex disables it\n");
@@ -354,6 +355,8 @@ static int validate_cli_options(int argc, char *argv[])
         {"no-fast-ksy", no_argument, NULL, OPT_FLAG},
         {"step3-verify-second", no_argument, NULL, OPT_FLAG},
         {"no-step3-verify-second", no_argument, NULL, OPT_FLAG},
+        {"mq-step1-rank", no_argument, NULL, OPT_FLAG},
+        {"no-mq-step1-rank", no_argument, NULL, OPT_FLAG},
         {"mq-step1-shared", no_argument, NULL, OPT_FLAG},
         {"no-mq-step1-shared", no_argument, NULL, OPT_FLAG},
         {"mq-step1-pencil", no_argument, NULL, OPT_FLAG},

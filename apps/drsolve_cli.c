@@ -2974,6 +2974,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     long fast_ksy_constant_col = 0;
     int mq_step1_filter = 1;
     int mq_step1_shared = 1;
+    int mq_step1_rank = 1;
     int mq_step1_simplex = 0;
     int mq_step1_pencil = 0;
     int mq_step4_schur = 1;
@@ -3203,6 +3204,10 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             i++;
         } else if (strcmp(argv[i], "--no-fast-ksy") == 0) {
             fast_ksy_precondition = 0;
+        } else if (strcmp(argv[i], "--mq-step1-rank") == 0) {
+            mq_step1_rank = 1;
+        } else if (strcmp(argv[i], "--no-mq-step1-rank") == 0) {
+            mq_step1_rank = 0;
         } else if (strcmp(argv[i], "--mq-step1-shared") == 0) {
             mq_step1_shared = 1;
         } else if (strcmp(argv[i], "--no-mq-step1-shared") == 0) {
@@ -4163,6 +4168,7 @@ random_done:
     g_dixon_fast_ksy_constant_col = fast_ksy_constant_col;
     g_dixon_mq_step1_filter = mq_step1_filter;
     g_dixon_mq_step1_shared = mq_step1_shared;
+    g_dixon_mq_step1_rank = mq_step1_rank;
     g_dixon_mq_step1_simplex = mq_step1_simplex;
     g_dixon_mq_step1_pencil = mq_step1_pencil;
     g_dixon_mq_step4_schur = mq_step4_schur;

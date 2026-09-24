@@ -49,6 +49,7 @@ int g_dixon_fast_use_ksy_precondition = 0;
 slong g_dixon_fast_ksy_constant_col = 0;
 int g_dixon_mq_step1_filter = 1;
 int g_dixon_mq_step1_shared = 1;
+int g_dixon_mq_step1_rank = 1;
 int g_dixon_mq_step1_simplex = 0;
 int g_dixon_mq_step1_pencil = 0;
 int g_dixon_mq_step4_schur = 1;

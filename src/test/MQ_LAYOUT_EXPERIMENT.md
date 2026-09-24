@@ -51,7 +51,7 @@ The shared profiles separately report explicitly accounted workspace arrays;
 that counter excludes the packed output polynomial and FLINT scratch space.
 
 Raw profiles, including the quadratic-first control and exact comparisons:
-[profiles.json](data/mq_layout/profiles.json).
+`data/mq_layout/profiles.json`.
 
 ## Implementation and ablations
 
@@ -132,7 +132,7 @@ fingerprints, term counts and verification outcomes agree across all variants
 and thread counts. Fingerprints are a repeated-run check, not the correctness
 proof; the audit suite compares complete polynomials exactly.
 
-Raw repetitions and medians: [timings.json](data/mq_layout/timings.json).
+Raw repetitions and medians: `data/mq_layout/timings.json`.
 These local measurements do not predict n=9/10, different fields, or arbitrary
 MQ sparsity. In particular small fields can make array occupancy much lower.
 
@@ -171,7 +171,7 @@ system load changed substantially between runs.
 
 Thus retain the existing matrix-first / DP-last position for this backend.
 This is not a theorem that every possible row order and input behaves alike.
-Raw paired measurements: [row_order.json](data/mq_layout/row_order.json).
+Raw paired measurements: `data/mq_layout/row_order.json`.
 
 ## Correctness and reproduction
 
@@ -181,7 +181,7 @@ rows, and n=5 over F2, F7, F101 and F18446744073709551557. The last prime forces
 ordinary modular arithmetic instead of delayed reduction. Each audit compares
 against the original sparse algorithm with the original row order, including
 all parameter coefficients. All passed. Eight additional profiled runs also
-passed exact comparison. Raw audits: [audits.json](data/mq_layout/audits.json).
+passed exact comparison. Raw audits: `data/mq_layout/audits.json`.
 
 `make test-mq-layout test-minor-dp test-mq-filter` also passed, covering the
 new smoke target and the existing determinant scheduling, projected-coefficient,
@@ -226,7 +226,7 @@ degree-three rejection, output preservation, and zero input.
 The production audit passed 24 exact comparisons against sharing-disabled
 sparse DP: n=7/8, full/projected, one/four threads, two seeds; and n=5 over
 F2, F7, F101, and a near-full-word prime. See
-[production_audits.json](data/mq_layout/production_audits.json). These timings
+`data/mq_layout/production_audits.json`. These timings
 are correctness-run timings, not a new paired performance measurement.
 
 ```
@@ -238,7 +238,7 @@ python3 src/test/mq_layout_bench.py production --output /tmp/mq-shared-audits.js
 The following iteration optimizes index construction. Reducing the root's
 per-cofactor coefficient buffers remains a separate candidate.
 
-## Compact keys and parallel map construction
+## Compact keys and parallel map construction (historical)
 
 The production policy measured in this section kept n<=7 on its previous
 shared-array path (see the later default-policy update below).
@@ -270,13 +270,13 @@ The limit remains a workspace admission estimate, not a whole-process RSS cap.
 Three experiments were kept separately to avoid selecting results from
 different runs as if they were paired:
 
-* [maps_timings.json](data/mq_layout/maps_timings.json): three-repeat ablation
+* `data/mq_layout/maps_timings.json`: three-repeat ablation
   of native/compact keys and serial/sharded maps, using a 32,768-pair threshold.
-* [ordered_timings.json](data/mq_layout/ordered_timings.json): adds a common
+* `data/mq_layout/ordered_timings.json`: adds a common
   radix-sorted monomial order and remaps transitions. This makes each fixed
   shift's writes monotone and reduces arithmetic time, but extra sorting/map
   remapping does not consistently improve total time. It remains test-only.
-* [maps_final.json](data/mq_layout/maps_final.json): five-repeat check of the
+* `data/mq_layout/maps_final.json`: five-repeat check of the
   compact/sharded variant with the original low threshold. n=8 improved, but
   n=7 four-thread median time increased from 0.0742 to 0.0800 seconds. This
   motivated retaining the original n<=7 path and raising the shard threshold.
@@ -301,15 +301,15 @@ packing rose from 0.1920 to 0.2135 seconds, while total time improved. The
 extra roughly 8 MiB process peak is a tradeoff of the parallel shard buffers
 and allocator lifetimes. Stage medians need not sum to the total median.
 
-Raw final comparison: [maps_policy.json](data/mq_layout/maps_policy.json).
+Raw final comparison: `data/mq_layout/maps_policy.json`.
 These are local results for the tested input, not portable speed guarantees.
 
 The variant audit passed 37 exact comparisons, including the rejected sorting
-experiment: [maps_audits.json](data/mq_layout/maps_audits.json). The retained
+experiment: `data/mq_layout/maps_audits.json`. The retained
 policy passed another 29 exact comparisons against sparse DP, including full
 and projected n=7/8 outputs, two seeds, n=8 over F2/F7/a near-full-word prime,
 and thread counts 3 and 16:
-[maps_policy_audits.json](data/mq_layout/maps_policy_audits.json).
+`data/mq_layout/maps_policy_audits.json`.
 The kernel regression also compares every transition against serial construction
 for a three-word layout, with/without filtering and 3/4/16 requested threads.
 
@@ -325,7 +325,7 @@ python3 src/test/mq_layout_bench.py production --output /tmp/maps-policy-audit.j
 make test-mq-layout test-mq-filter test-minor-dp test-mq-shared-cli
 ```
 
-## Size-independent default policy
+## Size-independent default policy (superseded)
 
 At user request, production now enables compact keys and sharded map
 construction for every admitted n, removing the n>=8 performance gate. Compact
@@ -340,3 +340,26 @@ ineligible inputs fall back to sparse DP.
 production policy. No tests or benchmarks were rerun for this policy change,
 as requested; the measurements and audits above refer to the earlier policy
 and do not establish performance for larger n or the new n<=7 default.
+
+## Current policy: native keys and shared indices
+
+The small-layout four-bit encoding, nibble-spreading filter and output
+conversion have been removed, including their benchmark implementations.
+Shared indices and hash-sharded map construction remain enabled by default
+for all admitted sizes, using native FLINT packing, including multiword keys.
+The 1,000,000-pair parallel threshold and existing memory/packing admission
+limits remain. This removes repeated per-minor indexing, not the exponential
+subset count; it does not establish unrestricted-size support or a new
+asymptotic bound for the whole determinant algorithm.
+
+Current benchmark modes are 4 (serial), 6 (sharded), 8 (serial with experimental
+ordering), 10 (sharded with experimental ordering), and 12 (production policy).
+The retired compact flag has no effect. Historical timings above describe
+removed or superseded variants and must not be used as current speed claims.
+No tests or timings were rerun for this change, following the earlier request.
+
+`src/test/data/mq_layout/` holds generated local measurements, not required test
+fixtures, and is now ignored and removed from the Git index; local files are preserved.
+Historical data paths above refer to local experiment artifacts, which are not
+distributed with the repository. New runs should write locally or to `/tmp`
+using the commands above.

@@ -4,20 +4,20 @@
 
 #ifdef DRSOLVE_MQ_LAYOUT_TEST
 static int mq_shared_test_used;
+static int mq_shared_test_rank_layers;
 static int mq_shared_test_variant;
 static double mq_shared_test_plan_seconds, mq_shared_test_arithmetic_seconds;
 #endif
 
-/* Test variants 0..7 use explicit flags: compact keys, sharding, ordering.
+/* Test variants use flags 2 (sharding) and 4 (ordering); bit 1 is retired.
  * Variant 8 (benchmark mode 12) follows the retained production policy. */
 static int mq_shared_variant(void)
 {
 #ifdef DRSOLVE_MQ_LAYOUT_TEST
     if (mq_shared_test_variant < 8) return mq_shared_test_variant;
 #endif
-    /* Enable compact keys and sharding for every admitted size; each
-     * optimization retains its packing or transition-count eligibility check. */
-    return 3;
+    /* Sharding works with native multiword keys at every admitted size. */
+    return 2;
 }
 static size_t mq_shared_parallel_threshold(void)
 {
@@ -94,26 +94,10 @@ static void mq_shared_empty(mq_shared_support *s, flint_bitcnt_t bits, slong wor
 static void mq_shared_support_init(mq_shared_support *s, const nmod_mpoly_ctx_t ctx, slong degree)
 {
     flint_bitcnt_t bits = mpoly_fix_bits(1+FLINT_BIT_COUNT((ulong)degree), ctx->minfo);
-    if ((mq_shared_variant() & 1) && degree < 16 && ctx->minfo->nvars <= 16)
-        bits = 4;
     slong words = mpoly_words_per_exp(bits, ctx->minfo);
     FLINT_ASSERT(words <= 3);
     mq_shared_empty(s, bits, words);
     ulong zero[3] = {0}; mq_shared_insert(s, zero);
-}
-/* Internal four-bit keys do not use FLINT's minimum exponent field width.
- * The admitted total degree is <16, so field-wise addition cannot carry. */
-static void mq_shared_read_key(ulong *key, const nmod_mpoly_t p, slong term,
-                               const mq_shared_support *s, const nmod_mpoly_ctx_t ctx)
-{
-    if (s->bits == 4) {
-        ulong exp[FLINT_BITS];
-        nmod_mpoly_get_term_exp_ui(exp, p, term, ctx);
-        key[0] = 0;
-        for (slong v = 0; v < ctx->minfo->nvars; v++) key[0] = (key[0] << 4) | exp[v];
-    } else {
-        memcpy(key, p->exps+term*s->words, s->words*sizeof(ulong));
-    }
 }
 static void mq_shared_support_clear(mq_shared_support *s)
 {
@@ -133,33 +117,15 @@ static void mq_shared_row(mq_shared_support *shifts, nmod_mpoly_t *row,
         int packed = nmod_mpoly_repack_bits(p, row[col], mpoly_fix_bits(previous->bits, ctx->minfo), ctx);
         FLINT_ASSERT(packed); (void)packed;
         for (slong t = 0; t < p->length; t++) {
-            ulong key[3]; mq_shared_read_key(key, p, t, previous, ctx);
-            mq_shared_insert(shifts, key);
+            mq_shared_insert(shifts, p->exps+t*previous->words);
         }
     }
     nmod_mpoly_clear(p, ctx);
-}
-static inline ulong mq_shared_spread_nibbles(ulong code)
-{
-    code &= UWORD(0xffffffff);
-    code = (code | (code << 16)) & UWORD(0x0000ffff0000ffff);
-    code = (code | (code << 8)) & UWORD(0x00ff00ff00ff00ff);
-    return (code | (code << 4)) & UWORD(0x0f0f0f0f0f0f0f0f);
 }
 static int mq_shared_keep(const ulong *key, const mq_det_filter *f,
                           const nmod_mpoly_ctx_t ctx, flint_bitcnt_t bits)
 {
     if (!f) return 1;
-    if (bits == 4 && f->packed_bits == 8 && f->nvars <= 7) {
-        /* Spread seven nibbles into FLINT's eight-bit fields in registers. */
-        ulong mask = (UWORD(1) << (4*f->nvars))-1;
-        for (slong axis = 0; axis < 2; axis++) {
-            ulong code = (key[0] >> (4*(1+(1-axis)*f->nvars))) & mask;
-            code = mq_shared_spread_nibbles(code);
-            if (!mq_monom_contains(&f->packed[axis], code)) return 0;
-        }
-        return 1;
-    }
     if (f->packed_bits == bits) {
         slong width = f->nvars*bits;
         for (slong axis = 0; axis < 2; axis++) {
@@ -172,10 +138,7 @@ static int mq_shared_keep(const ulong *key, const mq_det_filter *f,
         return 1;
     }
     ulong exp[64];
-    if (bits == 4)
-        for (slong v = 0; v < ctx->minfo->nvars; v++)
-            exp[v] = (key[0] >> (4*(ctx->minfo->nvars-1-v))) & 15;
-    else mpoly_get_monomial_ui(exp, key, bits, ctx->minfo);
+    mpoly_get_monomial_ui(exp, key, bits, ctx->minfo);
     return mq_filter_accepts(f, exp, 0);
 }
 static uint32_t *mq_shared_next(mq_shared_support *next, const mq_shared_support *prev,
@@ -398,20 +361,14 @@ static void mq_shared_pack(nmod_mpoly_t out, const ulong *coeffs,
     slong len = 0;
     for (size_t i = 0; i < s->count; i++) if (coeffs[i]) {
         out->coeffs[len] = coeffs[i];
-        if (s->bits == 4 && bits == 8) {
-            out->exps[len*words] = mq_shared_spread_nibbles(s->keys[i]);
-            if (words == 2) out->exps[len*words+1] = mq_shared_spread_nibbles(s->keys[i] >> 32);
-        } else if (s->bits == 4) {
-            ulong exp[FLINT_BITS];
-            for (slong v = 0; v < ctx->minfo->nvars; v++)
-                exp[v] = (s->keys[i] >> (4*(ctx->minfo->nvars-1-v))) & 15;
-            mpoly_set_monomial_ui(out->exps+len*words, exp, bits, ctx->minfo);
-        } else memcpy(out->exps+len*words, s->keys+i*s->words, s->words*sizeof(ulong));
+        memcpy(out->exps+len*words, s->keys+i*s->words, s->words*sizeof(ulong));
         len++;
     }
     _nmod_mpoly_set_length(out, len, ctx);
     if (!s->sorted) nmod_mpoly_sort_terms(out, ctx);
 }
+
+#include "mq_rank_layout.h"
 
 /* Shared support and coefficients for all layers, including the root.
  * Preflight proves the degree/packing invariants and bounds owned workspace. */
@@ -436,7 +393,16 @@ static int mq_shared_det(nmod_mpoly_t result, nmod_mpoly_t **matrix, slong n,
 #ifdef DRSOLVE_MQ_LAYOUT_TEST
         double plan_start = omp_get_wtime();
 #endif
-        uint32_t *map = mq_shared_next(&next, &prev, &shifts, f, ctx, 1, parallel);
+        uint32_t *map = NULL;
+        size_t previous_count = k == 1 ? 1 : choose[n][k-1];
+        int ranked = mq_rank_enabled() && mq_rank_next(&next, &map, &prev, &shifts,
+                         filter, ctx, n, k, count, previous_count, parallel);
+        if (ranked && g_dixon_verbose_level >= 2)
+            printf("  MQ direct-index layer %ld: %zu monomials\n", k, next.count);
+        if (!ranked) map = mq_shared_next(&next, &prev, &shifts, f, ctx, 1, parallel);
+#ifdef DRSOLVE_MQ_LAYOUT_TEST
+        mq_shared_test_rank_layers += ranked;
+#endif
 #ifdef DRSOLVE_MQ_LAYOUT_TEST
         if (mq_shared_variant() & 4)
             mq_shared_order(&next, map, shifts.count*prev.count, parallel);
@@ -455,7 +421,7 @@ static int mq_shared_det(nmod_mpoly_t result, nmod_mpoly_t **matrix, slong n,
             int packed = nmod_mpoly_repack_bits(tmp, matrix[n-k][c], mpoly_fix_bits(prev.bits, ctx->minfo), ctx);
             FLINT_ASSERT(packed); (void)packed;
             for (slong t = 0; t < tmp->length; t++) {
-                ulong key[3]; mq_shared_read_key(key, tmp, t, &prev, ctx);
+                const ulong *key = tmp->exps+t*prev.words;
                 uint32_t id = mq_shared_find(&shifts, key);
                 FLINT_ASSERT(id != UINT32_MAX); factors[c*shifts.count+id] = tmp->coeffs[t];
             }

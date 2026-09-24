@@ -90,3 +90,5 @@ third_party_msys2/
 # DLL directory
 dll/
 
+# Generated local MQ benchmark measurements (not test fixtures)
+/src/test/data/mq_layout/

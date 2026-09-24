@@ -1058,9 +1058,9 @@ $(BUILD_DIR)/mq_core_linear.so: paper/rank/scripts/mq_core_linear.c
 test-mq-homological-core: $(BUILD_DIR)/mq_core_linear.so
 
 # Shared-support production header and opt-in profiling/ablation driver.
-$(BUILD_DIR)/determinant/fq_mpoly_mat_det.o: $(SRC_DIR)/determinant/mq_shared_layout.h
+$(BUILD_DIR)/determinant/fq_mpoly_mat_det.o: $(SRC_DIR)/determinant/mq_shared_layout.h $(SRC_DIR)/determinant/mq_rank_layout.h
 
-$(BUILD_DIR)/mq_layout_bench: $(SRC_DIR)/test/mq_layout_bench.c $(SRC_DIR)/test/mq_layout_experiment.h $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c $(SRC_DIR)/determinant/mq_shared_layout.h $(DIXON_SHARED_LIB)
+$(BUILD_DIR)/mq_layout_bench: $(SRC_DIR)/test/mq_layout_bench.c $(SRC_DIR)/test/mq_layout_experiment.h $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c $(SRC_DIR)/determinant/mq_shared_layout.h $(SRC_DIR)/determinant/mq_rank_layout.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -DDRSOLVE_MQ_LAYOUT_TEST -o $@ $(SRC_DIR)/test/mq_layout_bench.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-mq-layout
@@ -1073,3 +1073,19 @@ test-mq-layout: $(BUILD_DIR)/mq_layout_bench
 .PHONY: test-mq-shared-cli
 test-mq-shared-cli: drsolve-dynamic
 	python3 $(SRC_DIR)/test/mq_shared_cli_test.py
+
+# Boolean forward/backward MQ support analysis; no determinant evaluation.
+$(BUILD_DIR)/mq_support_count: $(SRC_DIR)/test/mq_support_count.c $(SRC_DIR)/test/mq_support_count.h $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c $(SRC_DIR)/determinant/mq_shared_layout.h $(SRC_DIR)/determinant/mq_rank_layout.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -DDRSOLVE_MQ_SUPPORT_TEST -o $@ $(SRC_DIR)/test/mq_support_count.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+$(BUILD_DIR)/mq_rank_kernel_test: $(SRC_DIR)/test/mq_rank_kernel_test.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c $(SRC_DIR)/determinant/mq_shared_layout.h $(SRC_DIR)/determinant/mq_rank_layout.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_rank_kernel_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-mq-rank
+test-mq-rank: $(BUILD_DIR)/mq_rank_kernel_test $(BUILD_DIR)/mq_layout_bench
+	./$(BUILD_DIR)/mq_rank_kernel_test
+	python3 $(SRC_DIR)/test/mq_rank_bench.py audit --output /tmp/mq-rank-audit.json
+
+.PHONY: test-mq-rank-cli
+test-mq-rank-cli: drsolve-dynamic
+	python3 $(SRC_DIR)/test/mq_rank_cli_test.py

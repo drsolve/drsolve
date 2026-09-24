@@ -10,11 +10,13 @@ static int mq_layout_enabled, mq_layout_profile, mq_layout_rotate, mq_layout_rot
 void mq_layout_configure(int enabled, int profile, int rotate)
 {
     mq_shared_test_used = 0;
+    mq_shared_test_rank_layers = 0;
     mq_shared_test_variant = enabled >= 4 ? enabled-4 : 0;
     mq_shared_test_plan_seconds = mq_shared_test_arithmetic_seconds = 0;
     g_dixon_mq_step1_shared = enabled >= 4;
     mq_layout_enabled = enabled >= 4 ? 0 : enabled; mq_layout_profile = profile; mq_layout_rotate = rotate;
 }
+int mq_layout_rank_layers(void) { return mq_shared_test_rank_layers; }
 int mq_layout_shared_calls(void) { return mq_shared_test_used; }
 double mq_layout_plan_seconds(void) { return mq_shared_test_plan_seconds; }
 double mq_layout_arithmetic_seconds(void) { return mq_shared_test_arithmetic_seconds; }
