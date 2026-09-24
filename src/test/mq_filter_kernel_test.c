@@ -162,6 +162,48 @@ static void check_linear_kernel(flint_rand_t state, slong n, ulong q)
     mq_filter_clear(&f);nmod_mpoly_ctx_clear(ctx);
 }
 
+static void check_shared_admission(void)
+{
+    for (slong n = 8; n <= 9; n++) {
+        nmod_mpoly_ctx_t ctx; nmod_mpoly_ctx_init(ctx, 2*n-1, ORD_LEX, 65537);
+        nmod_mpoly_t **a = flint_malloc(n*sizeof(*a));
+        ulong choose[FLINT_BITS][FLINT_BITS] = {{0}}, e[FLINT_BITS] = {0};
+        for (slong i = 0; i <= n; i++) {
+            choose[i][0] = 1;
+            for (slong j = 1; j <= i; j++) choose[i][j] = choose[i-1][j-1]+choose[i-1][j];
+        }
+        for (slong r = 0; r < n; r++) {
+            a[r] = flint_malloc(n*sizeof(**a));
+            for (slong c = 0; c < n; c++) {
+                nmod_mpoly_init(a[r][c], ctx);
+                for (slong v = 0; v < 2*n-1; v++) {
+                    e[v] = r == 0 ? 2 : 1;
+                    nmod_mpoly_push_term_ui_ui(a[r][c], 1+c+v, e, ctx); e[v] = 0;
+                }
+                nmod_mpoly_sort_terms(a[r][c], ctx);
+            }
+        }
+        assert(mq_shared_admit(a, n, ctx, choose) == (n == 8));
+        if (n == 8) {
+            nmod_mpoly_t out; nmod_mpoly_init(out, ctx); nmod_mpoly_one(out, ctx);
+            e[0] = 3; nmod_mpoly_push_term_ui_ui(a[0][0], 1, e, ctx); e[0] = 0;
+            nmod_mpoly_sort_terms(a[0][0], ctx);
+            assert(!mq_shared_det(out, a, n, ctx, 0, NULL, choose));
+            assert(nmod_mpoly_is_one(out, ctx)); /* Rejection preserves output. */
+            for (slong r = 0; r < n; r++) for (slong c = 0; c < n; c++)
+                nmod_mpoly_zero(a[r][c], ctx);
+            assert(mq_shared_det(out, a, n, ctx, 0, NULL, choose));
+            assert(nmod_mpoly_is_zero(out, ctx));
+            nmod_mpoly_clear(out, ctx);
+        }
+        for (slong r = 0; r < n; r++) {
+            for (slong c = 0; c < n; c++) nmod_mpoly_clear(a[r][c], ctx);
+            flint_free(a[r]);
+        }
+        flint_free(a); nmod_mpoly_ctx_clear(ctx);
+    }
+}
+
 int main(void)
 {
     flint_rand_t state;
@@ -170,6 +212,7 @@ int main(void)
     for (int order = ORD_LEX; order <= ORD_DEGREVLEX; order++)
         for (slong i = 0; i < 6; i++) check_packing(state, axes[i], order);
     check_layer_certificate();
+    check_shared_admission();
     for(slong n=3;n<=9;n+=2) { check_linear_kernel(state,n,2);check_linear_kernel(state,n,65537); }
     flint_rand_clear(state); flint_cleanup_master();
     puts("MQ packed filtering and safe-layer certificates passed");

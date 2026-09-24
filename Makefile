@@ -1030,3 +1030,46 @@ test-mq-pencil: $(BUILD_DIR)/mq_pencil_test
 
 test-mq-pencil-cli:
 	python3 $(SRC_DIR)/test/mq_pencil_cli_test.py
+
+# Standalone experimental coefficient-panel core construction; no solver dispatch.
+$(BUILD_DIR)/mq_direct_core_test: $(SRC_DIR)/test/mq_direct_core_test.c $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/determinant/mq_poly_mat_det.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_direct_core_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-mq-direct-core
+test-mq-direct-core: $(BUILD_DIR)/mq_direct_core_test
+	./$(BUILD_DIR)/mq_direct_core_test 4 1 0
+	./$(BUILD_DIR)/mq_direct_core_test 5 4 0
+	./$(BUILD_DIR)/mq_direct_core_test 5 4 1
+	./$(BUILD_DIR)/mq_direct_core_test 4 1 0 12345 3
+	./$(BUILD_DIR)/mq_direct_core_test 4 1 0 12345 2
+
+# Small research audit for input-derived homological cores (requires numpy).
+$(BUILD_DIR)/mq_homological_fixture: paper/rank/scripts/export_mq_core_input.c $(SRC_DIR)/test/mq_direct_core_test.c $(SRC_DIR)/test/dixon_mq_filter_test.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ paper/rank/scripts/export_mq_core_input.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-mq-homological-core
+test-mq-homological-core: $(BUILD_DIR)/mq_homological_fixture
+	python3 paper/rank/scripts/check_mq_homological_core.py --n 3 4 --q 101 --seeds 12345 --output /tmp/mq-homological-core-smoke.json
+
+# Native arithmetic for larger homological-core research audits.
+$(BUILD_DIR)/mq_core_linear.so: paper/rank/scripts/mq_core_linear.c
+	$(CC) $(ALL_CFLAGS) -shared -o $@ $< $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+test-mq-homological-core: $(BUILD_DIR)/mq_core_linear.so
+
+# Shared-support production header and opt-in profiling/ablation driver.
+$(BUILD_DIR)/determinant/fq_mpoly_mat_det.o: $(SRC_DIR)/determinant/mq_shared_layout.h
+
+$(BUILD_DIR)/mq_layout_bench: $(SRC_DIR)/test/mq_layout_bench.c $(SRC_DIR)/test/mq_layout_experiment.h $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c $(SRC_DIR)/determinant/mq_shared_layout.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -DDRSOLVE_MQ_LAYOUT_TEST -o $@ $(SRC_DIR)/test/mq_layout_bench.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-mq-layout
+test-mq-layout: $(BUILD_DIR)/mq_layout_bench
+	./$(BUILD_DIR)/mq_layout_bench 7 1 4 1 0 0 1 132 65537
+	./$(BUILD_DIR)/mq_layout_bench 8 4 4 0 0 0 1 132 65537
+	./$(BUILD_DIR)/mq_layout_bench 5 1 3 1 1 0 1 12345 2
+	./$(BUILD_DIR)/mq_layout_bench 5 1 3 1 0 0 1 12345 18446744073709551557
+
+.PHONY: test-mq-shared-cli
+test-mq-shared-cli: drsolve-dynamic
+	python3 $(SRC_DIR)/test/mq_shared_cli_test.py

@@ -66,8 +66,8 @@ static int pencil_compute(fq_mvpoly_t *result,fq_mvpoly_t **matrix,
             if(degree>(i?1:2))return 0;
         }
     }
-    /* This first implementation stores two polynomial matrices. Bound dense
-     * coefficient slots before allocation, rather than risking enormous runs.
+    /* Keep the existing conservative two-layer eligibility estimate even
+     * though column scratch now replaces the second matrix.
      * n<=10 fits this eligibility bound; larger workspaces use minor DP. */
     double slots=2.0*m*m;
     for(slong k=1;k<=m-1;k++)slots*=((double)nv+k)/k;
@@ -134,7 +134,13 @@ static int pencil_compute(fq_mvpoly_t *result,fq_mvpoly_t **matrix,
         if(i==j)nmod_mpoly_sub(entry,entry,power,ctx);
         nmod_mpoly_neg(entry,entry,ctx);
     }
-    nmod_mpoly_struct *B=pencil_polys(m*m,ctx),*next=pencil_polys(m*m,ctx);
+    slong threads=1;
+#ifdef _OPENMP
+    if(!omp_in_parallel())threads=FLINT_MIN(omp_get_max_threads(),m);
+#endif
+    stats->threads=threads;
+    nmod_mpoly_struct *B=pencil_polys(m*m,ctx);
+    nmod_mpoly_struct *scratch=pencil_polys(threads*m,ctx);
     nmod_mpoly_struct *parts=pencil_polys(3*m,ctx);
     nmod_mpoly_struct *q=pencil_polys(3*n,ctx),*buckets=pencil_polys(n+2,ctx);
     for(slong i=0;i<n;i++)pencil_split(q+3*i,a+i,ctx);
@@ -144,13 +150,9 @@ static int pencil_compute(fq_mvpoly_t *result,fq_mvpoly_t **matrix,
     nmod_mpoly_one(coefficient,ctx);
     for(slong d=0;d<3;d++)nmod_mpoly_set(buckets+m+d,q+d,ctx);
     stats->normalization=pencil_seconds()-start;
-    slong threads=1;
-#ifdef _OPENMP
-    if(!omp_in_parallel())threads=FLINT_MIN(omp_get_max_threads(),m*m);
-#endif
-    stats->threads=threads;
-    /* c_0=1, B_0=I. Before each update, append q B_k u to the border
-     * polynomial. Only two matrix layers and the current c_k are retained. */
+    /* Each column of K B_k only reads the corresponding old column,
+     * so it can be replaced in place.
+     * All columns finish before the global trace/diagonal correction. */
     for(slong k=0;k<m;k++) {
         double phase=pencil_seconds();
 #ifdef _OPENMP
@@ -179,29 +181,37 @@ static int pencil_compute(fq_mvpoly_t *result,fq_mvpoly_t **matrix,
             nmod_mpoly_sub(buckets+m-1-k+d,buckets+m-1-k+d,parts+3*i+d,ctx);
         stats->assembly+=pencil_seconds()-phase;phase=pencil_seconds();
         /* The last update only needs the trace: B_m=0 is never materialized. */
-        slong count=k==m-1?m:m*m;
 #ifdef _OPENMP
 #pragma omp parallel num_threads(threads) if(threads>1)
 #endif
         {
             nmod_mpoly_t p;nmod_mpoly_init(p,ctx);
+            slong tid=0;
+#ifdef _OPENMP
+            tid=omp_get_thread_num();
+#endif
+            nmod_mpoly_struct *column=scratch+tid*m;
 #ifdef _OPENMP
 #pragma omp for schedule(dynamic,1)
 #endif
-            for(slong idx=0;idx<count;idx++) {
-                slong i=k==m-1?idx:idx/m,j=k==m-1?idx:idx%m;
-                nmod_mpoly_struct *entry=next+i*m+j;
-                nmod_mpoly_zero(entry,ctx);
-                for(slong l=0;l<m;l++) {
-                    nmod_mpoly_mul(p,a+(i+1)*n+l+1,B+l*m+j,ctx);
-                    nmod_mpoly_add(entry,entry,p,ctx);
+            for(slong j=0;j<m;j++) {
+                slong first=k==m-1?j:0,last=k==m-1?j+1:m;
+                for(slong i=first;i<last;i++) {
+                    nmod_mpoly_zero(column+i,ctx);
+                    for(slong l=0;l<m;l++) {
+                        nmod_mpoly_mul(p,a+(i+1)*n+l+1,B+l*m+j,ctx);
+                        nmod_mpoly_add(column+i,column+i,p,ctx);
+                    }
+                    mq_coefficient_filter_apply(column+i,ctx,filter,0);
                 }
-                mq_coefficient_filter_apply(entry,ctx,filter,0);
+                /* No entry in this column is overwritten until all of its
+                 * outputs have consumed the old column. */
+                for(slong i=first;i<last;i++)nmod_mpoly_swap(B+i*m+j,column+i,ctx);
             }
             nmod_mpoly_clear(p,ctx);
         }
         nmod_mpoly_zero(trace,ctx);
-        for(slong i=0;i<m;i++)nmod_mpoly_add(trace,trace,next+i*m+i,ctx);
+        for(slong i=0;i<m;i++)nmod_mpoly_add(trace,trace,B+i*m+i,ctx);
         nmod_mpoly_scalar_mul_ui(coefficient,trace,nmod_neg(nmod_inv(k+1,ctx->mod),ctx->mod),ctx);
         stats->recurrence+=pencil_seconds()-phase;phase=pencil_seconds();
         for(slong d=0;d<3;d++) {
@@ -210,15 +220,19 @@ static int pencil_compute(fq_mvpoly_t *result,fq_mvpoly_t **matrix,
             nmod_mpoly_add(buckets+m-1-k+d,buckets+m-1-k+d,product,ctx);
         }
         stats->assembly+=pencil_seconds()-phase;phase=pencil_seconds();
-        if(k<m-1)for(slong i=0;i<m;i++)nmod_mpoly_add(next+i*m+i,next+i*m+i,coefficient,ctx);
-        for(slong i=0;i<m*m;i++)mq_coefficient_filter_repack(next+i,ctx,filter);
+        if(k<m-1)for(slong i=0;i<m;i++)nmod_mpoly_add(B+i*m+i,B+i*m+i,coefficient,ctx);
+        for(slong i=0;i<m*m;i++)mq_coefficient_filter_repack(B+i,ctx,filter);
         slong terms=0;
-        for(slong i=0;i<m*m;i++)terms+=B[i].length+next[i].length;
+        for(slong i=0;i<m*m;i++)terms+=B[i].length;
+        for(slong i=0;i<threads*m;i++)terms+=scratch[i].length;
         stats->peak_terms=FLINT_MAX(stats->peak_terms,terms);
-        nmod_mpoly_struct *swap=B;B=next;next=swap;
         stats->recurrence+=pencil_seconds()-phase;
     }
     double phase=pencil_seconds();
+    /* Recurrence workspaces are dead before output packing. Release them
+     * before allocating the final polynomial and fq term representation. */
+    pencil_clear(B,m*m,ctx);pencil_clear(scratch,threads*m,ctx);
+    pencil_clear(parts,3*m,ctx);pencil_clear(q,3*n,ctx);pencil_clear(a,n*n,ctx);
     for(slong d=0;d<n+2;d++)mq_coefficient_filter_apply(buckets+d,ctx,filter,1);
     ulong exp[65];
     for(slong d=0;d<n+2;d++)for(slong i=0;i<buckets[d].length;i++) {
@@ -228,7 +242,7 @@ static int pencil_compute(fq_mvpoly_t *result,fq_mvpoly_t **matrix,
     nmod_mpoly_sort_terms(answer,ctx);
     nmod_mpoly_to_fq_mvpoly(result,answer,nv,1,ctx,fq);
     stats->assembly+=pencil_seconds()-phase;
-    pencil_clear(B,m*m,ctx);pencil_clear(next,m*m,ctx);pencil_clear(parts,3*m,ctx);pencil_clear(q,3*n,ctx);pencil_clear(buckets,n+2,ctx);pencil_clear(a,n*n,ctx);
+    pencil_clear(buckets,n+2,ctx);
     nmod_mpoly_clear(product,ctx);nmod_mpoly_clear(power,ctx);
     nmod_mpoly_clear(trace,ctx);
     nmod_mpoly_clear(coefficient,ctx);nmod_mpoly_clear(answer,ctx);nmod_mpoly_ctx_clear(ctx);

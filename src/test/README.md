@@ -33,3 +33,11 @@ also perform large computations and are not part of the smoke tests above.
 library to preserve existing CLI test entry points and exported functions.
 The former also provides random-system generation used by the CLI's `-r`
 mode. The existing `./drsolve --test <n>` interface is unchanged.
+
+`make test-mq-layout` checks the default MQ shared-support DP backend against
+the existing determinant backend. Its n=7/8 layer statistics, timing ablations,
+row-order comparison, raw data, and reproduction commands are documented in
+[MQ_LAYOUT_EXPERIMENT.md](MQ_LAYOUT_EXPERIMENT.md). Private profiling and
+ablations are compiled only into `build/mq_layout_bench`; the production
+backend is default on with `--no-mq-step1-shared` as an explicit opt-out.
+`make test-mq-shared-cli` compares complete solver outputs and flag precedence.

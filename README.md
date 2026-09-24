@@ -219,6 +219,28 @@ Example:
 - Available methods: `0.Recursive`, `1.Kronecker+HNF`, `2.Interpolation`, `3.Sparse interpolation`, `4.Bareiss`, `5.Recursive Dixon construction`
 - `--method` sets both Step 1 and Step 4 for backward compatibility
 
+#### Experimental construction of the MQ Schur core
+
+A standalone prototype requests coefficient panels from projected Step 1,
+solves complementary degree blocks, and accumulates the exact Schur core
+without constructing the full candidate matrix first:
+
+```bash
+make test-mq-direct-core
+# n, threads, use-pencil (0=minor DP, 1=pencil), seed, prime
+./build/mq_direct_core_test 8 4 0 12345 65537
+```
+
+The executable then constructs the ordinary candidate independently and checks
+every core coefficient and the determinant multiplier. Small cases also compare
+full determinants and exercise rejection without publishing a partial core.
+This is an experiment, not a solver option: it still generates all complementary
+coefficients and repeats projected determinant work across panels. Local n=8
+measurements are slower than ordinary construction plus Schur compression.
+It does not establish a smaller asymptotic Step 1 bound or an algebraic reduction
+that bypasses complementary coefficients. Details and measurements:
+[direct-core experiment](paper/rank/DIRECT_CORE_EXPERIMENT.md).
+
 #### Experimental MQ Step 1 degree recurrence
 
 ```bash
@@ -228,7 +250,10 @@ Example:
 `--mq-step1-pencil` enables a Faddeev-LeVerrier degree recurrence instead of
 subset-minor DP. It normalizes the parameter coefficient matrix by constant
 column operations to obtain a lower block `tI+L`, then constructs the determinant
-and adjugate border terms using two successive polynomial-matrix layers.
+and adjugate border terms using one polynomial matrix and per-thread column
+scratch. Boundary vectors are formed from the current matrix.
+Columns are overwritten only after their old entries have all been consumed;
+the trace and diagonal correction follow the column-update barrier.
 The constant determinant scale is preserved exactly. Parameter coefficients
 are accumulated in separate degree buckets. With the default MQ prediction,
 intermediate matrices are projected to the candidate's downward closure using
@@ -240,16 +265,18 @@ This option is off by default; `--no-mq-step1-pencil` disables it. It currently
 requires prime characteristic `p > n-1`, one parameter, and full row rank of the
 linear rows' parameter coefficient matrix (`n` is the equation count). Other
 explicit Step 1 backends take precedence. Unsupported inputs fall back to the
-existing backend. A conservative bound of 268,435,456 coefficient slots protects
-the two recurrence matrices; this permits `n<=10`, while `n>=11` currently
+existing backend. The conservative eligibility estimate retains the old
+two-matrix bound of 268,435,456 coefficient slots; this permits `n<=10`, while `n>=11` currently
 falls back. This is an eligibility bound, not a process-memory limit.
 `--no-mq-step1-filter` computes the complete pencil determinant.
 If candidate repair fails, the complete determinant is computed as a fallback.
 This remains an experimental backend; see the paired timings in the research
 note before selecting it for performance.
 
-`--threads` parallelizes independent matrix entries and border products.
-`-v 2` reports normalization, recurrence, assembly, and peak matrix term count.
+`--threads` parallelizes independent columns and border products, using
+at most `n-1` worker threads. `-v 2` reports normalization, recurrence, assembly,
+and the largest sampled matrix-plus-column-scratch term count (excluding
+vectors, multiplication temporaries, and retained allocation capacity).
 When both experimental Step 1 options are supplied, the last enabling option
 (`--mq-step1-pencil` or `--mq-step1-simplex`) wins. Run
 `make test-mq-pencil test-mq-pencil-cli` for exactness and fallback tests.
@@ -268,8 +295,21 @@ including `--fq-det-method`. Other explicit Step 4 methods are preserved.
 The compressor factors each constant degree-diagonal block once, solves
 `E X = V` by block back substitution, then forms `A - U X`. It does not
 copy or update the entire polynomial matrix for scalar pivot elimination.
-The MQ Step 1 path also merges packed linear-product streams directly and
-filters before storing the result; unsupported layouts use FLINT multiplication.
+Prime-field, single-parameter MQ Step 1 uses shared monomial indices and
+coefficient arrays by default when the matrix shape and workspace bounds allow
+it. The unique quadratic row remains last in the DP evaluation order. A
+conservative preflight bounds the backend's arrays, maps, support tables and
+output allowance to 256 MiB; this is not a process-RSS limit. Unsupported shapes,
+packing, or larger bounds fall back to the existing sparse minor DP.
+
+Use `--no-mq-step1-shared` to select the previous sparse DP, or
+`--mq-step1-shared` to re-enable sharing. This is independent of
+`--no-mq-step1-filter`, and explicit Step 1 backends such as pencil, simplex,
+interpolation and Bareiss keep precedence. Small characteristic is supported;
+delayed modular reduction is used only when a proved one-limb bound is safe.
+See [the n=7/8 measurements and production checks](src/test/MQ_LAYOUT_EXPERIMENT.md).
+The sparse fallback retains its packed linear-product streams and coefficient
+filtering.
 
 Enable total-degree interpolation in Step 1 explicitly with:
 

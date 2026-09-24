@@ -13,6 +13,7 @@ extern int g_field_equation_reduction;
 extern int g_dixon_debug_mode;
 extern int g_dixon_verbose_level;
 extern slong g_dixon_det_cache_limit;
+extern int g_dixon_mq_step1_shared;
 static inline ulong reduce_exp_field_ui(ulong e, ulong q);
 static ulong field_size_q_from_fq_ctx(const fq_nmod_ctx_t ctx);
 static void fq_nmod_poly_reduce_field_equation_inplace(fq_nmod_poly_t poly, const fq_nmod_ctx_t ctx);
@@ -1914,6 +1915,10 @@ static void mq_filtered_mul(nmod_mpoly_t out, const nmod_mpoly_t a,
  * The final expansion is parallelized by cofactor, followed by a tree sum.
  * The entry limit excludes arithmetic temporaries and matrix views.
  */
+#include "mq_shared_layout.h"
+#ifdef DRSOLVE_MQ_LAYOUT_TEST
+#include "../test/mq_layout_experiment.h"
+#endif
 #ifdef DRSOLVE_DET_TESTING
 /* Test-only observation; normal builds contain no callbacks. */
 void drsolve_det_test_event(int event, slong size);
@@ -1929,6 +1934,23 @@ static int compute_nmod_mpoly_det_layered_dp(nmod_mpoly_t result, nmod_mpoly_t *
     int ok = 0;
 
     if (size <= 3 || size >= FLINT_BITS || limit <= 0) return 0;
+
+#ifdef DRSOLVE_MQ_LAYOUT_TEST
+    if (mq_layout_rotate && !mq_layout_rotating) {
+        nmod_mpoly_t *rotated[FLINT_BITS];
+        mq_det_filter local;
+        const mq_det_filter *active = filter;
+        for (slong i = 0; i < size - 1; i++) rotated[i] = matrix[i + 1];
+        rotated[size - 1] = matrix[0];
+        if (filter) { local = *filter; local.safe_linear_layers = 0; active = &local; }
+        mq_layout_rotating = 1;
+        int accepted = compute_nmod_mpoly_det_layered_dp(result, rotated, size, ctx,
+                                                        use_parallel, limit, active);
+        mq_layout_rotating = 0;
+        if (accepted && ((size - 1) & 1)) nmod_mpoly_neg(result, result, ctx);
+        return accepted;
+    }
+#endif
 
     /* Saturation avoids overflow even when the requested matrix is far too
      * large. All ranks used after this preflight fit within the entry limit. */
@@ -1970,11 +1992,27 @@ static int compute_nmod_mpoly_det_layered_dp(nmod_mpoly_t result, nmod_mpoly_t *
         printf("  determinant layered DP (%s): size=%ld, peak entries=%ld, limit=%ld, parallel=%s\n",
                "nmod", size, peak, limit, use_parallel ? "yes" : "no");
 
+#ifdef DRSOLVE_MQ_LAYOUT_TEST
+    if (mq_layout_enabled)
+        return mq_layout_det(result, matrix, size, ctx, use_parallel, filter, choose);
+#endif
+
+    if (g_dixon_mq_step1_shared &&
+        mq_shared_det(result, matrix, size, ctx, use_parallel, filter, choose)) return 1;
+
+#ifdef DRSOLVE_MQ_LAYOUT_TEST
+    mq_layout_support profile_support = {0};
+    if (mq_layout_profile) mq_layout_support_init(&profile_support, ctx, size + 1);
+#endif
+
 #ifdef DRSOLVE_DET_TESTING
     drsolve_det_test_event(0, size);
 #endif
 
     for (slong k = 1; k <= size; k++) {
+#ifdef DRSOLVE_MQ_LAYOUT_TEST
+        double layout_start = omp_get_wtime();
+#endif
         slong count = k == size ? size : (slong) choose[size][k];
         const mq_det_filter *layer_filter = filter && k > filter->safe_linear_layers ? filter : NULL;
         int failed = 0;
@@ -2085,6 +2123,12 @@ static int compute_nmod_mpoly_det_layered_dp(nmod_mpoly_t result, nmod_mpoly_t *
             }
         }
         if (failed) goto cleanup;
+#ifdef DRSOLVE_MQ_LAYOUT_TEST
+        if (mq_layout_profile)
+            mq_layout_observe(&profile_support, current, k == size ? 1 : count,
+                              matrix[size-k], size, k, ctx, k == 1 ? NULL : layer_filter,
+                              omp_get_wtime() - layout_start);
+#endif
         if (filter && g_dixon_verbose_level >= 3) {
             slong terms = 0;
             /* At the root only current[0] remains live after tree reduction. */
@@ -2104,6 +2148,9 @@ static int compute_nmod_mpoly_det_layered_dp(nmod_mpoly_t result, nmod_mpoly_t *
     ok = 1;
 
 cleanup:
+#ifdef DRSOLVE_MQ_LAYOUT_TEST
+    if (mq_layout_profile) mq_layout_support_clear(&profile_support);
+#endif
     for (slong i = 0; i < current_count; i++) nmod_mpoly_clear(current[i], ctx);
     for (slong i = 0; i < previous_count; i++) nmod_mpoly_clear(previous[i], ctx);
     free(current);

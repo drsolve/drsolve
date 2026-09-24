@@ -13,7 +13,7 @@ with tempfile.TemporaryDirectory(prefix='mq-pencil-cli-') as tmp:
            (4,3,12345,[]),(5,7,7,[]),(5,101,0,[]),(5,101,1,[]),(5,101,2,[])]
     for n,q,seed,extra in cases:
         outputs=[]
-        for pencil,threads in [(False,1),(True,1),(True,4)]:
+        for pencil,threads in [(False,1),(True,1),(True,4),(True,16)]:
             out=Path(tmp)/f'{n}-{q}-{seed}-{int(pencil)}-{threads}.dr'
             cmd=[str(root/'drsolve'),'--mq-step4-schur','--threads',str(threads),'-v','2',
                  '-r','--seed',str(seed),'-n',str(n),'-o',str(out),*extra,f'[2]*{n}',str(q)]
@@ -24,13 +24,13 @@ with tempfile.TemporaryDirectory(prefix='mq-pencil-cli-') as tmp:
                 count=result.stdout.count('MQ Step 1 pencil: size=')
                 if q>n-1 and '--step1' not in extra:
                     assert count==1,(n,q,extra,result.stdout)
-                    assert f'threads={threads},' in result.stdout
+                    assert f'threads={min(threads,n-1)},' in result.stdout
                     if '--no-mq-step1-filter' not in extra:
                         assert '(closure projected)' in result.stdout
                     if (n,q,seed)==(5,7,7):
                         assert 'MQ Step 1 Schur repair verified' in result.stdout
                 else:assert 'MQ Step 1 pencil: fallback' in result.stdout
-        assert outputs[0]==outputs[1]==outputs[2],(n,q,seed,extra)
+        assert all(value==outputs[0] for value in outputs[1:]),(n,q,seed,extra)
     result=subprocess.run([str(root/'drsolve'),'--mq-step1-pencil','--no-mq-step1-pencil',
         '-v','2','-r','--seed','12345','-n','4','[2]*4','65537'],cwd=root,text=True,capture_output=True,check=True)
     assert 'MQ Step 1 pencil:' not in result.stdout
@@ -50,4 +50,4 @@ for flags in ([],['--mq-step1-pencil']):
 assert 'parameter coefficient matrix is rank deficient' in logs[1]
 a=[re.findall(r'^  Final Resultant = (.*)$',s,re.M) for s in logs]
 assert a[0] and a[0]==a[1]
-print('MQ pencil CLI: full outputs, one/four threads, closure projection, fallback, explicit opt-out PASS')
+print('MQ pencil CLI: full outputs, one/four/capped threads, closure projection, fallback, explicit opt-out PASS')
