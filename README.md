@@ -240,9 +240,10 @@ This option is off by default; `--no-mq-step1-pencil` disables it. It currently
 requires prime characteristic `p > n-1`, one parameter, and full row rank of the
 linear rows' parameter coefficient matrix (`n` is the equation count). Other
 explicit Step 1 backends take precedence. Unsupported inputs fall back to the
-existing backend. A conservative bound of 33,554,432 coefficient slots protects
-the two dense recurrence matrices; this permits `n=8,9`, while `n=10` currently
-falls back. `--no-mq-step1-filter` computes the complete pencil determinant.
+existing backend. A conservative bound of 268,435,456 coefficient slots protects
+the two recurrence matrices; this permits `n<=10`, while `n>=11` currently
+falls back. This is an eligibility bound, not a process-memory limit.
+`--no-mq-step1-filter` computes the complete pencil determinant.
 If candidate repair fails, the complete determinant is computed as a fallback.
 This remains an experimental backend; see the paired timings in the research
 note before selecting it for performance.

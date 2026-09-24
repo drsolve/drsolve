@@ -68,11 +68,11 @@ static int pencil_compute(fq_mvpoly_t *result,fq_mvpoly_t **matrix,
     }
     /* This first implementation stores two polynomial matrices. Bound dense
      * coefficient slots before allocation, rather than risking enormous runs.
-     * n=8 and n=9 fit; the sparse minor backend handles larger workspaces. */
+     * n<=10 fits this eligibility bound; larger workspaces use minor DP. */
     double slots=2.0*m*m;
     for(slong k=1;k<=m-1;k++)slots*=((double)nv+k)/k;
-    if(slots>33554432.0) {
-        stats->reason="degree recurrence workspace exceeds 33554432 coefficient slots";return 0;
+    if(slots>268435456.0) {
+        stats->reason="degree recurrence workspace exceeds 268435456 coefficient slots";return 0;
     }
     nmod_mat_t C,P,Pi,T;
     nmod_mat_init(C,m,n,prime);nmod_mat_init(P,m,m,prime);

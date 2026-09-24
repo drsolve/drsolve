@@ -127,21 +127,45 @@ int main(int argc,char **argv)
         fq_mvpoly_clear(&actual);
     }
     if(n==4 && prime==65537) {
-        /* Exercise the memory guard without performing a large computation. */
-        fq_mvpoly_t **large=flint_malloc(10*sizeof(*large));
-        for(slong i=0;i<10;i++) {
-            large[i]=flint_malloc(10*sizeof(**large));
-            for(slong j=0;j<10;j++)fq_mvpoly_init(&large[i][j],18,1,fq);
+        /* n=10 must reach both recurrence entry points without a dense MQ
+         * allocation. diag(1,t,...,t) has the exact determinant t^9. n=11
+         * still rejects before touching an initialized caller output. */
+        for(slong size=10;size<=11;size++) {
+            fq_mvpoly_t **large=flint_malloc(size*sizeof(*large));
+            for(slong i=0;i<size;i++) {
+                large[i]=flint_malloc(size*sizeof(**large));
+                for(slong j=0;j<size;j++)fq_mvpoly_init(&large[i][j],2*(size-1),1,fq);
+            }
+            if(size==10) {
+                slong exps[20]={0},par=0;
+                fq_nmod_t one;fq_nmod_init(one,fq);fq_nmod_one(one,fq);
+                for(slong i=0;i<size;i++) {
+                    par=i?1:0;
+                    fq_mvpoly_add_term_fast(&large[i][i],exps,&par,one);
+                }
+                fq_nmod_clear(one,fq);
+                for(int projected=0;projected<2;projected++) {
+                    assert(projected
+                        ? compute_fq_det_mq_pencil_projected(&actual,large,size,exps,1,exps,1,&stats)
+                        : compute_fq_det_mq_pencil(&actual,large,size,&stats));
+                    assert(actual.nterms==1 && actual.terms[0].par_exp[0]==9);
+                    assert(fq_nmod_is_one(actual.terms[0].coeff,fq));
+                    for(slong v=0;v<18;v++)assert(actual.terms[0].var_exp[v]==0);
+                    fq_mvpoly_clear(&actual);
+                }
+                puts("n=10 full/projected pencil admission and t^9 determinant passed");
+            } else {
+                fq_mvpoly_copy(&actual,&full);fq_monomial_t *ptr=actual.terms;
+                assert(!compute_fq_det_mq_pencil(&actual,large,size,&stats));
+                assert(strstr(stats.reason,"workspace") && actual.terms==ptr);
+                fq_mvpoly_clear(&actual);
+            }
+            for(slong i=0;i<size;i++) {
+                for(slong j=0;j<size;j++)fq_mvpoly_clear(&large[i][j]);
+                flint_free(large[i]);
+            }
+            flint_free(large);
         }
-        fq_mvpoly_copy(&actual,&full);fq_monomial_t *ptr=actual.terms;
-        assert(!compute_fq_det_mq_pencil(&actual,large,10,&stats));
-        assert(strstr(stats.reason,"workspace") && actual.terms==ptr);
-        fq_mvpoly_clear(&actual);
-        for(slong i=0;i<10;i++) {
-            for(slong j=0;j<10;j++)fq_mvpoly_clear(&large[i][j]);
-            flint_free(large[i]);
-        }
-        flint_free(large);
     }
     for(slong i=0;i<n*n;i++)nmod_mpoly_clear(saved+i,ctx);
     flint_free(saved);nmod_mpoly_ctx_clear(ctx);
