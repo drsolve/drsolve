@@ -1,4 +1,7 @@
-# Direct univariate matrix construction for verified projections
+# Direct matrix construction for verified projections
+
+The first section records the initial fq implementation. The native, consuming
+prime-field path described below supersedes it inside the resultant pipeline.
 
 Step 2 now bypasses the intermediate `fq_mvpoly_t ***full_matrix` when:
 
@@ -54,3 +57,62 @@ No n=11 or other large-memory run is required by these tests.
 Result: all 20 direct/generic comparisons and the existing Step 4 integration
 test passed. The CLI and library rebuilt successfully. Large-case peak memory
 and timing were not measured on this machine.
+
+## Native prime-field construction and early source release
+
+Both resultant APIs now use `nmod_poly_mat` for verified single-parameter
+prime-field projections when the univariate determinant path is selected.
+The implementation keeps the same content and degree-order scans, then packs
+each retained source term into `(column, degree, ulong coefficient)` records,
+grouped by source row. During this pass it frees the original exponent arrays
+and field coefficient allocations. It releases the source term array and both
+term-to-axis maps before allocating the native matrix. The consumed polynomial
+has NULL terms and zero length/capacity and remains safe to clear normally.
+Monomial labels have already been copied into independently owned storage.
+The two caller index arrays formerly sized by the full term count are no longer
+allocated on this path; selected indices are sized by matrix order inside the
+extractor and freed after preparing Schur metadata.
+
+This is a private consuming path. The public extraction API still treats its
+input as const, and the direct fq path for extension fields remains unchanged.
+An explicit alternative Step 4 backend still retains its original selection.
+
+Each native scalar is one machine word rather than an `fq_nmod` coefficient
+object. Step 4 accepts native matrices without making an fq-to-nmod full copy.
+For Schur, row/column permutations are applied in place, preserving their sign
+in the determinant factor. On success the original large matrix is released
+before the smaller core determinant runs; on rejection the permuted native
+matrix goes directly to the determinant backend, with the same sign correction.
+The existing auto/HNF/iter selection, HNF normalization check and iterative
+fallback policy are preserved on PML builds. Non-PML builds use FLINT's native
+polynomial-matrix determinant.
+
+For the reported 97,708,413-term input, 24-byte packed records occupy about
+2.18 GiB. They coexist briefly with source terms while those terms are being
+consumed, and remain until matrix filling finishes. The source's 20-coordinate
+exponent vectors alone previously held about 14.56 GiB of payload, in addition
+to coefficients, term structures and allocation overhead. The change removes
+those live source objects before final matrix allocation and also eliminates
+the two term-count-sized caller index buffers (about 1.46 GiB in that case).
+These are storage calculations, not measured RSS: allocator retention, native
+matrix capacity, and Step 4 workspaces still affect the process peak. No claim
+is made that the entire n=11 computation is guaranteed below 64 GiB.
+
+Validation completed on small inputs:
+
+* The original 20 generic/direct comparisons still pass, including F7^2.
+* 16 consuming native cases compare every scalar, parameter content, row/column
+  order and all Schur profile fields against the original generic path. They
+  also check that consumed source polynomials can be cleared safely.
+* 96 native determinant comparisons cover auto/HNF/iter, Schur and forced
+  Schur rejection, with and without degree reordering, at 1/4 threads.
+* The existing Step 4 integration test passes for both resultant APIs.
+* A five-equation F257 CLI run with seed 1790242205 reached the early-release
+  marker, completed Step 2/3, compressed 32 to 10 with Schur, and finished Step 4.
+
+The library/CLI rebuilt without warnings. No large-memory n=11 run or peak-RSS
+measurement was performed on this machine. With `-v 2`, the new path reports:
+
+```
+Released source Dixon terms and term maps; allocating native prime-field matrix...
+```

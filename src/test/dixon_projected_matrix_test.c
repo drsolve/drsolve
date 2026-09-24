@@ -83,13 +83,14 @@ static void compare_paths(const fq_mvpoly_t *poly, slong m, const long *degrees,
     for(int i=0;i<2;i++) { flint_free(r[i]); flint_free(c[i]); dixon_mq_step4_profile_clear(p+i); }
     dixon_step2_test_force_generic=0;
 }
-static void synthetic(ulong prime, slong extension)
+static void synthetic(ulong prime, slong extension, slong repeats)
 {
     fq_nmod_ctx_t ctx; fq_nmod_ctx_init_ui(ctx,prime,extension,"a");
     fq_mvpoly_t poly; fq_mvpoly_init(&poly,2,1,ctx);
     fq_nmod_t coeff; fq_nmod_init(coeff,ctx);
     fq_nmod_gen(coeff,ctx); if(fq_nmod_is_zero(coeff,ctx)) fq_nmod_one(coeff,ctx);
     slong powers[2][2]={{5,7},{4,5}};
+    for(slong repeat=0;repeat<repeats;repeat++)
     for(slong r=0;r<2;r++) for(slong c=0;c<2;c++) {
         slong e[2]={r,c}; fq_mvpoly_add_term_fast(&poly,e,&powers[r][c],coeff);
     }
@@ -106,7 +107,7 @@ int main(void)
         setenv("DRSOLVE_PREDICT_REORDER",reorder?"1":"0",1);
         for(int threads=1;threads<=4;threads+=3) {
             omp_set_num_threads(threads);
-            synthetic(257,1); synthetic(7,2);
+            synthetic(257,1,1); synthetic(7,2,1);
             fq_nmod_ctx_t ctx; fq_nmod_ctx_init_ui(ctx,257,1,"a");
             for(slong m=3;m<=5;m++) {
                 fq_mvpoly_t *polys=random_mq(m,ctx,rng), **matrix, **a, projected;
@@ -120,8 +121,11 @@ int main(void)
             fq_nmod_ctx_clear(ctx);
         }
     }
+    /* Cross the parallel chunk threshold with duplicate terms, checking
+     * deterministic last-write ordering and consuming cleanup. */
+    omp_set_num_threads(4); synthetic(257,1,20000);
     unsetenv("DRSOLVE_PREDICT_REORDER");
     flint_rand_clear(rng); flint_cleanup_master();
-    puts("Direct projected matrix: 20 generic/direct comparisons, 16 consuming native comparisons and 96 native determinant checks PASS");
+    puts("Direct projected matrix: 21 generic/direct comparisons, 17 consuming native comparisons and 102 native determinant checks PASS");
     return 0;
 }
