@@ -114,6 +114,9 @@ typedef enum {
     FQ_NMOD_POLY_DET_METHOD_ITER = 2
 } fq_nmod_poly_det_method_t;
 
+/* Prime-field entry point preserving the configured auto/HNF/iter policy. */
+void dixon_nmod_poly_mat_det(nmod_poly_t det, nmod_poly_mat_t mat);
+
 void fq_nmod_poly_mat_det_set_threads(int num_threads);
 
 void fq_nmod_poly_mat_det_set_method(fq_nmod_poly_det_method_t method);

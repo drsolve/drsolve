@@ -18,7 +18,7 @@ static void compare_paths(const fq_mvpoly_t *poly, slong m, const long *degrees,
         int before=dixon_step2_test_direct_calls;
         extract_fq_coefficient_matrix_from_dixon_impl(&unused,method?&actual:&expected,
             r[method],c[method],size+method,content+method,poly,m,1,NULL,NULL,NULL,
-            degrees,m+1,1,profile?p+method:NULL);
+            degrees,m+1,1,profile?p+method:NULL,NULL,NULL);
         assert(dixon_step2_test_direct_calls-before==method);
         assert(!unused);
     }
@@ -35,6 +35,49 @@ static void compare_paths(const fq_mvpoly_t *poly, slong m, const long *degrees,
         assert(!memcmp(p[0].cols,p[1].cols,p[0].size*sizeof(slong)));
         assert(!memcmp(p[0].rd,p[1].rd,p[0].size*sizeof(slong)));
         assert(!memcmp(p[0].cd,p[1].cd,p[0].size*sizeof(slong)));
+    }
+    if(fq_nmod_ctx_degree(poly->ctx)==1) {
+        fq_mvpoly_t owned; fq_mvpoly_init(&owned,poly->nvars,poly->npars,poly->ctx);
+        fq_mvpoly_copy(&owned,poly);
+        nmod_poly_mat_t native;
+        slong *rn=flint_malloc(poly->nterms*sizeof(slong)),*cn=flint_malloc(poly->nterms*sizeof(slong));
+        slong ns,ncontent; dixon_mq_step4_profile np={0};
+        dixon_step2_test_force_generic=0;
+        extract_fq_coefficient_matrix_from_dixon_impl(&unused,NULL,rn,cn,&ns,&ncontent,
+            &owned,m,1,NULL,NULL,NULL,degrees,m+1,1,profile?&np:NULL,&native,&owned);
+        assert(!owned.terms && !owned.nterms && !owned.alloc);
+        fq_mvpoly_clear(&owned); /* Consumed inputs remain safely clearable. */
+        assert(ns==size[0] && ncontent==content[0]);
+        assert(!memcmp(rn,r[0],ns*sizeof(slong)) && !memcmp(cn,c[0],ns*sizeof(slong)));
+        for(slong i=0;i<ns;i++) for(slong j=0;j<ns;j++) {
+            nmod_poly_struct *a=nmod_poly_mat_entry(native,i,j);
+            fq_nmod_poly_struct *b=fq_nmod_poly_mat_entry(expected,i,j);
+            assert(a->length==b->length);
+            for(slong d=0;d<a->length;d++) assert(a->coeffs[d]==nmod_poly_get_coeff_ui(b->coeffs+d,0));
+        }
+        assert(np.size==p[0].size && np.h==p[0].h && np.sigma==p[0].sigma && np.odd==p[0].odd);
+        if(np.size) {
+            assert(!memcmp(np.rows,p[0].rows,ns*sizeof(slong)));
+            assert(!memcmp(np.cols,p[0].cols,ns*sizeof(slong)));
+            assert(!memcmp(np.rd,p[0].rd,ns*sizeof(slong)));
+            assert(!memcmp(np.cd,p[0].cd,ns*sizeof(slong)));
+        }
+        for(int method=0;method<3;method++) {
+            fq_nmod_poly_mat_det_set_method(method);
+            fq_nmod_poly_t want,got; fq_nmod_poly_init(want,poly->ctx); fq_nmod_poly_init(got,poly->ctx);
+            fq_nmod_poly_mat_det_iter(want,expected,poly->ctx);
+            for(int fallback=0;fallback<2;fallback++) {
+                nmod_poly_mat_t work; nmod_poly_mat_init(work,ns,ns,fq_nmod_ctx_prime(poly->ctx));
+                nmod_poly_mat_set(work,native);
+                slong sigma=np.sigma; if(fallback) np.sigma=0;
+                dixon_mq_native_det(got,work,&np,poly->ctx); np.sigma=sigma;
+                assert(fq_nmod_poly_equal(want,got,poly->ctx));
+                nmod_poly_mat_clear(work);
+            }
+            fq_nmod_poly_clear(want,poly->ctx); fq_nmod_poly_clear(got,poly->ctx);
+        }
+        fq_nmod_poly_mat_det_set_method(FQ_NMOD_POLY_DET_METHOD_AUTO);
+        nmod_poly_mat_clear(native); dixon_mq_step4_profile_clear(&np); flint_free(rn); flint_free(cn);
     }
     fq_nmod_poly_mat_clear(expected,poly->ctx); fq_nmod_poly_mat_clear(actual,poly->ctx);
     for(int i=0;i<2;i++) { flint_free(r[i]); flint_free(c[i]); dixon_mq_step4_profile_clear(p+i); }
@@ -79,6 +122,6 @@ int main(void)
     }
     unsetenv("DRSOLVE_PREDICT_REORDER");
     flint_rand_clear(rng); flint_cleanup_master();
-    puts("Direct projected matrix: 20 exact matrix/content/order/profile comparisons PASS");
+    puts("Direct projected matrix: 20 generic/direct comparisons, 16 consuming native comparisons and 96 native determinant checks PASS");
     return 0;
 }

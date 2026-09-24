@@ -28,7 +28,7 @@ static void check_selected_matrix(fq_mvpoly_t *polys, slong m)
     slong size, content;
     dixon_mq_step4_profile p = {0};
     extract_fq_coefficient_matrix_from_dixon_impl(&unused, &B, ri, ci, &size,
-        &content, &full, m, 1, NULL, NULL, NULL, deg, m+1, 0, &p);
+        &content, &full, m, 1, NULL, NULL, NULL, deg, m+1, 0, &p,NULL,NULL);
     assert(p.size == size && p.size > p.h);
     fq_nmod_poly_t expected, got;
     fq_nmod_poly_init(expected, polys[0].ctx); fq_nmod_poly_init(got, polys[0].ctx);

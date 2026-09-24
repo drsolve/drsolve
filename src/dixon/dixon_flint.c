@@ -5285,7 +5285,8 @@ static void extract_fq_coefficient_matrix_from_dixon_impl(fq_mvpoly_t ***coeff_m
                                               char **var_names, char **par_names,
                                               const char *gen_name,
                                               const long *degrees, slong num_polys, int projected_verified,
-                                              dixon_mq_step4_profile *mq_profile) {
+                                              dixon_mq_step4_profile *mq_profile,
+                                              nmod_poly_mat_t *prime_matrix_out, fq_mvpoly_t *consume) {
     dixon_info_log("\nStep 2: Construct Dixon matrix\n");
     if (extracted_x_power)
         *extracted_x_power = 0;
@@ -5362,14 +5363,21 @@ static void extract_fq_coefficient_matrix_from_dixon_impl(fq_mvpoly_t ***coeff_m
         return;
     }
 
-    int direct_projected = projected_verified && npars == 1 && poly_matrix_out != NULL
+    int direct_projected = projected_verified && npars == 1 && (poly_matrix_out != NULL || prime_matrix_out != NULL)
                            && nx_monoms == ndual_monoms;
 #ifdef DRSOLVE_MQ_STEP2_TEST
     if (dixon_step2_test_force_generic) direct_projected = 0;
 #endif
+    FLINT_ASSERT(!prime_matrix_out || direct_projected);
     if (direct_projected) {
+        int own_indices = row_indices == NULL;
+        if (own_indices) {
+            row_indices = flint_malloc(nx_monoms*sizeof(slong));
+            col_indices = flint_malloc(nx_monoms*sizeof(slong));
+        }
         dixon_debug_log("  Filling verified projection directly into univariate matrix...\n");
-        slong content = dixon_projected_poly_matrix(*poly_matrix_out, row_indices,
+        slong content = dixon_projected_poly_matrix(poly_matrix_out ? *poly_matrix_out : NULL,
+                             prime_matrix_out, consume, row_indices,
                              col_indices, nx_monoms, dixon_poly, term_rows, term_cols);
         *coeff_matrix = NULL;
         *matrix_size = nx_monoms;
@@ -5378,7 +5386,7 @@ static void extract_fq_coefficient_matrix_from_dixon_impl(fq_mvpoly_t ***coeff_m
             const char *v = (par_names && par_names[0]) ? par_names[0] : "x";
             dixon_info_log("  Pre-selection full-matrix %s-content: %s^%ld\n",v,v,content);
         }
-        flint_free(term_rows); flint_free(term_cols);
+        if (!prime_matrix_out) { flint_free(term_rows); flint_free(term_cols); }
         dixon_maybe_print_parallel_step_time("Step 2",
             (double)(clock()-step2_cpu_start)/CLOCKS_PER_SEC,get_wall_time()-step2_wall_start);
         clock_t direct_cpu = clock(); double direct_wall = get_wall_time();
@@ -5388,6 +5396,7 @@ static void extract_fq_coefficient_matrix_from_dixon_impl(fq_mvpoly_t ***coeff_m
         if (mq_profile)
             dixon_mq_step4_prepare(mq_profile,x_monoms,dual_monoms,row_indices,
                                   col_indices,nx_monoms,nvars,degrees);
+        if (own_indices) { flint_free(row_indices); flint_free(col_indices); }
         free_monom_index(x_index,x_hash_size); free_monom_index(dual_index,dual_hash_size);
         flint_free(x_monoms); flint_free(dual_monoms); flint_free(d0); flint_free(d1);
         dixon_maybe_print_parallel_step_time("Step 3",
@@ -5960,7 +5969,7 @@ void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
                                               const long *degrees, slong num_polys) {
     extract_fq_coefficient_matrix_from_dixon_impl(coeff_matrix, poly_matrix_out,
         row_indices, col_indices, matrix_size, extracted_x_power, dixon_poly,
-        nvars, npars, var_names, par_names, gen_name, degrees, num_polys, 0, NULL);
+        nvars, npars, var_names, par_names, gen_name, degrees, num_polys, 0, NULL, NULL, NULL);
 }
 
 // Compute determinant of cancellation matrix
@@ -6242,8 +6251,10 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     fq_nmod_poly_mat_t poly_matrix;
     int use_poly_matrix = (npars == 1 && (dixon_global_method_step4 == -1 ||
                            (g_dixon_mq_step4_schur && dixon_global_method_step4 == DET_METHOD_KRONECKER)));
-    slong *row_indices = (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
-    slong *col_indices = (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
+    int use_prime_matrix = use_poly_matrix && projected_verified && fq_nmod_ctx_degree(polys[0].ctx)==1;
+    nmod_poly_mat_t prime_matrix;
+    slong *row_indices = use_prime_matrix ? NULL : (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
+    slong *col_indices = use_prime_matrix ? NULL : (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
     slong matrix_size;
     slong extracted_x_power = 0;
     
@@ -6252,11 +6263,13 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
                       dixon_mq_step4_eligible(polys, nvars, npars);
     long *rank_degrees = dixon_polynomial_degrees(polys, nvars + 1, nvars);
     extract_fq_coefficient_matrix_from_dixon_impl(&coeff_matrix,
-                                            use_poly_matrix ? &poly_matrix : NULL,
+                                            use_poly_matrix && !use_prime_matrix ? &poly_matrix : NULL,
                                             row_indices, col_indices,
                                             &matrix_size, &extracted_x_power, &d_poly, nvars, npars,
                                             NULL, NULL, NULL, rank_degrees, nvars + 1, projected_verified,
-                                            try_mq_step4 ? &mq_profile : NULL);
+                                            try_mq_step4 ? &mq_profile : NULL,
+                                            use_prime_matrix ? &prime_matrix : NULL,
+                                            use_prime_matrix ? &d_poly : NULL);
     flint_free(rank_degrees);
 
     if (matrix_size > 0 && use_poly_matrix) {
@@ -6271,7 +6284,9 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
         fq_nmod_poly_init(det_poly, polys[0].ctx);
         if (g_dixon_mq_step4_schur && !mq_profile.size)
             dixon_info_log("  MQ Step 4 Schur: no eligible complement profile; using original determinant backend\n");
-        if (!dixon_mq_step4_try(det_poly, poly_matrix, &mq_profile, polys[0].ctx))
+        if (use_prime_matrix)
+            dixon_mq_native_det(det_poly, prime_matrix, &mq_profile, polys[0].ctx);
+        else if (!dixon_mq_step4_try(det_poly, poly_matrix, &mq_profile, polys[0].ctx))
             fq_nmod_poly_mat_det_iter(det_poly, poly_matrix, polys[0].ctx);
         dixon_mq_step4_profile_clear(&mq_profile);
         fq_mvpoly_init(result, 0, 1, polys[0].ctx);
@@ -6286,7 +6301,8 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
             fq_nmod_clear(coeff, polys[0].ctx);
         }
         fq_nmod_poly_clear(det_poly, polys[0].ctx);
-        fq_nmod_poly_mat_clear(poly_matrix, polys[0].ctx);
+        if (use_prime_matrix) nmod_poly_mat_clear(prime_matrix);
+        else fq_nmod_poly_mat_clear(poly_matrix, polys[0].ctx);
         dixon_maybe_print_step_method_time("Step 4", coeff_method,
                                            (double) (clock() - step4_cpu_start) / CLOCKS_PER_SEC,
                                            get_wall_time() - step4_wall_start);
@@ -6427,9 +6443,11 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     fq_nmod_poly_mat_t poly_matrix;
     int use_poly_matrix = (npars == 1 && (dixon_global_method_step4 == -1 ||
                            (g_dixon_mq_step4_schur && dixon_global_method_step4 == DET_METHOD_KRONECKER)));
+    int use_prime_matrix = use_poly_matrix && projected_verified && fq_nmod_ctx_degree(polys[0].ctx)==1;
+    nmod_poly_mat_t prime_matrix;
     slong max_indices = d_poly.nterms > 0 ? d_poly.nterms : 1;
-    slong *row_indices = (slong*) flint_malloc(max_indices * sizeof(slong));
-    slong *col_indices = (slong*) flint_malloc(max_indices * sizeof(slong));
+    slong *row_indices = use_prime_matrix ? NULL : (slong*) flint_malloc(max_indices * sizeof(slong));
+    slong *col_indices = use_prime_matrix ? NULL : (slong*) flint_malloc(max_indices * sizeof(slong));
     slong matrix_size;
     slong extracted_x_power = 0;
     
@@ -6438,12 +6456,14 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
                       dixon_mq_step4_eligible(polys, nvars, npars);
     long *rank_degrees = dixon_polynomial_degrees(polys, nvars + 1, nvars);
     extract_fq_coefficient_matrix_from_dixon_impl(&coeff_matrix,
-                                            use_poly_matrix ? &poly_matrix : NULL,
+                                            use_poly_matrix && !use_prime_matrix ? &poly_matrix : NULL,
                                             row_indices, col_indices,
                                             &matrix_size, &extracted_x_power, &d_poly, nvars, npars,
                                             var_names, par_names, gen_name,
                                             rank_degrees, nvars + 1, projected_verified,
-                                            try_mq_step4 ? &mq_profile : NULL);
+                                            try_mq_step4 ? &mq_profile : NULL,
+                                            use_prime_matrix ? &prime_matrix : NULL,
+                                            use_prime_matrix ? &d_poly : NULL);
     flint_free(rank_degrees);
 
     if (matrix_size > 0 && use_poly_matrix) {
@@ -6458,7 +6478,9 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
         fq_nmod_poly_init(det_poly, polys[0].ctx);
         if (g_dixon_mq_step4_schur && !mq_profile.size)
             dixon_info_log("  MQ Step 4 Schur: no eligible complement profile; using original determinant backend\n");
-        if (!dixon_mq_step4_try(det_poly, poly_matrix, &mq_profile, polys[0].ctx))
+        if (use_prime_matrix)
+            dixon_mq_native_det(det_poly, prime_matrix, &mq_profile, polys[0].ctx);
+        else if (!dixon_mq_step4_try(det_poly, poly_matrix, &mq_profile, polys[0].ctx))
             fq_nmod_poly_mat_det_iter(det_poly, poly_matrix, polys[0].ctx);
         dixon_mq_step4_profile_clear(&mq_profile);
         fq_mvpoly_init(result, 0, 1, polys[0].ctx);
@@ -6473,7 +6495,8 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
             fq_nmod_clear(coeff, polys[0].ctx);
         }
         fq_nmod_poly_clear(det_poly, polys[0].ctx);
-        fq_nmod_poly_mat_clear(poly_matrix, polys[0].ctx);
+        if (use_prime_matrix) nmod_poly_mat_clear(prime_matrix);
+        else fq_nmod_poly_mat_clear(poly_matrix, polys[0].ctx);
         dixon_maybe_print_step_method_time("Step 4", coeff_method,
                                            (double) (clock() - step4_cpu_start) / CLOCKS_PER_SEC,
                                            get_wall_time() - step4_wall_start);

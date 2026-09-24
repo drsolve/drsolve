@@ -597,6 +597,25 @@ void fq_nmod_poly_mat_det_prime_iter(fq_nmod_poly_t det,
     fq_nmod_poly_mat_det_iter(det, mat, ctx);
 }
 
+/* Native input avoids rebuilding a full prime-field copy from fq objects. */
+void dixon_nmod_poly_mat_det(nmod_poly_t det, nmod_poly_mat_t mat)
+{
+    if(mat->r!=mat->c) { nmod_poly_zero(det); return; }
+    if(!mat->r) { nmod_poly_one(det); return; }
+#ifdef HAVE_PML
+    fq_nmod_poly_det_method_t method=fq_nmod_poly_mat_det_get_method();
+    if(method==FQ_NMOD_POLY_DET_METHOD_ITER ||
+       (method==FQ_NMOD_POLY_DET_METHOD_AUTO && dixonres_nmod_poly_mat_is_sparse(mat))) {
+        nmod_poly_mat_det_iter(det,mat);
+    } else if(!dixonres_nmod_poly_mat_det_hnf_exact(det,mat)) {
+        if(method==FQ_NMOD_POLY_DET_METHOD_HNF) nmod_poly_zero(det);
+        else nmod_poly_mat_det_iter(det,mat);
+    }
+#else
+    nmod_poly_mat_det(det,mat);
+#endif
+}
+
 void fq_nmod_poly_mat_det_iter(fq_nmod_poly_t det,
                               fq_nmod_poly_mat_t mat,
                               const fq_nmod_ctx_t ctx) {
