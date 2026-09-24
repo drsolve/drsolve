@@ -296,11 +296,13 @@ The compressor factors each constant degree-diagonal block once, solves
 `E X = V` by block back substitution, then forms `A - U X`. It does not
 copy or update the entire polynomial matrix for scalar pivot elimination.
 Prime-field, single-parameter MQ Step 1 uses shared monomial indices and
-coefficient arrays by default when the matrix shape and workspace bounds allow
-it. The unique quadratic row remains last in the DP evaluation order. A
-conservative preflight bounds the backend's arrays, maps, support tables and
-output allowance to 256 MiB; this is not a process-RSS limit. Unsupported shapes,
-packing, or larger bounds fall back to the existing sparse minor DP.
+coefficient arrays by default when the matrix shape, exponent packing and
+index bounds allow it. The unique quadratic row remains last in the DP evaluation order. There
+is no fixed workspace cap by default. Preflight retains integer/index and
+addressability bounds for arrays, maps and support tables. Unsupported shapes,
+packing or index bounds fall back to the existing sparse minor DP. Large inputs
+can require substantial memory; no physical-memory availability check is made.
+Builds may override `DRSOLVE_MQ_SHARED_WORKSPACE_BYTES` to impose a budget.
 
 For all admitted sizes, shared indices use native FLINT exponent packing,
 including multiword keys. Transition maps with at least 1,000,000 pairs can use

@@ -184,3 +184,14 @@ After enabling the default, the CLI suite was expanded to 28 checks including
 flag-free one- and four-thread runs, explicit enable/disable, and precedence.
 All passed with exact output comparisons. Explicit hash benchmark modes remain
 hash-only; mode 12 follows the updated production default.
+
+## Removal of the fixed workspace cap
+
+The default `DRSOLVE_MQ_SHARED_WORKSPACE_BYTES` is now `SIZE_MAX`, removing
+both the shared-DP and direct-index 256 MiB admission gates. Index-width,
+packing, input-shape and addressability checks remain; estimates accumulate
+without size_t summation overflow. An explicit compile-time budget override
+is still supported. This does not guarantee sufficient physical RAM. Earlier
+measurements and validation above describe the former 256 MiB policy.
+The benchmark driver now accepts n=9 and uses a sufficiently large exponent
+buffer for its fingerprint, including the 17-variable native layout.

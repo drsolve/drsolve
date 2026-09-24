@@ -28,7 +28,7 @@ int main(int argc, char **argv)
     slong n = atol(argv[1]); int threads = atoi(argv[2]), shared = atoi(argv[3]);
     int projected = atoi(argv[4]), rotate = atoi(argv[5]), profile = atoi(argv[6]), audit = atoi(argv[7]);
     ulong seed = strtoul(argv[8], NULL, 10), prime = strtoul(argv[9], NULL, 10);
-    if (n < 4 || n > 8 || threads < 1 || threads > 16 || !n_is_prime(prime)) return 2;
+    if (n < 4 || n > 9 || threads < 1 || threads > 16 || !n_is_prime(prime)) return 2;
     omp_set_num_threads(threads); flint_set_num_threads(threads);
     g_dixon_verbose_level = 0; g_dixon_det_cache_limit = 100000;
     flint_rand_t rng; flint_rand_init(rng); flint_rand_set_seed(rng, seed, 941);
@@ -60,7 +60,7 @@ int main(int argc, char **argv)
     }
     /* Stable, canonical coefficient fingerprint for repeated timing runs.
      * The audit above uses exact coefficient equality, not this fingerprint. */
-    uint64_t hash = UINT64_C(14695981039346656037); ulong exp[16];
+    uint64_t hash = UINT64_C(14695981039346656037); ulong exp[FLINT_BITS];
     for (slong t = 0; t < x->length; t++) {
         nmod_mpoly_get_term_exp_ui(exp, x, t, ctx);
         hash = (hash ^ x->coeffs[t])*UINT64_C(1099511628211);

@@ -251,8 +251,8 @@ static void mq_shared_order(mq_shared_support *s, uint32_t *map, size_t entries,
 }
 #endif
 
-/* Saturating total-degree simplex size. Only small admitted sizes reach the
- * allocator; rejection leaves the caller's output untouched. */
+/* Saturating total-degree simplex size. Index/addressability rejection
+ * leaves the caller's output untouched. */
 static size_t mq_shared_binomial(slong n, slong k, size_t cap)
 {
     size_t value = 1;
@@ -275,7 +275,9 @@ static size_t mq_shared_support_bound(size_t count, slong words)
 }
 
 #ifndef DRSOLVE_MQ_SHARED_WORKSPACE_BYTES
-#define DRSOLVE_MQ_SHARED_WORKSPACE_BYTES (256UL * 1024 * 1024)
+/* No fixed memory budget by default. A build may still override this.
+ * SIZE_MAX retains addressability checks; uint32 index limits remain below. */
+#define DRSOLVE_MQ_SHARED_WORKSPACE_BYTES SIZE_MAX
 #endif
 
 static int mq_shared_admit(nmod_mpoly_t **matrix, slong n,
@@ -335,14 +337,15 @@ static int mq_shared_admit(nmod_mpoly_t **matrix, slong n,
              * dominates this: count>=4 and words<=3. Reserve 64 KiB for the
              * <=8 shards' small tables/capacity rounding and stack metadata.
              * Compact keys only decrease this native-packing estimate. */
-            size_t bytes = 65536+(count*current+previous_count*previous+n*shifts.count)*sizeof(ulong)
-                +shifts.count*previous*sizeof(uint32_t)
+            long double bytes = 65536.0L+((long double)count*current
+                +(long double)previous_count*previous+(long double)n*shifts.count)*sizeof(ulong)
+                +(long double)shifts.count*previous*sizeof(uint32_t)
                 +mq_shared_support_bound(current, words)
                 +mq_shared_support_bound(previous, words)
                 +mq_shared_support_bytes(&shifts);
             /* Output packing allowance; FLINT sort scratch, input storage and
              * allocator overhead are not a process-RSS guarantee. */
-            if (k == n) bytes += current*(words+1)*sizeof(ulong);
+            if (k == n) bytes += (long double)current*(words+1)*sizeof(ulong);
             if (bytes > budget) ok = 0;
         }
         mq_shared_support_clear(&shifts);
@@ -380,9 +383,13 @@ static int mq_shared_det(nmod_mpoly_t result, nmod_mpoly_t **matrix, slong n,
 #ifdef DRSOLVE_MQ_LAYOUT_TEST
     mq_shared_test_used++;
 #endif
-    if (g_dixon_verbose_level >= 2)
-        printf("  MQ shared-index DP: size=%ld, workspace cap=%zu MiB\n", n,
-               (size_t)DRSOLVE_MQ_SHARED_WORKSPACE_BYTES/(1024*1024));
+    if (g_dixon_verbose_level >= 2) {
+        if (DRSOLVE_MQ_SHARED_WORKSPACE_BYTES == SIZE_MAX)
+            printf("  MQ shared-index DP: size=%ld, no fixed workspace cap\n", n);
+        else
+            printf("  MQ shared-index DP: size=%ld, workspace cap=%zu MiB\n", n,
+                   (size_t)DRSOLVE_MQ_SHARED_WORKSPACE_BYTES/(1024*1024));
+    }
     mq_shared_support prev; mq_shared_support_init(&prev, ctx, n+1);
     ulong *values = flint_malloc(sizeof(ulong)); values[0] = 1;
     for (slong k = 1; k <= n; k++) {

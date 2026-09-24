@@ -231,7 +231,7 @@ static void check_shared_admission(void)
                 nmod_mpoly_sort_terms(a[r][c], ctx);
             }
         }
-        assert(mq_shared_admit(a, n, ctx, choose) == (n == 8));
+        assert(mq_shared_admit(a, n, ctx, choose)); /* n=9 no longer budget-rejected. */
         if (n == 8) {
             nmod_mpoly_t out; nmod_mpoly_init(out, ctx); nmod_mpoly_one(out, ctx);
             e[0] = 3; nmod_mpoly_push_term_ui_ui(a[0][0], 1, e, ctx); e[0] = 0;
