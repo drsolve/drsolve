@@ -328,6 +328,8 @@ Step 4 stays in the native prime-field representation; successful Schur
 compression releases the large matrix before taking the core determinant.
 Public extraction calls and extension fields retain the non-consuming
 `fq_nmod_poly_mat` path; other extraction cases keep the generic implementation.
+With `-v 2`, direct Step 2 reports metadata, packing, source-release, matrix
+initialization, filling and cleanup times separately.
 See [direct Step 2 construction](src/test/MQ_STEP2_DIRECT.md).
 
 Use `--no-mq-step1-shared` to select the previous sparse DP, or

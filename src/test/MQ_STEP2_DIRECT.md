@@ -116,3 +116,59 @@ measurement was performed on this machine. With `-v 2`, the new path reports:
 ```
 Released source Dixon terms and term maps; allocating native prime-field matrix...
 ```
+
+## Step 2 scan and fill optimization
+
+Native metadata scans now use contiguous logical chunks with private row/column
+minima/maxima and row counts. Row counts are collected in the row-valuation
+pass, removing a separate full term scan. Prefix sums assign disjoint packed
+ranges for each (chunk,row); chunk ordering preserves the original term order
+within each row, including duplicate last-write semantics. The extra metadata
+storage is O(threads * matrix order), not O(threads * term count). Native inputs
+with at least 65,536 terms use the requested OpenMP worker count; smaller and
+non-native inputs retain one metadata worker.
+
+Packing is parallel, but source destruction is serial. An initial experiment
+with parallel destruction showed no stable total improvement; allocator lock
+contention is a possible explanation, not a proven allocator profile. The
+retained version separates these phases. The existing compact record buffer
+can now become fully populated before source destruction, so although no new
+term-sized array was added, unchanged peak RSS is not claimed. The original
+source and term maps are still released before final matrix allocation.
+
+Each matrix cell is fitted and zeroed once at its known maximum degree. Scalar
+coefficients are then written directly to its buffer, followed by length
+normalization. This avoids repeated per-scalar length/gap checks while retaining
+canonical polynomials. Each matrix row remains exclusively owned by one worker.
+
+Verbose level 2 now prints independent wall times for direct metadata, packing,
+source release, matrix initialization, matrix filling and buffer cleanup.
+Existing support collection and degree-bound timings remain available.
+
+Validation passed: 21 generic/direct comparisons, 17 consuming native matrix
+comparisons, 102 native determinant comparisons, and the existing Step 4
+integration suite. An added 80,000-term duplicate fixture crosses the parallel
+threshold and checks deterministic ordering, content and cleanup with 4 threads.
+
+Five-repeat interleaved CLI measurements compare pinned old/new executable and
+library pairs, using eight equations over F257, seed 1790242205:
+
+| Threads | Previous Step 2 median | Current Step 2 median |
+|---:|---:|---:|
+| 1 | 0.094 s | 0.093 s |
+| 4 | 0.090 s | 0.086 s |
+
+These small differences are within observed run-to-run variability; they do
+not establish a significant overall speedup. Current source-release medians
+were 0.038/0.039 s, compared with matrix-fill medians of 0.006/0.004 s at 1/4
+threads. All old/new CLI result files matched after excluding timing lines.
+No n=11 measurement was performed. Larger-case speed and peak-memory behavior
+remain unverified; the new phase logs are intended to identify the actual
+large-case bottleneck before further changes to the Step 1/2 representation.
+
+The driver `src/test/mq_step2_bench.py` accepts `--reference-dir` containing a
+previous `drsolve` and `libdrsolve.so`, pins library loading via
+`LD_LIBRARY_PATH`, and alternates versions. Local raw results are ignored at
+`src/test/data/mq_layout/step2_speed_final.json`; the earlier parallel-free
+experiment is in `step2_speed.json`. Separate runs had different machine load
+and must not be combined as a paired comparison.
