@@ -5,6 +5,14 @@ Website: <https://drsolve.github.io>
 
 Author: Haohai Suo (<haohai.suo@mail.sdu.edu.cn>)
 
+## Paper
+
+This library implements the methods described in:
+
+> **Efficient Polynomial System Solving via Dixon Resultants: Applications to AO Primitives**
+- ePrint: <https://eprint.iacr.org/2026/1969>
+- reproduction materials: <https://github.com/drsolve/dixon_asiacrypt>
+
 ## Features
 - Dixon resultant computation for variable elimination
 - Polynomial system solver
