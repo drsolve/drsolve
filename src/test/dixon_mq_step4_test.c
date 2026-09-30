@@ -14,7 +14,7 @@ static void same_result(const fq_mvpoly_t *a, const fq_mvpoly_t *b)
     nmod_mpoly_clear(x, ctx); nmod_mpoly_clear(y, ctx); nmod_mpoly_ctx_clear(ctx);
 }
 
-static void check_selected_matrix(fq_mvpoly_t *polys, slong m)
+static void check_selected_matrix(fq_mvpoly_t *polys, slong m, long degree)
 {
     fq_mvpoly_t **matrix, **a, full;
     build_fq_cancellation_matrix_mvpoly(&matrix, polys, m, 1);
@@ -24,7 +24,7 @@ static void check_selected_matrix(fq_mvpoly_t *polys, slong m)
     fq_nmod_poly_mat_t B;
     slong *ri = flint_malloc(full.nterms * sizeof(slong));
     slong *ci = flint_malloc(full.nterms * sizeof(slong));
-    long deg[8]; for (slong i = 0; i <= m; i++) deg[i] = 2;
+    long deg[8]; for (slong i = 0; i <= m; i++) deg[i] = degree;
     slong size, content;
     dixon_mq_step4_profile p = {0};
     extract_fq_coefficient_matrix_from_dixon_impl(&unused, &B, ri, ci, &size,
@@ -71,7 +71,7 @@ int main(void)
     for(slong m=3;m<=5;m++) {
         fq_mvpoly_t *p=random_mq(m,ctx,state),baseline,compressed;
         assert(dixon_mq_step4_eligible(p,m,1));
-        check_selected_matrix(p,m);
+        check_selected_matrix(p,m,2);
         g_dixon_mq_step1_simplex=0;
         g_dixon_mq_step4_schur=0;
         fq_dixon_resultant(&baseline,p,m,1);
@@ -83,8 +83,39 @@ int main(void)
         for(slong i=0;i<=m;i++)fq_mvpoly_clear(p+i);
         flint_free(p);
     }
+    /* Three equations in x,y,t: compare the full determinant, including sign,
+     * with checked compression for several higher total degrees. */
+    for (slong d = 3; d <= 6; d++) {
+        fq_mvpoly_t p[3], baseline, compressed;
+        fq_nmod_t c; fq_nmod_init(c, ctx);
+        for (slong i = 0; i < 3; i++) {
+            fq_mvpoly_init(p+i, 2, 1, ctx);
+            for (slong x = 0; x <= d; x++)
+                for (slong y = 0; y <= d-x; y++)
+                    for (slong t = 0; t <= d-x-y; t++) {
+                        slong exp[2] = {x,y}, par[1] = {t};
+                        fq_nmod_set_ui(c, 1+n_randint(state,65536), ctx);
+                        fq_mvpoly_add_term_fast(p+i, exp, par, c);
+                    }
+        }
+        assert(dixon_mq_step4_eligible(p,2,1));
+        check_selected_matrix(p,2,d);
+        g_dixon_mq_step1_simplex=0;
+        g_dixon_mq_step4_schur=0;
+        fq_dixon_resultant(&baseline,p,2,1);
+        g_dixon_mq_step4_schur=1;
+        fq_dixon_resultant_with_names(&compressed,p,2,1,NULL,NULL,NULL);
+        same_result(&baseline,&compressed);
+        fq_mvpoly_clear(&baseline); fq_mvpoly_clear(&compressed);
+        /* A parameter outside the shared degree budget must be rejected. */
+        slong exp[2] = {0,0}, par[1] = {d+1};
+        fq_mvpoly_add_term_fast(p,exp,par,c);
+        assert(!dixon_mq_step4_eligible(p,2,1));
+        for (slong i=0;i<3;i++) fq_mvpoly_clear(p+i);
+        fq_nmod_clear(c,ctx);
+    }
     g_dixon_mq_step1_simplex=0;
     fq_nmod_ctx_clear(ctx);flint_rand_clear(state);
-    puts("MQ Step 4 integration: selected labels, odd row permutation, unchanged fallback input, both resultant APIs PASS");
+    puts("MQ/high-degree Step 4 integration: selected labels, odd row permutation, unchanged fallback input, both resultant APIs PASS");
     flint_cleanup_master();return 0;
 }

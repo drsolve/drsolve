@@ -438,6 +438,17 @@ $(BUILD_DIR)/pml_kernel_certificate_test: $(SRC_DIR)/test/pml_kernel_certificate
 test-schur-repair: $(BUILD_DIR)/dixon_schur_repair_test
 	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/dixon_schur_repair_test
 
+.PHONY: test-dixon-recursive-native
+test-dixon-recursive-native: $(BUILD_DIR)/dixon_recursive_native_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=4 ./$(BUILD_DIR)/dixon_recursive_native_test
+
+$(BUILD_DIR)/dixon_recursive_native_test: $(SRC_DIR)/test/dixon_recursive_native_test.c $(SRC_DIR)/dixon/dixon_recursive.c $(SRC_DIR)/dixon/dixon_native.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon_recursive_native_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-dixon-bivariate-cli
+test-dixon-bivariate-cli: $(DIXON_TARGET)-lto
+	python3 $(SRC_DIR)/test/dixon_bivariate_cli_test.py
+
 $(BUILD_DIR)/dixon_schur_repair_test: $(SRC_DIR)/test/dixon_schur_repair_test.c $(SRC_DIR)/dixon/dixon_flint.c $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon_schur_repair_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 

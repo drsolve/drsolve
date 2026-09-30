@@ -1069,71 +1069,30 @@ void fq_matrix_mvpoly_to_nmod_mpoly(nmod_mpoly_t **mpoly_matrix,
 
 // ============= Prime Field Determinant Computation Implementation =============
 
-// Hand-optimized 3x3 determinant for nmod_mpoly
-void compute_det_3x3_nmod_optimized(nmod_mpoly_t det, 
+/* Form the three 2x2 cofactors before multiplying the first row. This
+ * combines cancellations before the largest products and avoids retaining
+ * six full triple products at once. Each worker owns both its temporaries. */
+void compute_det_3x3_nmod_optimized(nmod_mpoly_t det,
                                    nmod_mpoly_t **m,
                                    nmod_mpoly_ctx_t ctx) {
-    nmod_mpoly_t t1, t2, t3, t4, t5, t6, sum;
-    
-    // Initialize temporaries
-    nmod_mpoly_init(t1, ctx);
-    nmod_mpoly_init(t2, ctx);
-    nmod_mpoly_init(t3, ctx);
-    nmod_mpoly_init(t4, ctx);
-    nmod_mpoly_init(t5, ctx);
-    nmod_mpoly_init(t6, ctx);
-    nmod_mpoly_init(sum, ctx);
-    
-    // Compute 6 products in parallel if beneficial
-    #pragma omp parallel sections if(omp_get_max_threads() > 2)
-    {
-        #pragma omp section
-        {
-            nmod_mpoly_mul(t1, m[1][1], m[2][2], ctx);
-            nmod_mpoly_mul(t1, m[0][0], t1, ctx);
-        }
-        #pragma omp section
-        {
-            nmod_mpoly_mul(t2, m[1][2], m[2][0], ctx);
-            nmod_mpoly_mul(t2, m[0][1], t2, ctx);
-        }
-        #pragma omp section
-        {
-            nmod_mpoly_mul(t3, m[1][0], m[2][1], ctx);
-            nmod_mpoly_mul(t3, m[0][2], t3, ctx);
-        }
-        #pragma omp section
-        {
-            nmod_mpoly_mul(t4, m[1][0], m[2][2], ctx);
-            nmod_mpoly_mul(t4, m[0][1], t4, ctx);
-        }
-        #pragma omp section
-        {
-            nmod_mpoly_mul(t5, m[1][1], m[2][0], ctx);
-            nmod_mpoly_mul(t5, m[0][2], t5, ctx);
-        }
-        #pragma omp section
-        {
-            nmod_mpoly_mul(t6, m[1][2], m[2][1], ctx);
-            nmod_mpoly_mul(t6, m[0][0], t6, ctx);
-        }
+    nmod_mpoly_t terms[3];
+    for (slong j = 0; j < 3; j++) nmod_mpoly_init(terms[j], ctx);
+#ifdef _OPENMP
+    #pragma omp parallel for if(omp_get_max_threads() > 1 && !omp_in_parallel()) num_threads(FLINT_MIN(3,omp_get_max_threads())) schedule(static)
+#endif
+    for (slong j = 0; j < 3; j++) {
+        slong a = (j + 1) % 3, b = (j + 2) % 3;
+        nmod_mpoly_t left, right;
+        nmod_mpoly_init(left, ctx); nmod_mpoly_init(right, ctx);
+        nmod_mpoly_mul(left, m[1][a], m[2][b], ctx);
+        nmod_mpoly_mul(right, m[1][b], m[2][a], ctx);
+        nmod_mpoly_sub(left, left, right, ctx);
+        nmod_mpoly_mul(terms[j], m[0][j], left, ctx);
+        nmod_mpoly_clear(left, ctx); nmod_mpoly_clear(right, ctx);
     }
-    
-    // Sum with signs
-    nmod_mpoly_add(sum, t1, t2, ctx);
-    nmod_mpoly_add(sum, sum, t3, ctx);
-    nmod_mpoly_sub(sum, sum, t4, ctx);
-    nmod_mpoly_sub(sum, sum, t5, ctx);
-    nmod_mpoly_sub(det, sum, t6, ctx);
-    
-    // Cleanup
-    nmod_mpoly_clear(t1, ctx);
-    nmod_mpoly_clear(t2, ctx);
-    nmod_mpoly_clear(t3, ctx);
-    nmod_mpoly_clear(t4, ctx);
-    nmod_mpoly_clear(t5, ctx);
-    nmod_mpoly_clear(t6, ctx);
-    nmod_mpoly_clear(sum, ctx);
+    nmod_mpoly_add(det, terms[0], terms[1], ctx);
+    nmod_mpoly_add(det, det, terms[2], ctx);
+    for (slong j = 0; j < 3; j++) nmod_mpoly_clear(terms[j], ctx);
 }
 
 // Recursive determinant for nmod_mpoly

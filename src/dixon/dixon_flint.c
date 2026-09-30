@@ -5194,8 +5194,12 @@ static void dixon_mq_step4_profile_clear(dixon_mq_step4_profile *p)
 static int dixon_mq_step4_eligible(const fq_mvpoly_t *polys, slong m, slong npars)
 {
     if (npars != 1 || m < 2 || fq_nmod_ctx_degree(polys[0].ctx) != 1) return 0;
+    /* The checked Schur kernel uses degree weights, not quadratic formulas.
+     * Admit equal-degree bivariate elimination as well, provided the parameter
+     * shares the total-degree budget. Mixed degrees retain the existing path. */
+    slong common_degree = 0;
     for (slong i = 0; i <= m; i++) {
-        slong max_elim = 0;
+        slong max_elim = 0, max_total = 0;
         for (slong t = 0; t < polys[i].nterms; t++) {
             const fq_monomial_t *term = polys[i].terms + t;
             slong degree = 0;
@@ -5203,9 +5207,12 @@ static int dixon_mq_step4_eligible(const fq_mvpoly_t *polys, slong m, slong npar
                 for (slong v = 0; v < m; v++) degree += term->var_exp[v];
             max_elim = FLINT_MAX(max_elim, degree);
             if (term->par_exp) degree += term->par_exp[0];
-            if (degree > 2) return 0;
+            max_total = FLINT_MAX(max_total, degree);
         }
-        if (max_elim != 2) return 0;
+        if (max_elim < 2 || max_total > max_elim) return 0;
+        if (m != 2 && max_elim != 2) return 0;
+        if (i == 0) common_degree = max_elim;
+        else if (max_elim != common_degree) return 0;
     }
     return 1;
 }
@@ -5310,6 +5317,55 @@ static int dixon_mq_step4_try(fq_nmod_poly_t det, const fq_nmod_poly_mat_t matri
 
 #include "dixon_projected_matrix.h"
 #include "dixon_compact_matrix.h"
+#include "dixon_native.h"
+
+int dixon_bivariate_native_eligible(const fq_mvpoly_t *polys, slong nvars, slong npars)
+{
+    return nvars == 2 && dixon_mq_step4_eligible(polys, nvars, npars);
+}
+
+void dixon_bivariate_native_selected_det(fq_mvpoly_t *result,
+    fq_mvpoly_t **matrix, slong size, const slong *rows, const slong *cols,
+    slong y_degree, const fq_mvpoly_t *polys)
+{
+    const fq_nmod_ctx_struct *ctx = polys[0].ctx;
+    nmod_poly_mat_t native;
+    nmod_poly_mat_init(native, size, size, fq_nmod_ctx_prime(ctx));
+    #pragma omp parallel for schedule(static)
+    for (slong i = 0; i < size; i++) for (slong j = 0; j < size; j++) {
+        const fq_mvpoly_t *source = &matrix[i][j];
+        for (slong t = 0; t < source->nterms; t++) {
+            slong d = source->terms[t].par_exp ? source->terms[t].par_exp[0] : 0;
+            nmod_poly_set_coeff_ui(nmod_poly_mat_entry(native,i,j), d,
+                                  nmod_poly_get_coeff_ui(source->terms[t].coeff,0));
+        }
+    }
+    dixon_mq_step4_profile profile = {0};
+    if (g_dixon_mq_step4_schur) {
+        monom_t *rm = flint_malloc(size*sizeof(*rm)), *cm = flint_malloc(size*sizeof(*cm));
+        slong *exps = flint_malloc(4*size*sizeof(slong)), *indices = flint_malloc(size*sizeof(slong));
+        for (slong i = 0; i < size; i++) {
+            rm[i].exp = exps+4*i; cm[i].exp = exps+4*i+2;
+            rm[i].exp[0] = rows[i]/(2*y_degree); rm[i].exp[1] = rows[i]%(2*y_degree);
+            cm[i].exp[0] = cols[i]/y_degree; cm[i].exp[1] = cols[i]%y_degree;
+            rm[i].idx = cm[i].idx = indices[i] = i;
+        }
+        long degrees[3] = {0,0,0};
+        for (slong i = 0; i < 3; i++) for (slong t = 0; t < polys[i].nterms; t++) {
+            const slong *exp = polys[i].terms[t].var_exp;
+            degrees[i] = FLINT_MAX(degrees[i], exp ? exp[0]+exp[1] : 0);
+        }
+        dixon_mq_step4_prepare(&profile,rm,cm,indices,indices,size,2,degrees);
+        flint_free(indices); flint_free(exps); flint_free(cm); flint_free(rm);
+    }
+    fq_nmod_poly_t det; fq_nmod_poly_init(det,ctx);
+    dixon_mq_native_det(det,native,&profile,ctx);
+    dixon_mq_step4_profile_clear(&profile);
+    fq_mvpoly_init(result,0,1,ctx);
+    for (slong d = 0; d < det->length; d++) if (!fq_nmod_is_zero(det->coeffs+d,ctx))
+        fq_mvpoly_add_term_fast(result,NULL,&d,det->coeffs+d);
+    fq_nmod_poly_clear(det,ctx); nmod_poly_mat_clear(native);
+}
 
 static void extract_fq_coefficient_matrix_from_dixon_impl(fq_mvpoly_t ***coeff_matrix,
                                               fq_nmod_poly_mat_t *poly_matrix_out,
@@ -5404,7 +5460,7 @@ static void extract_fq_coefficient_matrix_from_dixon_impl(fq_mvpoly_t ***coeff_m
 #ifdef DRSOLVE_MQ_STEP2_TEST
     if (dixon_step2_test_force_generic) direct_projected = 0;
 #endif
-    FLINT_ASSERT(!prime_matrix_out || direct_projected);
+    FLINT_ASSERT(!prime_matrix_out || (npars == 1 && fq_nmod_ctx_degree(dixon_poly->ctx) == 1));
     if (direct_projected) {
         int own_indices = row_indices == NULL;
         if (own_indices) {
@@ -5876,22 +5932,25 @@ coefficient_matrix_selected: ;
         if (row_keep) flint_free(row_keep);
     }
 
-    if (poly_matrix_out != NULL && npars == 1) {
-        fq_nmod_poly_mat_init(*poly_matrix_out, submat_rank, submat_rank,
-                              dixon_poly->ctx);
+    if ((poly_matrix_out != NULL || prime_matrix_out != NULL) && npars == 1) {
+        if (prime_matrix_out)
+            nmod_poly_mat_init(*prime_matrix_out, submat_rank, submat_rank, fq_nmod_ctx_prime(dixon_poly->ctx));
+        else
+            fq_nmod_poly_mat_init(*poly_matrix_out, submat_rank, submat_rank, dixon_poly->ctx);
         for (slong i = 0; i < submat_rank; i++) {
             slong src_row = row_idx_array[i];
             for (slong j = 0; j < submat_rank; j++) {
                 fq_mvpoly_t *source = full_matrix[src_row][col_idx_array[j]];
                 if (source != NULL) {
-                    fq_nmod_poly_struct *dst = fq_nmod_poly_mat_entry(
-                        *poly_matrix_out, i, j);
                     for (slong t = 0; t < source->nterms; t++) {
                         slong degree = source->terms[t].par_exp
                             ? source->terms[t].par_exp[0] : 0;
-                        fq_nmod_poly_set_coeff(dst, degree,
-                                               source->terms[t].coeff,
-                                               dixon_poly->ctx);
+                        if (prime_matrix_out)
+                            nmod_poly_set_coeff_ui(nmod_poly_mat_entry(*prime_matrix_out,i,j), degree,
+                                                  nmod_poly_get_coeff_ui(source->terms[t].coeff,0));
+                        else
+                            fq_nmod_poly_set_coeff(fq_nmod_poly_mat_entry(*poly_matrix_out,i,j), degree,
+                                                  source->terms[t].coeff, dixon_poly->ctx);
                     }
                 }
             }
@@ -5951,10 +6010,10 @@ coefficient_matrix_selected: ;
         }
     }
     *matrix_size = submat_rank;
-    if (mq_profile && poly_matrix_out)
+    if (mq_profile && (poly_matrix_out || prime_matrix_out))
         dixon_mq_step4_prepare(mq_profile, x_monoms, dual_monoms,
                                row_idx_array, col_idx_array, submat_rank, nvars, degrees);
-    if (poly_matrix_out == NULL)
+    if (poly_matrix_out == NULL && prime_matrix_out == NULL)
         dixon_print_small_dense_submatrix("Maximal Rank Submatrix", *coeff_matrix,
                                           submat_rank, submat_rank,
                                           row_idx_array, col_idx_array,
@@ -6292,10 +6351,10 @@ void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     fq_nmod_poly_mat_t poly_matrix;
     int use_poly_matrix = (npars == 1 && (dixon_global_method_step4 == -1 ||
                            (g_dixon_mq_step4_schur && dixon_global_method_step4 == DET_METHOD_KRONECKER)));
-    int use_prime_matrix = use_poly_matrix && projected_verified && fq_nmod_ctx_degree(polys[0].ctx)==1;
+    int use_prime_matrix = use_poly_matrix && (projected_verified || nvars == 2) && fq_nmod_ctx_degree(polys[0].ctx)==1;
     nmod_poly_mat_t prime_matrix;
-    slong *row_indices = use_prime_matrix ? NULL : (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
-    slong *col_indices = use_prime_matrix ? NULL : (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
+    slong *row_indices = use_prime_matrix && projected_verified ? NULL : (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
+    slong *col_indices = use_prime_matrix && projected_verified ? NULL : (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
     slong matrix_size;
     slong extracted_x_power = 0;
     
@@ -6493,11 +6552,11 @@ void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     fq_nmod_poly_mat_t poly_matrix;
     int use_poly_matrix = (npars == 1 && (dixon_global_method_step4 == -1 ||
                            (g_dixon_mq_step4_schur && dixon_global_method_step4 == DET_METHOD_KRONECKER)));
-    int use_prime_matrix = use_poly_matrix && projected_verified && fq_nmod_ctx_degree(polys[0].ctx)==1;
+    int use_prime_matrix = use_poly_matrix && (projected_verified || nvars == 2) && fq_nmod_ctx_degree(polys[0].ctx)==1;
     nmod_poly_mat_t prime_matrix;
     slong max_indices = d_poly.nterms > 0 ? d_poly.nterms : 1;
-    slong *row_indices = use_prime_matrix ? NULL : (slong*) flint_malloc(max_indices * sizeof(slong));
-    slong *col_indices = use_prime_matrix ? NULL : (slong*) flint_malloc(max_indices * sizeof(slong));
+    slong *row_indices = use_prime_matrix && projected_verified ? NULL : (slong*) flint_malloc(max_indices * sizeof(slong));
+    slong *col_indices = use_prime_matrix && projected_verified ? NULL : (slong*) flint_malloc(max_indices * sizeof(slong));
     slong matrix_size;
     slong extracted_x_power = 0;
     

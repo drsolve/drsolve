@@ -300,6 +300,24 @@ Step 4 and `--step4 1`; the smaller determinant uses the existing backend,
 including `--fq-det-method`. Other explicit Step 4 methods are preserved.
 `--no-mq-step4-schur` disables it explicitly; `--mq-step4-schur` re-enables it.
 
+The same checked Step 4 compression also applies to three equal-degree
+equations in three variables, eliminating two variables over a prime field.
+The retained variable must share each equation's total-degree budget.
+For example, `./drsolve -r '[12]*3' 65537 --time --seed 12345` uses this path.
+The selected minor must match the predicted rank and degree profile; the
+compressor verifies entry degree bounds and constant-block invertibility,
+and falls back to the original determinant backend if any check fails.
+Both ordinary construction and `--method 5` can use this checked Step 4
+compression. Ordinary prime-field Step 1 computes three 2x2 cofactors before
+the final 3x3 products, reducing large intermediate terms. The selected
+bivariate minor goes directly into a native prime-field polynomial matrix.
+Recursive construction uses native single-parameter arithmetic for its base
+cases and bivariate block products, converts each multiplicand block once,
+and moves assembled blocks and selected entries instead of copying them.
+Other fields and multiple parameters retain the general arithmetic.
+`DRSOLVE_FAST_NATIVE=0` selects the previous recursive arithmetic and Step 4
+path for diagnostics; `--no-mq-step4-schur` independently disables compression.
+
 The compressor factors each constant degree-diagonal block once, solves
 `E X = V` by block back substitution, then forms `A - U X`. It does not
 copy or update the entire polynomial matrix for scalar pivot elimination.
