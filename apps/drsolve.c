@@ -260,7 +260,7 @@ void drsolve_cli_print_usage(const char *prog_name)
 
     printf("  Method selection:\n");
     printf("    %s --method <num> <args>\n", prog_name);
-    printf("    %s --fq-det-method <auto|hnf|iter> <args>\n", prog_name);
+    printf("    %s --fq-det-method <auto|hnf|iter|interp> <args>\n", prog_name);
     printf("    %s --step1 <num> --step4 <num> <args>\n", prog_name);
     printf("    Example: %s --method 4 \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
     printf("    Example: %s --fq-det-method hnf \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
@@ -278,7 +278,7 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    -> --mq-step1-simplex enables parallel total-degree MQ interpolation (default off); --no-mq-step1-simplex disables it\n");
     printf("    -> --no-mq-step1-filter disables the default Step 1 coefficient filtering for prime-field, single-parameter MQ systems\n");
     printf("    -> --mq-step4-schur enables checked Schur compression for MQ or equal-degree three-variable systems over prime fields, single-parameter automatic/HNF Step 4 (default on); --no-mq-step4-schur disables it\n");
-    printf("    -> --fq-det-method (auto|hnf|iter) controls the prime-field univariate polynomial-matrix determinant backend used in fq_poly_mat_det\n");
+    printf("    -> --fq-det-method (auto|hnf|iter|interp) controls the prime-field univariate polynomial-matrix determinant backend used in fq_poly_mat_det\n");
     printf("    -> --cache limits live minor DP entries (method 0); smaller subproblems are used when full layers do not fit; 0 disables DP\n");
     printf("    -> --array-limit-k <k> caps optimized extension-field array multiplication tables at 2^k entries (0-62)\n");
     printf("    -> --fast-ksy enables a KSY precondition check for method 5 submatrix extraction; --no-fast-ksy disables it\n");

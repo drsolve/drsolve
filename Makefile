@@ -449,6 +449,13 @@ $(BUILD_DIR)/dixon_recursive_native_test: $(SRC_DIR)/test/dixon_recursive_native
 test-dixon-bivariate-cli: $(DIXON_TARGET)-lto
 	python3 $(SRC_DIR)/test/dixon_bivariate_cli_test.py
 
+.PHONY: test-poly-mat-interpolation
+test-poly-mat-interpolation: $(BUILD_DIR)/poly_mat_interpolation_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=4 ./$(BUILD_DIR)/poly_mat_interpolation_test
+
+$(BUILD_DIR)/poly_mat_interpolation_test: $(SRC_DIR)/test/poly_mat_interpolation_test.c $(SRC_DIR)/determinant/fq_poly_mat_det.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/poly_mat_interpolation_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
 $(BUILD_DIR)/dixon_schur_repair_test: $(SRC_DIR)/test/dixon_schur_repair_test.c $(SRC_DIR)/dixon/dixon_flint.c $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon_schur_repair_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 

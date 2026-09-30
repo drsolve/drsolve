@@ -459,6 +459,25 @@ void fq_lagrange_interpolation_optimized(fq_nmod_poly_t result,
         return;
     }
     
+    if (fq_nmod_ctx_degree(ctx) == 1) {
+        ulong prime = fq_nmod_ctx_prime(ctx);
+        ulong *xs = flint_malloc(k*sizeof(ulong)), *ys = flint_malloc(k*sizeof(ulong));
+        for (slong i=0;i<k;i++) {
+            xs[i] = nmod_poly_get_coeff_ui(nodes[i],0);
+            ys[i] = nmod_poly_get_coeff_ui(values[i],0);
+        }
+        nmod_poly_t native; nmod_poly_init(native,prime);
+        nmod_poly_interpolate_nmod_vec_fast(native,xs,ys,k);
+        fq_nmod_t c; fq_nmod_init(c,ctx);
+        for (slong i=0;i<native->length;i++) {
+            fq_nmod_set_ui(c,nmod_poly_get_coeff_ui(native,i),ctx);
+            fq_nmod_poly_set_coeff(result,i,c,ctx);
+        }
+        fq_nmod_clear(c,ctx); nmod_poly_clear(native);
+        flint_free(xs); flint_free(ys);
+        g_stats.lagrange_time += get_time()-start_time;
+        return;
+    }
     // Initialize unified field context for optimal field operations
     field_ctx_t unified_ctx;
     field_ctx_init(&unified_ctx, ctx);

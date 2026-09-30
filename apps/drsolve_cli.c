@@ -136,6 +136,8 @@ static const char *fq_det_method_name_cli(fq_nmod_poly_det_method_t method)
             return "hnf";
         case FQ_NMOD_POLY_DET_METHOD_ITER:
             return "iter";
+        case FQ_NMOD_POLY_DET_METHOD_INTERP:
+            return "interp";
         case FQ_NMOD_POLY_DET_METHOD_AUTO:
         default:
             return "auto";
@@ -1795,8 +1797,9 @@ static int read_dr_file_options(const char *filename, dr_file_options_t *out)
                     if (strcmp(value, "auto") == 0) out->fq_det_method = FQ_NMOD_POLY_DET_METHOD_AUTO;
                     else if (strcmp(value, "hnf") == 0) out->fq_det_method = FQ_NMOD_POLY_DET_METHOD_HNF;
                     else if (strcmp(value, "iter") == 0) out->fq_det_method = FQ_NMOD_POLY_DET_METHOD_ITER;
+                    else if (strcmp(value, "interp") == 0) out->fq_det_method = FQ_NMOD_POLY_DET_METHOD_INTERP;
                     else {
-                        fprintf(stderr, "Error: invalid --fq-det-method value '%s' in '# options:'; expected auto, hnf, or iter.\n", value);
+                        fprintf(stderr, "Error: invalid --fq-det-method value '%s' in '# options:'; expected auto, hnf, iter, or interp.\n", value);
                         free(line); fclose(fp); return 0;
                     }
                     out->fq_det_method_seen = 1;
@@ -3176,9 +3179,11 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
                 fq_det_method = FQ_NMOD_POLY_DET_METHOD_HNF;
             } else if (strcmp(argv[i + 1], "iter") == 0) {
                 fq_det_method = FQ_NMOD_POLY_DET_METHOD_ITER;
+            } else if (strcmp(argv[i + 1], "interp") == 0) {
+                fq_det_method = FQ_NMOD_POLY_DET_METHOD_INTERP;
             } else {
                 fprintf(stderr,
-                        "Error: invalid --fq-det-method value '%s'; expected auto, hnf, or iter.\n",
+                        "Error: invalid --fq-det-method value '%s'; expected auto, hnf, iter, or interp.\n",
                         argv[i + 1]);
                 return 1;
             }
@@ -3186,7 +3191,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             i++;
         } else if (strcmp(argv[i], "--fq-det-method") == 0) {
             fprintf(stderr,
-                    "Error: --fq-det-method requires one of: auto, hnf, iter.\n");
+                    "Error: --fq-det-method requires one of: auto, hnf, iter, interp.\n");
             return 1;
         } else if (strcmp(argv[i], "--fast-ksy") == 0 ||
                    strcmp(argv[i], "--ksy-precondition") == 0) {
@@ -4184,6 +4189,19 @@ random_done:
     g_dixon_step3_second_verification = step3_verify_second;
     g_dixon_det_cache_limit = det_cache_limit;
     fq_nmod_poly_mat_det_set_method(fq_det_method);
+    int prefer_interp = 0;
+    if (!rational_mode && !large_prime_mode && power == 1 && vars_str && polys_str) {
+        slong count = 0, total = 0, eliminated = 0;
+        char **elim_names = split_string(vars_str, &eliminated);
+        free_split_strings(elim_names, eliminated);
+        char **parts = split_string(polys_str, &count), **names = NULL;
+        collect_variables((const char **)parts, count, NULL, &names, &total);
+        prefer_interp = count == 3 && eliminated == 2 && total == 3;
+        for (slong i = 0; i < total; i++) free(names[i]);
+        free(names); free_split_strings(parts, count);
+    }
+    fq_nmod_poly_mat_det_prefer_interpolation(prefer_interp &&
+        (num_threads == -1 ? drsolve_default_thread_count() : num_threads) >= 4);
     if (det_method_step1 != -1) {
         dixon_global_method_step1 = (det_method_t)det_method_step1;
         dixon_global_method = dixon_global_method_step1;

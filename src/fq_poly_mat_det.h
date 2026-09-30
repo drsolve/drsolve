@@ -111,11 +111,19 @@ int perm_parity(const slong *perm, slong n);
 typedef enum {
     FQ_NMOD_POLY_DET_METHOD_AUTO = 0,
     FQ_NMOD_POLY_DET_METHOD_HNF = 1,
-    FQ_NMOD_POLY_DET_METHOD_ITER = 2
+    FQ_NMOD_POLY_DET_METHOD_ITER = 2,
+    FQ_NMOD_POLY_DET_METHOD_INTERP = 3
 } fq_nmod_poly_det_method_t;
 
 /* Prime-field entry point preserving the configured auto/HNF/iter policy. */
 void dixon_nmod_poly_mat_det(nmod_poly_t det, nmod_poly_mat_t mat);
+/* Negative bound computes a conservative row/column degree bound. Failure
+ * leaves det unchanged so the caller can use its ordinary backend. */
+int dixon_nmod_poly_mat_det_interpolate(nmod_poly_t det,
+                                      const nmod_poly_mat_t mat, slong bound);
+
+void fq_nmod_poly_mat_det_prefer_interpolation(int enabled);
+int fq_nmod_poly_mat_det_wants_interpolation(void);
 
 void fq_nmod_poly_mat_det_set_threads(int num_threads);
 

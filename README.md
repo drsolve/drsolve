@@ -138,16 +138,6 @@ Bezout degree bound, and complexity in bits.
 ./drsolve -c -f input.dr
 ```
 - Prints complexity information
-- For n quadratics in n variables with one remaining parameter, `-v 2` also
-  compares the legacy cached Laplace surrogate with total-degree and per-layer
-  MQ bounds. Step 1 selects the smallest estimate including total-degree simplex
-  interpolation, charging entry evaluation, numerical determinants, Newton
-  transforms, and any extension-field arithmetic. Step 4 compares rank-sized
-  methods with blocked Schur formation, the core determinant, and verification;
-  its MQ entry-degree bound is `n+1`. The overall estimate is
-  `max(Step 1/2, Step 4)`, with no separate Step 3 extraction charge.
-  `-v 1` retains the original method selection. For example:
-  `./drsolve -c -r '[2]*10' 257 -v 2`.
 - Default output file: `out/comp_YYYYMMDD_HHMMSS.dr`
 - Add `--omega <value>` or `-w <value>` to set the matrix-multiplication exponent
 
@@ -219,191 +209,29 @@ Example:
 - Available methods: `0.Recursive`, `1.Kronecker+HNF`, `2.Interpolation`, `3.Sparse interpolation`, `4.Bareiss`, `5.Recursive Dixon construction`
 - `--method` sets both Step 1 and Step 4 for backward compatibility
 
-#### Experimental construction of the MQ Schur core
+Finite-field elimination of two variables from three equations in three
+variables defaults to method 5. Explicit method options take precedence;
+use `--dixon` to select ordinary Dixon construction.
 
-A standalone prototype requests coefficient panels from projected Step 1,
-solves complementary degree blocks, and accumulates the exact Schur core
-without constructing the full candidate matrix first:
-
+#### Step 4 determinant options
 ```bash
-make test-mq-direct-core
-# n, threads, use-pencil (0=minor DP, 1=pencil), seed, prime
-./build/mq_direct_core_test 8 4 0 12345 65537
+./drsolve --fq-det-method hnf <args>
+./drsolve --fq-det-method iter <args>
+./drsolve --fq-det-method interp <args>
+./drsolve --no-mq-step4-schur <args>
 ```
+`--fq-det-method` selects the prime-field, single-parameter determinant
+backend (`auto` by default). For three equations in three variables with
+one retained parameter over a prime field, `auto` uses interpolation when
+the field has enough points and at least four threads are used. Explicit `interp` uses all field elements when
+the degree bound is too large, returning a polynomial with the same values
+on the base field rather than an exact resultant. Schur compression is enabled by default for
+eligible systems; `--no-mq-step4-schur` disables it.
 
-The executable then constructs the ordinary candidate independently and checks
-every core coefficient and the determinant multiplier. Small cases also compare
-full determinants and exercise rejection without publishing a partial core.
-This is an experiment, not a solver option: it still generates all complementary
-coefficients and repeats projected determinant work across panels. Local n=8
-measurements are slower than ordinary construction plus Schur compression.
-It does not establish a smaller asymptotic Step 1 bound or an algebraic reduction
-that bypasses complementary coefficients. Details and measurements:
-[direct-core experiment](paper/rank/DIRECT_CORE_EXPERIMENT.md).
-
-#### Experimental MQ Step 1 degree recurrence
-
+Example:
 ```bash
-./drsolve --mq-step1-pencil --threads 4 -f input.dr -v 2
+./drsolve -r '[12]*3' 65537 --fq-det-method interp --threads 16 --time
 ```
-
-`--mq-step1-pencil` enables a Faddeev-LeVerrier degree recurrence instead of
-subset-minor DP. It normalizes the parameter coefficient matrix by constant
-column operations to obtain a lower block `tI+L`, then constructs the determinant
-and adjugate border terms using one polynomial matrix and per-thread column
-scratch. Boundary vectors are formed from the current matrix.
-Columns are overwritten only after their old entries have all been consumed;
-the trace and diagonal correction follow the column-update barrier.
-The constant determinant scale is preserved exactly. Parameter coefficients
-are accumulated in separate degree buckets. With the default MQ prediction,
-intermediate matrices are projected to the candidate's downward closure using
-the shared packed coefficient filter. Final contributions are filtered
-before bucket accumulation. Candidate verification and degree-aware Schur repair
-remain enabled; missing repair strips are computed by projected minor DP.
-
-This option is off by default; `--no-mq-step1-pencil` disables it. It currently
-requires prime characteristic `p > n-1`, one parameter, and full row rank of the
-linear rows' parameter coefficient matrix (`n` is the equation count). Other
-explicit Step 1 backends take precedence. Unsupported inputs fall back to the
-existing backend. The conservative eligibility estimate retains the old
-two-matrix bound of 268,435,456 coefficient slots; this permits `n<=10`, while `n>=11` currently
-falls back. This is an eligibility bound, not a process-memory limit.
-`--no-mq-step1-filter` computes the complete pencil determinant.
-If candidate repair fails, the complete determinant is computed as a fallback.
-This remains an experimental backend; see the paired timings in the research
-note before selecting it for performance.
-
-`--threads` parallelizes independent columns and border products, using
-at most `n-1` worker threads. `-v 2` reports normalization, recurrence, assembly,
-and the largest sampled matrix-plus-column-scratch term count (excluding
-vectors, multiplication temporaries, and retained allocation capacity).
-When both experimental Step 1 options are supplied, the last enabling option
-(`--mq-step1-pencil` or `--mq-step1-simplex`) wins. Run
-`make test-mq-pencil test-mq-pencil-cli` for exactness and fallback tests.
-See [the degree-DP research and measurements](paper/rank/STEP1_DP_STRUCTURE.md).
-
-#### MQ Step 4 Schur compression
-```bash
-./drsolve --mq-step4-schur -f input.dr -v 2
-```
-Checked complementary-block compression is enabled by default for
-prime-field MQ systems with one retained parameter. It applies to automatic
-Step 4 and `--step4 1`; the smaller determinant uses the existing backend,
-including `--fq-det-method`. Other explicit Step 4 methods are preserved.
-`--no-mq-step4-schur` disables it explicitly; `--mq-step4-schur` re-enables it.
-
-The same checked Step 4 compression also applies to three equal-degree
-equations in three variables, eliminating two variables over a prime field.
-The retained variable must share each equation's total-degree budget.
-For example, `./drsolve -r '[12]*3' 65537 --time --seed 12345` uses this path.
-The selected minor must match the predicted rank and degree profile; the
-compressor verifies entry degree bounds and constant-block invertibility,
-and falls back to the original determinant backend if any check fails.
-Both ordinary construction and `--method 5` can use this checked Step 4
-compression. In finite-field elimination mode, three equations in three
-variables with two eliminated variables automatically select method 5.
-Explicit `--dixon`, `--method`, `--step1`/`--step4`, or file-local method
-options take precedence. Ordinary prime-field Step 1 computes three 2x2 cofactors before
-the final 3x3 products, reducing large intermediate terms. The selected
-bivariate minor goes directly into a native prime-field polynomial matrix.
-Recursive construction uses native single-parameter arithmetic for its base
-cases and bivariate block products, converts each multiplicand block once,
-and moves assembled blocks and selected entries instead of copying them.
-Other fields and multiple parameters retain the general arithmetic.
-`DRSOLVE_FAST_NATIVE=0` selects the previous recursive arithmetic and Step 4
-path for diagnostics; `--no-mq-step4-schur` independently disables compression.
-
-The compressor factors each constant degree-diagonal block once, solves
-`E X = V` by block back substitution, then forms `A - U X`. It does not
-copy or update the entire polynomial matrix for scalar pivot elimination.
-Prime-field, single-parameter MQ Step 1 uses shared monomial indices and
-coefficient arrays by default when the matrix shape, exponent packing and
-index bounds allow it. The unique quadratic row remains last in the DP evaluation order. There
-is no fixed workspace cap by default. Preflight retains integer/index and
-addressability bounds for arrays, maps and support tables. Unsupported shapes,
-packing or index bounds fall back to the existing sparse minor DP. Large inputs
-can require substantial memory; no physical-memory availability check is made.
-Builds may override `DRSOLVE_MQ_SHARED_WORKSPACE_BYTES` to impose a budget.
-
-For all admitted sizes, shared indices use native FLINT exponent packing,
-including multiword keys. Transition maps with at least 1,000,000 pairs can use
-independent hash shards to build their indices in parallel. There is no n-based
-performance gate; the shape, packing and workspace admission checks above still
-apply. Shared indices avoid duplicating monomial indexing across minors, but do
-not remove the exponential subset count of the DP.
-
-Direct indices replace hash-based support construction by default for eligible
-projected shared Step 1 DP: disable with `--no-mq-step1-rank`, re-enable with
-`--mq-step1-rank`. They use separate x/y axis transitions and
-parameter offsets with native multiword exponent keys, retaining the full
-transition map. The shared backend's eligibility limits still apply; missing
-projection filters, absent parameter support, or excess workspace fall back
-to ordinary hash construction. `--no-mq-step1-shared` also disables this path.
-See [the implementation measurements and checks](src/test/MQ_RANK_BUDGET.md).
-
-For a verified MQ minor-DP projection over a prime field with one parameter,
-the resultant pipeline now keeps compact row storage between Steps 1 and 2.
-Step 1 emits contiguous `(column, degree, coefficient)` records directly from
-the native determinant, with support labels stored once. Step 2 reads these
-rows directly into `nmod_poly_mat`, skipping generic per-term objects, support
-recollection and repacking. Set `DRSOLVE_MQ_COMPACT=0` to restore the previous
-streaming conversion for comparison. This representation adds no n-dependent
-packing restriction; existing MQ backend eligibility checks still apply.
-
-Candidate verification is unchanged; candidates needing the existing repair
-path are materialized into the conventional representation. Other Step 1
-backends and public extraction calls retain their existing paths. Row/column
-content, degree ordering and Schur labels are preserved. Step 4 stays in the
-native prime-field representation; successful Schur compression releases the
-large matrix before taking the core determinant.
-
-With `-v 2`, compact output assembly and Step 2 metadata, matrix initialization,
-filling and buffer release have separate timings. `DRSOLVE_STEP2_PACK_BUFFER`
-only affects the older conversion path; compact construction bypasses it.
-See [direct Step 2 construction](src/test/MQ_STEP2_DIRECT.md).
-
-Use `--no-mq-step1-shared` to select the previous sparse DP, or
-`--mq-step1-shared` to re-enable sharing. This is independent of
-`--no-mq-step1-filter`, and explicit Step 1 backends such as pencil, simplex,
-interpolation and Bareiss keep precedence. Small characteristic is supported;
-delayed modular reduction is used only when a proved one-limb bound is safe.
-See [the n=7/8 measurements and production checks](src/test/MQ_LAYOUT_EXPERIMENT.md).
-The sparse fallback retains its packed linear-product streams and coefficient
-filtering.
-
-Enable total-degree interpolation in Step 1 explicitly with:
-
-```bash
-./drsolve --mq-step1-simplex --mq-step4-schur --threads 4 -f input.dr -v 2
-```
-
-`--mq-step1-simplex` is off by default; `--no-mq-step1-simplex` disables it.
-It uses `--threads` for matrix-entry evaluation, numerical determinants, and
-independent interpolation fibers. Candidate verification and Schur repair reuse
-the full interpolated polynomial, so failed selection does not recompute it.
-`--no-mq-step1-filter` retains the full polynomial for the ordinary extraction
-path. Other explicit Step 1 backends take precedence.
-
-The current implementation requires a prime field with `p > n+1`, one retained
-parameter, and MQ divided differences, where `n` is the equation count. It falls
-back to the existing Step 1 backend for other inputs or when the dense simplex
-workspace exceeds 16,777,216 points (covering through `n=9`). It does not yet
-implement extension-field interpolation. Verbosity two reports each stage's
-wall time and the fallback reason when applicable.
-
-`make build/mq_simplex_bench` builds a full-coefficient differential benchmark;
-for example `./build/mq_simplex_bench 8 65537 4` compares the production engine
-with DP using four threads. The whole-minor merge experiments remain separate:
-`make build/mq-sum-direct-cli` and `make build/mq-sum-products-cli`. Neither merge
-kernel is enabled in the normal solver. See
-[the experiment report](paper/rank/STEP1_EXPERIMENTS.md) for timings and commands.
-
-The selected matrix's actual monomial labels are used after reordering or
-repair. Degree checks and nonzero constant pivots certify each compression;
-if the profile is unavailable or the complement is singular, the original
-matrix goes to the normal determinant backend. This option also works with
-`--no-mq-step1-filter`. It does not assume that every random MQ candidate has
-an invertible complement.
 
 #### Resultant construction
 ```bash

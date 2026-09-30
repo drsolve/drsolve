@@ -2,6 +2,12 @@
 /* fq_poly_mat_det.c - Fixed Matrix determinant implementation */
 
 #include "fq_poly_mat_det.h"
+#include <flint/nmod_mat.h>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+extern double get_wall_time(void);
+extern int g_dixon_verbose_level;
 
 extern int g_dixon_debug_mode;
 
@@ -597,13 +603,88 @@ void fq_nmod_poly_mat_det_prime_iter(fq_nmod_poly_t det,
     fq_nmod_poly_mat_det_iter(det, mat, ctx);
 }
 
+static int prefer_interpolation;
+void fq_nmod_poly_mat_det_prefer_interpolation(int enabled) { prefer_interpolation = enabled; }
+int fq_nmod_poly_mat_det_wants_interpolation(void) {
+    fq_nmod_poly_det_method_t method = fq_nmod_poly_mat_det_get_method();
+    return method == FQ_NMOD_POLY_DET_METHOD_INTERP ||
+        (method == FQ_NMOD_POLY_DET_METHOD_AUTO && prefer_interpolation);
+}
+
+/* A row/column degree sum is a certified bound for every determinant term.
+ * The Schur caller can supply a tighter bound from verified degree weights. */
+int dixon_nmod_poly_mat_det_interpolate(nmod_poly_t det,
+                                      const nmod_poly_mat_t mat, slong bound)
+{
+    if (mat->r != mat->c) return 0;
+    if (!mat->r) { nmod_poly_one(det); return 1; }
+    if (bound < 0) {
+        slong rows = 0, cols = 0;
+        for (slong i = 0; i < mat->r; i++) {
+            slong rd = 0, cd = 0;
+            for (slong j = 0; j < mat->c; j++) {
+                rd = FLINT_MAX(rd,nmod_poly_degree(nmod_poly_mat_entry(mat,i,j)));
+                cd = FLINT_MAX(cd,nmod_poly_degree(nmod_poly_mat_entry(mat,j,i)));
+            }
+            if (rows > WORD_MAX-rd || cols > WORD_MAX-cd) return 0;
+            rows += rd; cols += cd;
+        }
+        bound = FLINT_MIN(rows,cols);
+    }
+    if (bound < 0 || bound > WORD_MAX-3) return 0;
+    int reduced = (ulong)bound >= mat->modulus;
+    if (reduced && fq_nmod_poly_mat_det_get_method() != FQ_NMOD_POLY_DET_METHOD_INTERP) return 0;
+    slong count = reduced ? (slong)mat->modulus : bound+1, workers = 1;
+    if ((size_t)count > (size_t)-1/sizeof(ulong)) return 0;
+#ifdef _OPENMP
+    if (!omp_in_parallel()) workers = FLINT_MIN(omp_get_max_threads(),count);
+#endif
+    ulong *xs = flint_malloc(count*sizeof(ulong)), *ys = flint_malloc(count*sizeof(ulong));
+    double eval_start = get_wall_time();
+    #pragma omp parallel num_threads(workers) if(workers>1)
+    {
+        nmod_mat_t eval;
+        nmod_mat_init(eval,mat->r,mat->c,mat->modulus);
+        #pragma omp for schedule(static)
+        for (slong k = 0; k < count; k++) {
+            xs[k] = (ulong)k;
+            nmod_poly_mat_evaluate_nmod(eval,mat,xs[k]);
+            ys[k] = nmod_mat_det(eval);
+        }
+        nmod_mat_clear(eval);
+    }
+    double eval_elapsed = get_wall_time()-eval_start;
+    nmod_poly_t candidate; nmod_poly_init(candidate,mat->modulus);
+    double interp_start = get_wall_time();
+    nmod_poly_interpolate_nmod_vec_fast(candidate,xs,ys,count);
+    double interp_elapsed = get_wall_time()-interp_start;
+    int ok = 1;
+    nmod_mat_t check; nmod_mat_init(check,mat->r,mat->c,mat->modulus);
+    for (slong k = count; !reduced && k < count+2 && (ulong)k < mat->modulus; k++) {
+        nmod_poly_mat_evaluate_nmod(check,mat,(ulong)k);
+        if (nmod_mat_det(check) != nmod_poly_evaluate_nmod(candidate,(ulong)k)) { ok = 0; break; }
+    }
+    nmod_mat_clear(check);
+    if (ok) nmod_poly_swap(det,candidate);
+    nmod_poly_clear(candidate); flint_free(ys); flint_free(xs);
+    if (g_dixon_verbose_level >= 2)
+        printf("  Step 4 interpolation: size=%ld, points=%ld, threads=%ld, evaluation=%.3fs, interpolation=%.3fs, %s\n",
+               mat->r,count,workers,eval_elapsed,interp_elapsed,ok ? (reduced ? "field-value polynomial (mod t^q-t)" : "verified") : "verification failed");
+    return ok;
+}
+
 /* Native input avoids rebuilding a full prime-field copy from fq objects. */
 void dixon_nmod_poly_mat_det(nmod_poly_t det, nmod_poly_mat_t mat)
 {
     if(mat->r!=mat->c) { nmod_poly_zero(det); return; }
     if(!mat->r) { nmod_poly_one(det); return; }
-#ifdef HAVE_PML
     fq_nmod_poly_det_method_t method=fq_nmod_poly_mat_det_get_method();
+    if (fq_nmod_poly_mat_det_wants_interpolation()) {
+        if (dixon_nmod_poly_mat_det_interpolate(det,mat,-1)) return;
+        if (g_dixon_verbose_level >= 2)
+            printf("  Step 4 interpolation: falling back to the native determinant backend\n");
+    }
+#ifdef HAVE_PML
     if(method==FQ_NMOD_POLY_DET_METHOD_ITER ||
        (method==FQ_NMOD_POLY_DET_METHOD_AUTO && dixonres_nmod_poly_mat_is_sparse(mat))) {
         nmod_poly_mat_det_iter(det,mat);
@@ -641,6 +722,16 @@ void fq_nmod_poly_mat_det_iter(fq_nmod_poly_t det,
 
         if (method == FQ_NMOD_POLY_DET_METHOD_ITER) {
             fq_nmod_poly_mat_det_prime_iter(det, mat, ctx);
+            return;
+        }
+        if (fq_nmod_poly_mat_det_wants_interpolation()) {
+            nmod_poly_mat_t native; nmod_poly_t result;
+            nmod_poly_mat_init(native,mat->r,mat->c,fq_nmod_ctx_prime(ctx));
+            nmod_poly_init(result,fq_nmod_ctx_prime(ctx));
+            fq_nmod_poly_mat_convert_to_nmod(native,mat,ctx);
+            dixon_nmod_poly_mat_det(result,native);
+            fq_nmod_poly_convert_from_nmod(det,result,ctx);
+            nmod_poly_clear(result); nmod_poly_mat_clear(native);
             return;
         }
 

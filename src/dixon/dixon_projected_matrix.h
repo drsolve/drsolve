@@ -14,6 +14,7 @@ static void dixon_mq_native_det(fq_nmod_poly_t out, nmod_poly_mat_t matrix,
                               const dixon_mq_step4_profile *p, const fq_nmod_ctx_t ctx)
 {
     ulong prime=fq_nmod_ctx_prime(ctx), factor=1;
+    slong interpolation_bound = -1;
     if(p->size && p->size==matrix->r && matrix->r==matrix->c) {
         double start=get_wall_time();
         slong n=matrix->r;
@@ -36,6 +37,19 @@ static void dixon_mq_native_det(fq_nmod_poly_t out, nmod_poly_mat_t matrix,
         ulong schur_factor=0;
         if(nmod_poly_mat_mq_schur(core,&schur_factor,matrix,p->rd,p->cd,p->h,p->sigma)) {
             factor=schur_factor;
+            /* Each determinant product has degree <= h*sigma-sum(rd+cd).
+             * Confirm the compressed entries retain these degree bounds. */
+            slong bound = 0;
+            int valid = 1;
+            for (slong i=0;i<p->h;i++) {
+                slong add = p->sigma-p->rd[i]-p->cd[i];
+                if (add < 0 || bound > WORD_MAX-add) valid = 0;
+                else bound += add;
+                for (slong j=0;j<p->h;j++)
+                    if (!nmod_poly_is_zero(nmod_poly_mat_entry(core,i,j)) &&
+                        nmod_poly_degree(nmod_poly_mat_entry(core,i,j)) > p->sigma-p->rd[i]-p->cd[j]) valid = 0;
+            }
+            if (valid) interpolation_bound = bound;
             nmod_poly_mat_swap(matrix,core);
             dixon_info_log("  MQ Step 4 Schur: %ld -> %ld, compression %.3fs\n",
                            n,p->h,get_wall_time()-start);
@@ -46,7 +60,9 @@ static void dixon_mq_native_det(fq_nmod_poly_t out, nmod_poly_mat_t matrix,
         if(p->odd) factor=prime-factor;
     }
     nmod_poly_t det; nmod_poly_init(det,prime);
-    dixon_nmod_poly_mat_det(det,matrix);
+    int interpolated = fq_nmod_poly_mat_det_wants_interpolation() &&
+        interpolation_bound >= 0 && dixon_nmod_poly_mat_det_interpolate(det,matrix,interpolation_bound);
+    if (!interpolated) dixon_nmod_poly_mat_det(det,matrix);
     nmod_poly_scalar_mul_nmod(det,det,factor);
     fq_nmod_t coefficient; fq_nmod_init(coefficient,ctx); fq_nmod_poly_zero(out,ctx);
     for(slong k=0;k<det->length;k++) {
