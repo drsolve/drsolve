@@ -213,26 +213,6 @@ Finite-field elimination of two variables from three equations in three
 variables defaults to method 5. Explicit method options take precedence;
 use `--dixon` to select ordinary Dixon construction.
 
-#### Step 4 determinant options
-```bash
-./drsolve --fq-det-method hnf <args>
-./drsolve --fq-det-method iter <args>
-./drsolve --fq-det-method interp <args>
-./drsolve --no-mq-step4-schur <args>
-```
-`--fq-det-method` selects the prime-field, single-parameter determinant
-backend (`auto` by default). For three equations in three variables with
-one retained parameter over a prime field, `auto` uses interpolation when
-the field has enough points and at least four threads are used. Explicit `interp` uses all field elements when
-the degree bound is too large, returning a polynomial with the same values
-on the base field rather than an exact resultant. Schur compression is enabled by default for
-eligible systems; `--no-mq-step4-schur` disables it.
-
-Example:
-```bash
-./drsolve -r '[12]*3' 65537 --fq-det-method interp --threads 16 --time
-```
-
 #### Resultant construction
 ```bash
 ./drsolve --dixon <args>
@@ -262,6 +242,25 @@ Example:
 ```
 - Sets the number of threads for parallel computation
 
+#### Step 4 determinant options
+```bash
+./drsolve --fq-det-method hnf <args>
+./drsolve --fq-det-method iter <args>
+./drsolve --fq-det-method interp <args>
+./drsolve --no-mq-step4-schur <args>
+```
+`--fq-det-method` selects the prime-field, single-parameter determinant
+backend (`auto` by default). For three equations in three variables with
+one retained parameter over a prime field, `auto` uses interpolation when
+the field has enough points and at least four threads are used. Explicit `interp` uses all field elements when
+the degree bound is too large, returning a polynomial with the same values
+on the base field rather than an exact resultant. Schur compression is enabled by default for
+eligible systems; `--no-mq-step4-schur` disables it.
+
+Example:
+```bash
+./drsolve -r '[12]*3' 65537 --fq-det-method interp --threads 16 --time
+```
 ---
 
 ## SageMath Interface
