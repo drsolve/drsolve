@@ -4099,10 +4099,19 @@ random_done:
         } else if (!rational_mode && !large_prime_mode &&
                    (poly_count == 3) &&
                    var_count == poly_count - 1) {
-            if (!silent_mode) {
-                printf("Hint: detected %d equations; using --method 5 may perform better than the default Dixon method.\n",
-                       poly_count);
+            slong parsed_count = 0, total_vars = 0;
+            char **poly_parts = split_string(polys_str, &parsed_count);
+            char **names = NULL;
+            const char *generator = power > 1 ? (gen_var_name ? gen_var_name : "t") : NULL;
+            collect_variables((const char **) poly_parts, parsed_count, generator, &names, &total_vars);
+            if (total_vars == 3) {
+                resultant_method = RESULTANT_METHOD_DIXON_RECURSIVE;
+                if (!silent_mode)
+                    printf("Detected 3 equations in 3 variables; using recursive Dixon construction (method 5).\n");
             }
+            for (slong i = 0; i < total_vars; i++) free(names[i]);
+            free(names);
+            free_split_strings(poly_parts, parsed_count);
         }
     }
 

@@ -5,14 +5,6 @@ Website: <https://drsolve.github.io>
 
 Author: Haohai Suo (<haohai.suo@mail.sdu.edu.cn>)
 
-## Paper
-
-This library implements the methods described in:
-
-> **Efficient Polynomial System Solving via Dixon Resultants: Applications to AO Primitives**
-- ePrint: <https://eprint.iacr.org/2026/1969>
-- reproduction materials: <https://github.com/drsolve/dixon_asiacrypt>
-
 ## Features
 - Dixon resultant computation for variable elimination
 - Polynomial system solver
@@ -308,7 +300,10 @@ The selected minor must match the predicted rank and degree profile; the
 compressor verifies entry degree bounds and constant-block invertibility,
 and falls back to the original determinant backend if any check fails.
 Both ordinary construction and `--method 5` can use this checked Step 4
-compression. Ordinary prime-field Step 1 computes three 2x2 cofactors before
+compression. In finite-field elimination mode, three equations in three
+variables with two eliminated variables automatically select method 5.
+Explicit `--dixon`, `--method`, `--step1`/`--step4`, or file-local method
+options take precedence. Ordinary prime-field Step 1 computes three 2x2 cofactors before
 the final 3x3 products, reducing large intermediate terms. The selected
 bivariate minor goes directly into a native prime-field polynomial matrix.
 Recursive construction uses native single-parameter arithmetic for its base
@@ -458,6 +453,14 @@ Example:
 - For a fuller Sage reference with examples and options, see the top docstring in `drsolve_sage_interface.sage`.
 
 ---
+
+## Paper
+
+This library implements the methods described in:
+
+> **Efficient Polynomial System Solving via Dixon Resultants: Applications to AO Primitives**
+- ePrint: <https://eprint.iacr.org/2026/1969>
+- reproduction materials: <https://github.com/drsolve/dixon_asiacrypt>
 
 ## Development Notes
 Parts of this project were developed with the assistance of AI-based coding tools. All AI-assisted contributions were reviewed and tested by the project author.
