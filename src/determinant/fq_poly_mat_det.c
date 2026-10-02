@@ -3,6 +3,9 @@
 
 #include "fq_poly_mat_det.h"
 #include <flint/nmod_mat.h>
+#include "poly_mat_eval_batch.h"
+#include <stdlib.h>
+#include <string.h>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -641,18 +644,52 @@ int dixon_nmod_poly_mat_det_interpolate(nmod_poly_t det,
 #endif
     ulong *xs = flint_malloc(count*sizeof(ulong)), *ys = flint_malloc(count*sizeof(ulong));
     double eval_start = get_wall_time();
-    #pragma omp parallel num_threads(workers) if(workers>1)
+    const char *eval_mode = getenv("DRSOLVE_INTERP_EVAL");
+    int scalar = eval_mode && strcmp(eval_mode,"scalar") == 0;
+    int force_batch = eval_mode && strcmp(eval_mode,"batch") == 0;
+    dixon_poly_mat_eval_plan plan;
+    int batched = !scalar && dixon_poly_mat_eval_prepare(&plan,mat,count,workers,force_batch);
+    double packing_elapsed = get_wall_time()-eval_start;
+    double evaluation_work = 0.0, determinant_work = 0.0;
+    slong batch = batched ? plan.batch : 1;
+    slong panels = count/batch + (count%batch != 0);
+    workers = FLINT_MIN(workers,panels);
+    #pragma omp parallel num_threads(workers) if(workers>1) reduction(+:evaluation_work,determinant_work)
     {
-        nmod_mat_t eval;
+        nmod_mat_t eval, powers, values;
+        ulong **entries = NULL;
         nmod_mat_init(eval,mat->r,mat->c,mat->modulus);
-        #pragma omp for schedule(static)
-        for (slong k = 0; k < count; k++) {
-            xs[k] = (ulong)k;
-            nmod_poly_mat_evaluate_nmod(eval,mat,xs[k]);
-            ys[k] = nmod_mat_det(eval);
+        if (batched) {
+            nmod_mat_init(powers,batch,plan.length,mat->modulus);
+            nmod_mat_init(values,batch,plan.entries,mat->modulus);
+            entries=flint_malloc((size_t)plan.entries*sizeof(ulong *));
+            for (slong r=0;r<plan.entries;r++) {
+                slong index=plan.indices[r];
+                entries[r]=nmod_mat_entry_ptr(eval,index/mat->c,index%mat->c);
+            }
         }
+        #pragma omp for schedule(static)
+        for (slong panel = 0; panel < panels; panel++) {
+            slong begin = panel*batch, width = FLINT_MIN(batch,count-begin);
+            double t = get_wall_time();
+            for (slong j=0;j<width;j++) xs[begin+j]=(ulong)(begin+j);
+            if (batched) dixon_poly_mat_eval_panel(values,powers,&plan,xs+begin,width);
+            else nmod_poly_mat_evaluate_nmod(eval,mat,xs[begin]);
+            evaluation_work += get_wall_time()-t;
+            for (slong j=0;j<width;j++) {
+                t=get_wall_time();
+                if (batched) for (slong r=0;r<plan.entries;r++)
+                    *entries[r]=nmod_mat_entry(values,j,r);
+                evaluation_work += get_wall_time()-t;
+                t=get_wall_time();
+                ys[begin+j]=nmod_mat_det(eval);
+                determinant_work += get_wall_time()-t;
+            }
+        }
+        if (batched) { flint_free(entries); nmod_mat_clear(values); nmod_mat_clear(powers); }
         nmod_mat_clear(eval);
     }
+    if (batched) dixon_poly_mat_eval_clear(&plan);
     double eval_elapsed = get_wall_time()-eval_start;
     nmod_poly_t candidate; nmod_poly_init(candidate,mat->modulus);
     double interp_start = get_wall_time();
@@ -667,6 +704,9 @@ int dixon_nmod_poly_mat_det_interpolate(nmod_poly_t det,
     nmod_mat_clear(check);
     if (ok) nmod_poly_swap(det,candidate);
     nmod_poly_clear(candidate); flint_free(ys); flint_free(xs);
+    if (g_dixon_verbose_level >= 2)
+        printf("  Step 4 evaluation: %s, batch=%ld, packing=%.3fs, summed worker times: matrix evaluation=%.3fs, determinants=%.3fs\n",
+               batched ? "batched" : "scalar",batch,packing_elapsed,evaluation_work,determinant_work);
     if (g_dixon_verbose_level >= 2)
         printf("  Step 4 interpolation: size=%ld, points=%ld, threads=%ld, evaluation=%.3fs, interpolation=%.3fs, %s\n",
                mat->r,count,workers,eval_elapsed,interp_elapsed,ok ? (reduced ? "field-value polynomial (mod t^q-t)" : "verified") : "verification failed");

@@ -1325,6 +1325,49 @@ cleanup:
     g_nmod_det_iter_depth--;
 }
 
+/* Lower-degree rows first in the top-level kernel split.
+ * Stable insertion sort records the exact permutation parity. */
+static int
+_drsolve_det_degree_order(nmod_poly_t det, const nmod_poly_mat_t mat)
+{
+    const char *mode = getenv("DRSOLVE_PML_DET_ROW_ORDER");
+    /* Sorting helps the graded cores up to 192 rows in the single-thread
+     * benchmarks. Larger cores can lose the early kernel certificate and
+     * recurse more; retain their original order unless explicitly requested. */
+    if ((mode && strcmp(mode,"legacy") == 0) ||
+        _nmod_det_algo() != NMOD_DET_ALGO_LNZ ||
+        (mat->r > 192 && (!mode || strcmp(mode,"degree") != 0)) ||
+        mat->r != mat->c || mat->r <= NMOD_POLY_MAT_DET_HNF_BASECASE)
+        return _nmod_poly_mat_det_hnf_recursive(det,mat);
+    slong n = mat->r;
+    slong *degree = FLINT_ARRAY_ALLOC(n,slong);
+    slong *perm = FLINT_ARRAY_ALLOC(n,slong);
+    nmod_poly_mat_row_degree(degree,mat,NULL);
+    int odd = 0;
+    for (slong i = 0; i < n; i++) {
+        slong j = i;
+        while (j && degree[perm[j-1]] > degree[i]) {
+            perm[j] = perm[j-1]; j--; odd ^= 1;
+        }
+        perm[j] = i;
+    }
+    int changed = 0;
+    for (slong i = 0; i < n; i++) changed |= perm[i] != i;
+    if (!changed) {
+        flint_free(perm); flint_free(degree);
+        return _nmod_poly_mat_det_hnf_recursive(det,mat);
+    }
+    nmod_poly_mat_t ordered;
+    nmod_poly_mat_init(ordered,n,n,mat->modulus);
+    for (slong i = 0; i < n; i++) for (slong j = 0; j < n; j++)
+        nmod_poly_set(nmod_poly_mat_entry(ordered,i,j),nmod_poly_mat_entry(mat,perm[i],j));
+    int ok = _nmod_poly_mat_det_hnf_recursive(det,ordered);
+    if (ok && odd) nmod_poly_neg(det,det);
+    nmod_poly_mat_clear(ordered); flint_free(perm); flint_free(degree);
+    if (!ok) return _nmod_poly_mat_det_hnf_recursive(det,mat);
+    return ok;
+}
+
 /* Run the recursion, then (unless disabled) verify the result at a random
  * point. If the LNZ algorithm produced a value that fails verification --
  * which the per-node sanity checks should already prevent -- recompute
@@ -1340,7 +1383,7 @@ _nmod_poly_mat_det_hnf_toplevel(nmod_poly_t det,
         nmod_poly_mat_kernel_zls_profile_reset();
     }
 
-    int ok = _nmod_poly_mat_det_hnf_recursive(det, mat);
+    int ok = _drsolve_det_degree_order(det, mat);
 
     if (ok && _nmod_det_verify_enabled())
     {

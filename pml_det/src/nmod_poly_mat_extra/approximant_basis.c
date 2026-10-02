@@ -221,7 +221,7 @@ void nmod_poly_mat_pmbasis(nmod_poly_mat_t appbas,
             && pmat->modulus > 2 * (ulong) order + 1)
             nmod_poly_mat_middle_product_geometric(residual, appbas, pmat, order1, order2-1);
         else
-            nmod_poly_mat_middle_product_naive(residual, appbas, pmat, order1, order2-1);
+            drsolve_nmod_poly_mat_middle_product(residual, appbas, pmat, order1, order2);
         if (collect_profile)
             g_nmod_pmbasis_profile.pmbasis_middle_product_time += _nmod_pmbasis_now_seconds() - t0;
     }
@@ -235,7 +235,7 @@ void nmod_poly_mat_pmbasis(nmod_poly_mat_t appbas,
 
     {
         double t0 = collect_profile ? _nmod_pmbasis_now_seconds() : 0.0;
-        nmod_poly_mat_mul(appbas, appbas2, appbas);
+        drsolve_nmod_poly_mat_mul(appbas, appbas2, appbas);
         if (collect_profile)
             g_nmod_pmbasis_profile.pmbasis_final_mul_time += _nmod_pmbasis_now_seconds() - t0;
     }

@@ -453,6 +453,7 @@ test-dixon-bivariate-cli: $(DIXON_TARGET)-lto
 .PHONY: test-poly-mat-interpolation
 test-poly-mat-interpolation: $(BUILD_DIR)/poly_mat_interpolation_test
 	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=4 ./$(BUILD_DIR)/poly_mat_interpolation_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=4 DRSOLVE_INTERP_EVAL=batch ./$(BUILD_DIR)/poly_mat_interpolation_test
 
 $(BUILD_DIR)/poly_mat_interpolation_test: $(SRC_DIR)/test/poly_mat_interpolation_test.c $(SRC_DIR)/determinant/fq_poly_mat_det.c $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/poly_mat_interpolation_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
@@ -1137,3 +1138,12 @@ $(BUILD_DIR)/dr_mpoly_test: $(SRC_DIR)/test/dr_mpoly_test.c $(DIXON_SHARED_LIB)
 .PHONY: test-native-mpoly
 test-native-mpoly: $(BUILD_DIR)/dr_mpoly_test
 	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/dr_mpoly_test
+
+.PHONY: test-prime-step4
+test-prime-step4: $(BUILD_DIR)/pml_prime_step4_test
+	OMP_NUM_THREADS=1 DRSOLVE_PML_MUL=ntt DRSOLVE_PML_DET_ROW_ORDER=degree ./$(BUILD_DIR)/pml_prime_step4_test
+
+$(BUILD_DIR)/pml_prime_step4_test: $(SRC_DIR)/test/pml_prime_step4_test.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+$(BUILD_DIR)/determinant/fq_poly_mat_det.o $(BUILD_DIR)/poly_mat_interpolation_test: $(SRC_DIR)/determinant/poly_mat_eval_batch.h

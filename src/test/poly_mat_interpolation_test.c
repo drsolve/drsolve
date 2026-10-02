@@ -3,6 +3,7 @@
 #include "dixon_flint.h"
 #include "fq_multivariate_interpolation.h"
 #include <assert.h>
+#include "../determinant/poly_mat_eval_batch.h"
 #include <flint/ulong_extras.h>
 
 static void check(ulong prime, slong n, slong degree, flint_rand_t rng)
@@ -62,6 +63,49 @@ static void check_generic_prime_interpolation(ulong prime)
     flint_free(xs); flint_free(ys); flint_free(nx); flint_free(ny); fq_nmod_ctx_clear(ctx);
 }
 
+/* Compare every matrix entry, including rectangular input windows, repeated
+ * points in small fields and the final one-point panel. The coefficient plan
+ * is shared read-only; each parallel panel owns its evaluation workspace. */
+static void check_batched_entries(ulong prime, flint_rand_t rng)
+{
+    nmod_poly_mat_t parent,a,saved;
+    nmod_poly_mat_init(parent,11,17,prime);
+    nmod_poly_mat_randtest(parent,rng,41);
+    nmod_poly_mat_window_init(a,parent,1,2,10,15);
+    for (slong i=0;i<a->r;i++) for (slong j=0;j<a->c;j++) {
+        if ((i+j)%9==0) nmod_poly_zero(nmod_poly_mat_entry(a,i,j));
+        if ((i+j)%9==1) nmod_poly_one(nmod_poly_mat_entry(a,i,j));
+    }
+    nmod_poly_mat_init_set(saved,parent);
+    dixon_poly_mat_eval_plan plan;
+    assert(dixon_poly_mat_eval_prepare(&plan,a,257,4,1));
+    ulong xs[257];
+    for (slong j=0;j<257;j++) xs[j]=(ulong)j%prime;
+    xs[256]=prime-1;
+    #pragma omp parallel for schedule(static)
+    for (slong begin=0;begin<257;begin+=128) {
+        nmod_mat_t powers,values,expected;
+        slong width=FLINT_MIN(plan.batch,257-begin);
+        nmod_mat_init(powers,plan.batch,plan.length,prime);
+        nmod_mat_init(values,plan.batch,plan.entries,prime);
+        nmod_mat_init(expected,a->r,a->c,prime);
+        dixon_poly_mat_eval_panel(values,powers,&plan,xs+begin,width);
+        for (slong j=0;j<width;j++) {
+            nmod_poly_mat_evaluate_nmod(expected,a,xs[begin+j]);
+            for (slong r=0;r<plan.entries;r++) {
+                slong index=plan.indices[r];
+                assert(nmod_mat_entry(values,j,r)==nmod_mat_entry(expected,index/a->c,index%a->c));
+            }
+        }
+        nmod_mat_clear(expected); nmod_mat_clear(values); nmod_mat_clear(powers);
+    }
+    assert(nmod_poly_mat_equal(parent,saved));
+    dixon_poly_mat_eval_clear(&plan);
+    /* An excessive worker count must reject packing before allocating it. */
+    assert(!dixon_poly_mat_eval_prepare(&plan,a,257,WORD_MAX,1));
+    nmod_poly_mat_window_clear(a); nmod_poly_mat_clear(saved); nmod_poly_mat_clear(parent);
+}
+
 int main(void)
 {
     g_dixon_verbose_level=0;
@@ -69,6 +113,13 @@ int main(void)
     check_generic_prime_interpolation(13);
     check_generic_prime_interpolation(65537);
     flint_rand_t rng; flint_rand_init(rng); flint_rand_set_seed(rng,772,913);
+    ulong batch_primes[]={2,3,17,257,65537,1000003,
+#if FLINT_BITS == 64
+        UWORD(18446744069414584321),
+#endif
+    };
+    for (size_t i=0;i<sizeof(batch_primes)/sizeof(*batch_primes);i++)
+        check_batched_entries(batch_primes[i],rng);
     ulong primes[]={2,13,101,65537};
     for (slong p=0;p<4;p++) for (slong n=0;n<=8;n++)
         for (slong d=0;d<=4;d++) check(primes[p],n,d,rng);
@@ -90,6 +141,6 @@ int main(void)
     nmod_poly_clear(got); nmod_poly_mat_clear(saved); nmod_poly_mat_clear(a);
     fq_nmod_poly_mat_det_set_method(FQ_NMOD_POLY_DET_METHOD_AUTO);
     flint_rand_clear(rng);
-    puts("Polynomial-matrix interpolation: FFLU equality, singular points, zero determinants, bounds, input preservation and small-field fallback PASS");
+    puts("Polynomial-matrix interpolation: batched entries/panels/threads/word primes, FFLU equality, singular points, zero determinants, bounds, input preservation and small-field fallback PASS");
     flint_cleanup_master(); return 0;
 }

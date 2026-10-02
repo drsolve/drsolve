@@ -16,6 +16,16 @@
 #include <flint/nmod_types.h>
 #include "pml.h"
 
+/* Prime-field radix-2 product. Returns zero without changing C when the
+ * transform or workspace is unavailable. Output is (A B >> start) mod x^count.
+ * Supports C == A and C == B. */
+int drsolve_nmod_poly_mat_mul_window_ntt(nmod_poly_mat_t C,
+    const nmod_poly_mat_t A, const nmod_poly_mat_t B, slong start, slong count);
+void drsolve_nmod_poly_mat_mul(nmod_poly_mat_t C,
+    const nmod_poly_mat_t A, const nmod_poly_mat_t B);
+void drsolve_nmod_poly_mat_middle_product(nmod_poly_mat_t C,
+    const nmod_poly_mat_t A, const nmod_poly_mat_t B, slong start, slong count);
+
 // several functions allocate arrays of matrices
 // setting this flag allocates all memory at once
 // slightly faster than using nmod_mat_init

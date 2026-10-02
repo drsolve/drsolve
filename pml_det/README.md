@@ -175,3 +175,55 @@ Windows-specific changes are intentionally secondary:
 - a few macro/config guards were adjusted to avoid FLINT / toolchain clashes,
 - the repository layout was simplified so the bundled MinGW files now live in
   `mingw/` instead of under `third_party/`.
+
+### Prime-field Step 4 products and degree ordering
+
+The PMBasis middle product now discards input coefficients above the requested
+window before multiplying. It first tries a generic radix-2 NTT matrix
+product: each input entry is transformed once, pointwise matrix products use
+FLINT, and the output entries are inverse-transformed. The same backend handles
+PMBasis's final full product. For a middle window `[start, hi)`, the transform
+length also satisfies `deg(A_trunc B_trunc) < length + start`, so cyclic wrap
+cannot contaminate a requested coefficient. This remains valid for shifted
+approximants whose degree exceeds `start`.
+
+Automatic NTT dispatch uses the same arithmetic and admission checks for all
+prime fields admitting the necessary roots of unity. There are no
+modulus-specific multiplication or dispatch branches. It checks primality,
+root availability, dimensions and workspace before writing the output. Transforms are limited to 65536 points and approximately
+256 MiB of working arrays; rejected attempts fall back to FLINT. No extension
+field backend is changed. The existing geometric middle product now checks its
+input-degree assumptions before entering its reversal/interpolation code.
+
+For the LNZ determinant backend, matrices of 9--192 rows are stably sorted by
+increasing row degree before the first split, with the permutation sign restored
+and the input preserved. Already ordered matrices incur no copy. Sorting is a
+performance heuristic, not a rank assumption: failures retry the original
+order, and existing determinant verification/fallback remains in place. Larger
+matrices retain their order by default because a 300-row benchmark incurred
+more ZLS recursion after sorting.
+
+Ablation switches (read by the bundled PML implementation):
+
+- `DRSOLVE_PML_MUL=auto` (default): generic NTT dispatch plus bounded-input fallback.
+- `DRSOLVE_PML_MUL=flint`: bounded-input FLINT products, without NTT.
+- `DRSOLVE_PML_MUL=ntt`: attempt NTT for all eligible shapes and prime fields.
+- `DRSOLVE_PML_MUL=legacy`: original full products without input truncation.
+- `DRSOLVE_PML_DET_ROW_ORDER=auto` (default): degree ordering up to 192 rows.
+- `DRSOLVE_PML_DET_ROW_ORDER=degree`: request degree ordering at any size.
+- `DRSOLVE_PML_DET_ROW_ORDER=legacy`: retain original row order.
+
+`make test-prime-step4` compares coefficient windows (including in-place and
+shared-storage outputs) against classical multiplication, tests unsupported
+transforms and geometric degree bounds, and compares complete determinants
+against FFLU over six prime fields, including singular and nonprimitive inputs.
+The CMake/CTest equivalent is `drsolve_prime_step4` when bundled PML is enabled.
+For end-to-end result equality and alternating single-thread timing runs:
+
+```sh
+python3 src/test/pml_prime_step4_bench.py --degrees 12 16 20 --repeats 3
+```
+
+Earlier timing measurements used an experimental F_65537-specific butterfly
+reduction. That specialization and its modulus-specific dispatch have been
+removed; use the benchmark script above to measure the generic backend.

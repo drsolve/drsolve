@@ -10,12 +10,186 @@
     <https://www.gnu.org/licenses/>.
 */
 
+#include <stdlib.h>
+#include <string.h>
+#include <flint/ulong_extras.h>
 #include <flint/nmod_mat.h>
 #include <flint/nmod_poly.h>
 #include <flint/nmod_poly_mat.h>
 
 #include "nmod_extra.h"
 #include "nmod_poly_mat_multiply.h"
+
+/* A small prime-field NTT backend. Transforms are per entry; point values
+ * are packed into FLINT matrices so the expensive inner products share them.
+ * The cyclic transform is sufficient for a middle window: if L >= hi and
+ * deg(A_trunc B_trunc) < L + start, no wrapped coefficient reaches it. */
+static void drsolve_ntt(ulong *a, slong n, const ulong *roots, nmod_t mod)
+{
+    for (slong i = 1, j = 0; i < n; i++) {
+        slong bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) { ulong t = a[i]; a[i] = a[j]; a[j] = t; }
+    }
+    for (slong len = 2; len <= n; len <<= 1) {
+        slong half = len >> 1, step = n / len;
+        for (slong i = 0; i < n; i += len)
+            for (slong j = 0; j < half; j++) {
+                ulong u = a[i+j], v = nmod_mul(a[i+j+half], roots[j*step], mod);
+                a[i+j] = nmod_add(u, v, mod);
+                a[i+j+half] = nmod_sub(u, v, mod);
+            }
+    }
+}
+
+int drsolve_nmod_poly_mat_mul_window_ntt(nmod_poly_mat_t C,
+    const nmod_poly_mat_t A, const nmod_poly_mat_t B, slong start, slong count)
+{
+    const slong m = A->r, k = A->c, n = B->c;
+    if (start < 0 || count < 0 || start > WORD_MAX-count || k != B->r ||
+        C->r != m || C->c != n || A->modulus != B->modulus || C->modulus != A->modulus)
+        return 0;
+    if (!count || !m || !k || !n) { nmod_poly_mat_zero(C); return 1; }
+    const slong hi = start + count;
+    slong alen = FLINT_MIN(hi, nmod_poly_mat_max_length(A));
+    slong blen = FLINT_MIN(hi, nmod_poly_mat_max_length(B));
+    if (!alen || !blen) { nmod_poly_mat_zero(C); return 1; }
+    if (alen > WORD_MAX-blen) return 0;
+    slong plen = alen + blen - 1;
+    if (start >= plen) { nmod_poly_mat_zero(C); return 1; }
+    slong need = FLINT_MAX(FLINT_MIN(hi, plen), plen-start), len = 1;
+    /* Bound both transform length and total workspace before allocating.
+     * This backend is optional; unsupported fields use FLINT unchanged. */
+    while (len < need && len < 65536) len <<= 1;
+    if (len < need || A->modulus < 3 || (A->modulus-1) % len) return 0;
+    size_t limit = (size_t)256*1024*1024/sizeof(ulong);
+    if ((size_t)m > limit/(size_t)k || (size_t)k > limit/(size_t)n ||
+        (size_t)m > limit/(size_t)n) return 0;
+    size_t na = (size_t)m*k, nb = (size_t)k*n, nc = (size_t)m*n;
+    if (na+nb+nc+3 > limit/(size_t)(len+1)) return 0;
+    /* The caller uses prime fields. Checking here also makes this standalone
+     * entry point reject composite moduli instead of searching for a root. */
+    if (!n_is_prime(A->modulus)) return 0;
+    nmod_t mod; nmod_init(&mod, A->modulus);
+    ulong root = 1;
+    if (len > 1) {
+        /* For prime p, a^((p-1)/L) has order L iff its L/2 power is -1. */
+        for (ulong a = 2; a < mod.n; a++) {
+            root = nmod_pow_ui(a, (mod.n-1)/len, mod);
+            if (nmod_pow_ui(root, len/2, mod) == mod.n-1) break;
+        }
+    }
+    ulong *roots = flint_malloc((size_t)len*sizeof(ulong));
+    ulong *inverse = flint_malloc((size_t)len*sizeof(ulong));
+    ulong *tmp = flint_malloc((size_t)len*sizeof(ulong));
+    ulong *av = flint_malloc(na*len*sizeof(ulong));
+    ulong *bv = flint_malloc(nb*len*sizeof(ulong));
+    ulong *cv = flint_malloc(nc*len*sizeof(ulong));
+    roots[0] = inverse[0] = 1;
+    ulong invroot = nmod_inv(root, mod);
+    for (slong i = 1; i < len; i++) {
+        roots[i] = nmod_mul(roots[i-1],root,mod);
+        inverse[i] = nmod_mul(inverse[i-1],invroot,mod);
+    }
+    for (int which = 0; which < 2; which++) {
+        const nmod_poly_mat_struct *M = which ? B : A;
+        ulong *values = which ? bv : av;
+        size_t stride = which ? nb : na;
+        for (slong i = 0; i < M->r; i++) for (slong j = 0; j < M->c; j++) {
+            const nmod_poly_struct *f = nmod_poly_mat_entry(M,i,j);
+            slong used = FLINT_MIN(f->length,hi);
+            if (used) memcpy(tmp,f->coeffs,(size_t)used*sizeof(ulong));
+            memset(tmp+used,0,(size_t)(len-used)*sizeof(ulong));
+            drsolve_ntt(tmp,len,roots,mod);
+            for (slong t = 0; t < len; t++) values[(size_t)t*stride+(size_t)i*M->c+j] = tmp[t];
+        }
+    }
+    nmod_mat_t am, bm, cm;
+    nmod_mat_init(am,m,k,mod.n); nmod_mat_init(bm,k,n,mod.n); nmod_mat_init(cm,m,n,mod.n);
+    for (slong t = 0; t < len; t++) {
+        for (slong i = 0; i < m; i++)
+            memcpy(nmod_mat_entry_ptr(am,i,0),av+(size_t)t*na+(size_t)i*k,(size_t)k*sizeof(ulong));
+        for (slong i = 0; i < k; i++)
+            memcpy(nmod_mat_entry_ptr(bm,i,0),bv+(size_t)t*nb+(size_t)i*n,(size_t)n*sizeof(ulong));
+        nmod_mat_mul(cm,am,bm);
+        for (slong i = 0; i < m; i++)
+            memcpy(cv+(size_t)t*nc+(size_t)i*n,nmod_mat_entry_ptr(cm,i,0),(size_t)n*sizeof(ulong));
+    }
+    nmod_mat_clear(cm); nmod_mat_clear(bm); nmod_mat_clear(am);
+    flint_free(bv); flint_free(av);
+    ulong scale = nmod_inv((ulong)len,mod);
+    slong outlen = FLINT_MIN(count,plen-start);
+    for (slong i = 0; i < m; i++) for (slong j = 0; j < n; j++) {
+        for (slong t = 0; t < len; t++) tmp[t] = cv[(size_t)t*nc+(size_t)i*n+j];
+        drsolve_ntt(tmp,len,inverse,mod);
+        nmod_poly_struct *f = nmod_poly_mat_entry(C,i,j);
+        nmod_poly_fit_length(f,outlen);
+        for (slong t = 0; t < outlen; t++) f->coeffs[t] = nmod_mul(tmp[start+t],scale,mod);
+        f->length = outlen; _nmod_poly_normalise(f);
+    }
+    flint_free(cv); flint_free(tmp); flint_free(inverse); flint_free(roots);
+    return 1;
+}
+
+/* legacy: original full products; flint: bounded inputs without NTT;
+ * ntt: force a transform attempt; auto: conservative shape/field dispatch. */
+static int drsolve_mul_mode(void)
+{
+    const char *mode = getenv("DRSOLVE_PML_MUL");
+    if (mode && strcmp(mode,"legacy") == 0) return -1;
+    if (mode && strcmp(mode,"flint") == 0) return 0;
+    if (mode && strcmp(mode,"ntt") == 0) return 1;
+    return 2;
+}
+
+static int drsolve_try_ntt(const nmod_poly_mat_t A, const nmod_poly_mat_t B, int mode)
+{
+    if (mode == 1) return 1;
+    /* Dispatch depends on shape; the backend checks root availability and
+     * workspace uniformly for every prime. */
+    return mode == 2 &&
+        FLINT_MIN(A->r,FLINT_MIN(A->c,B->c)) >= 2;
+}
+
+void drsolve_nmod_poly_mat_mul(nmod_poly_mat_t C,
+    const nmod_poly_mat_t A, const nmod_poly_mat_t B)
+{
+    if (drsolve_try_ntt(A,B,drsolve_mul_mode())) {
+        slong a = nmod_poly_mat_max_length(A), b = nmod_poly_mat_max_length(B);
+        if (a && b && a <= WORD_MAX-b &&
+            drsolve_nmod_poly_mat_mul_window_ntt(C,A,B,0,a+b-1)) return;
+    }
+    nmod_poly_mat_mul(C,A,B);
+}
+
+void drsolve_nmod_poly_mat_middle_product(nmod_poly_mat_t C,
+    const nmod_poly_mat_t A, const nmod_poly_mat_t B, slong start, slong count)
+{
+    int mode = drsolve_mul_mode();
+    if (drsolve_try_ntt(A,B,mode) &&
+        drsolve_nmod_poly_mat_mul_window_ntt(C,A,B,start,count)) return;
+    /* Coefficients >= start+count cannot contribute. In the first PMBasis
+     * branch B can still be the much higher-degree input of an ancestor. */
+    nmod_poly_mat_t at,bt;
+    const nmod_poly_mat_struct *a=A, *b=B;
+    if (mode >= 0 && start >= 0 && count > 0 && start <= WORD_MAX-count) {
+        slong hi = start+count;
+        if (nmod_poly_mat_max_length(A) > hi) {
+            nmod_poly_mat_init(at,A->r,A->c,A->modulus);
+            nmod_poly_mat_set_trunc(at,A,hi); a=at;
+        }
+        if (nmod_poly_mat_max_length(B) > hi) {
+            nmod_poly_mat_init(bt,B->r,B->c,B->modulus);
+            nmod_poly_mat_set_trunc(bt,B,hi); b=bt;
+        }
+    }
+    nmod_poly_mat_mul(C,a,b);
+    nmod_poly_mat_shift_right(C,C,start);
+    nmod_poly_mat_truncate(C,count);
+    if (b != B) nmod_poly_mat_clear(bt);
+    if (a != A) nmod_poly_mat_clear(at);
+}
 
 /** Middle product for polynomial matrices
  *  sets C = ((A * B) div x^dA) mod x^(dB+1), assuming deg(A) <= dA and deg(B) <= dA + dB
@@ -41,6 +215,12 @@ void nmod_poly_mat_middle_product_naive(nmod_poly_mat_t C, const nmod_poly_mat_t
 void nmod_poly_mat_middle_product_geometric(nmod_poly_mat_t C, const nmod_poly_mat_t A, const nmod_poly_mat_t B,
                                             const ulong dA, const ulong dB)
 {
+    if (dA > WORD_MAX || dB >= WORD_MAX || dA > WORD_MAX-dB-1 ||
+        nmod_poly_mat_max_length(A) > (slong)dA+1 ||
+        nmod_poly_mat_max_length(B) > (slong)(dA+dB+1)) {
+        nmod_poly_mat_middle_product_naive(C,A,B,dA,dB);
+        return;
+    }
     nmod_mat_t *mod_A, *mod_B, *mod_C;
     ulong ellC, order;
     ulong i, j, ell, m, k, n, u;
