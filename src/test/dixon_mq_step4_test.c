@@ -3,27 +3,28 @@
 #include "dixon_mq_filter_test.c"
 #undef main
 
-static void same_result(const fq_mvpoly_t *a, const fq_mvpoly_t *b)
+static void same_result(const unified_mpoly_struct *a, const unified_mpoly_struct *b)
 {
     nmod_mpoly_ctx_t ctx;
     nmod_mpoly_ctx_init(ctx, 1, ORD_LEX, fq_nmod_ctx_prime(a->ctx));
     nmod_mpoly_t x, y;
     nmod_mpoly_init(x, ctx); nmod_mpoly_init(y, ctx);
-    fq_mvpoly_to_nmod_mpoly(x, a, ctx); fq_mvpoly_to_nmod_mpoly(y, b, ctx);
+    dr_mpoly_to_nmod_mpoly(x, a, ctx);
+    dr_mpoly_to_nmod_mpoly(y, b, ctx);
     assert(nmod_mpoly_equal(x, y, ctx));
     nmod_mpoly_clear(x, ctx); nmod_mpoly_clear(y, ctx); nmod_mpoly_ctx_clear(ctx);
 }
 
-static void check_selected_matrix(fq_mvpoly_t *polys, slong m, long degree)
+static void check_selected_matrix(unified_mpoly_struct *polys, slong m, long degree)
 {
-    fq_mvpoly_t **matrix, **a, full;
-    build_fq_cancellation_matrix_mvpoly(&matrix, polys, m, 1);
-    perform_fq_matrix_row_operations_mvpoly(&a, &matrix, m, 1);
+    unified_mpoly_struct **matrix, **a, full = {0};
+    build_fq_cancellation_matrix(&matrix, polys, m, 1);
+    perform_fq_matrix_row_operations(&a, &matrix, m, 1);
     compute_fq_cancel_matrix_det(&full, a, m, 1, DET_METHOD_RECURSIVE);
-    fq_mvpoly_t **unused = NULL;
+    unified_mpoly_struct **unused = NULL;
     fq_nmod_poly_mat_t B;
-    slong *ri = flint_malloc(full.nterms * sizeof(slong));
-    slong *ci = flint_malloc(full.nterms * sizeof(slong));
+    slong *ri = flint_malloc(dr_mpoly_length(&(full)) * sizeof(slong));
+    slong *ci = flint_malloc(dr_mpoly_length(&(full)) * sizeof(slong));
     long deg[8]; for (slong i = 0; i <= m; i++) deg[i] = degree;
     slong size, content;
     dixon_mq_step4_profile p = {0};
@@ -55,9 +56,14 @@ static void check_selected_matrix(fq_mvpoly_t *polys, slong m, long degree)
     assert(fq_nmod_poly_equal(expected, got, polys[0].ctx));
     fq_nmod_poly_clear(got, polys[0].ctx); fq_nmod_poly_clear(expected, polys[0].ctx);
     fq_nmod_poly_mat_clear(B, polys[0].ctx); dixon_mq_step4_profile_clear(&p);
-    flint_free(ri); flint_free(ci); fq_mvpoly_clear(&full);
+    flint_free(ri);
+    flint_free(ci);
+    dr_mpoly_clear(&full);
     for(slong i=0;i<=m;i++) {
-        for(slong j=0;j<=m;j++){fq_mvpoly_clear(&matrix[i][j]);fq_mvpoly_clear(&a[i][j]);}
+        for (slong j = 0; j <= m; j++) {
+            dr_mpoly_clear(&matrix[i][j]);
+            dr_mpoly_clear(&a[i][j]);
+        }
         flint_free(matrix[i]);flint_free(a[i]);
     }
     flint_free(matrix);flint_free(a);
@@ -69,7 +75,7 @@ int main(void)
     flint_rand_t state;flint_rand_init(state);flint_rand_set_seed(state,24092026,808);
     fq_nmod_ctx_t ctx;fq_nmod_ctx_init_ui(ctx,65537,1,"a");
     for(slong m=3;m<=5;m++) {
-        fq_mvpoly_t *p=random_mq(m,ctx,state),baseline,compressed;
+        unified_mpoly_struct *p = random_mq(m, ctx, state), baseline = {0}, compressed = {0};
         assert(dixon_mq_step4_eligible(p,m,1));
         check_selected_matrix(p,m,2);
         g_dixon_mq_step1_simplex=0;
@@ -79,23 +85,25 @@ int main(void)
         g_dixon_mq_step4_schur=1;
         fq_dixon_resultant_with_names(&compressed,p,m,1,NULL,NULL,NULL);
         same_result(&baseline,&compressed);
-        fq_mvpoly_clear(&baseline);fq_mvpoly_clear(&compressed);
-        for(slong i=0;i<=m;i++)fq_mvpoly_clear(p+i);
+        dr_mpoly_clear(&baseline);
+        dr_mpoly_clear(&compressed);
+        for (slong i = 0; i <= m; i++)
+            dr_mpoly_clear(p + i);
         flint_free(p);
     }
     /* Three equations in x,y,t: compare the full determinant, including sign,
      * with checked compression for several higher total degrees. */
     for (slong d = 3; d <= 6; d++) {
-        fq_mvpoly_t p[3], baseline, compressed;
+        unified_mpoly_struct p[3] = {0}, baseline = {0}, compressed = {0};
         fq_nmod_t c; fq_nmod_init(c, ctx);
         for (slong i = 0; i < 3; i++) {
-            fq_mvpoly_init(p+i, 2, 1, ctx);
+            dr_mpoly_init(p + i, 2, 1, ctx);
             for (slong x = 0; x <= d; x++)
                 for (slong y = 0; y <= d-x; y++)
                     for (slong t = 0; t <= d-x-y; t++) {
                         slong exp[2] = {x,y}, par[1] = {t};
                         fq_nmod_set_ui(c, 1+n_randint(state,65536), ctx);
-                        fq_mvpoly_add_term_fast(p+i, exp, par, c);
+                        dr_mpoly_add_term_fast(p + i, exp, par, c);
                     }
         }
         assert(dixon_mq_step4_eligible(p,2,1));
@@ -106,12 +114,14 @@ int main(void)
         g_dixon_mq_step4_schur=1;
         fq_dixon_resultant_with_names(&compressed,p,2,1,NULL,NULL,NULL);
         same_result(&baseline,&compressed);
-        fq_mvpoly_clear(&baseline); fq_mvpoly_clear(&compressed);
+        dr_mpoly_clear(&baseline);
+        dr_mpoly_clear(&compressed);
         /* A parameter outside the shared degree budget must be rejected. */
         slong exp[2] = {0,0}, par[1] = {d+1};
-        fq_mvpoly_add_term_fast(p,exp,par,c);
+        dr_mpoly_add_term_fast(p, exp, par, c);
         assert(!dixon_mq_step4_eligible(p,2,1));
-        for (slong i=0;i<3;i++) fq_mvpoly_clear(p+i);
+        for (slong i = 0; i < 3; i++)
+            dr_mpoly_clear(p + i);
         fq_nmod_clear(c,ctx);
     }
     g_dixon_mq_step1_simplex=0;

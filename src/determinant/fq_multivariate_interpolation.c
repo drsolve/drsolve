@@ -171,12 +171,10 @@ void fq_interpolation_set_threads(int num_threads) {
 /**
  * Batch evaluation with optional parallelization - minimal change to original
  */
-void fq_evaluate_matrix_at_point_batch(fq_nmod_mat_t result_mat,
-                                               fq_mvpoly_t **poly_matrix,
-                                               slong size,
-                                               const fq_nmod_t *var_vals,
-                                               const fq_nmod_t *param_vals,
-                                               const fq_nmod_ctx_t ctx) {
+void fq_evaluate_matrix_at_point_batch(fq_nmod_mat_t result_mat, unified_mpoly_struct **poly_matrix,
+                                       slong size, const fq_nmod_t *var_vals,
+                                       const fq_nmod_t *param_vals, const fq_nmod_ctx_t ctx)
+{
     // Quick check for empty matrix
     if (size == 0) return;
     
@@ -201,23 +199,25 @@ void fq_evaluate_matrix_at_point_batch(fq_nmod_mat_t result_mat,
     
     for (slong i = 0; i < size; i++) {
         for (slong j = 0; j < size; j++) {
-            fq_mvpoly_t *poly = &poly_matrix[i][j];
-            
+            unified_mpoly_struct *poly = &poly_matrix[i][j];
+
             if (poly->nvars > max_nvars) max_nvars = poly->nvars;
             if (poly->npars > max_npars) max_npars = poly->npars;
-            
-            for (slong t = 0; t < poly->nterms; t++) {
-                if (poly->terms[t].var_exp) {
+
+            for (slong t = 0; t < dr_mpoly_length(poly); t++) {
+                DR_MPOLY_TERM(term_1, poly, t);
+
+                if (term_1.var_exp) {
                     for (slong v = 0; v < poly->nvars; v++) {
-                        if (poly->terms[t].var_exp[v] > max_var_exp) {
-                            max_var_exp = poly->terms[t].var_exp[v];
+                        if (term_1.var_exp[v] > max_var_exp) {
+                            max_var_exp = term_1.var_exp[v];
                         }
                     }
                 }
-                if (poly->terms[t].par_exp) {
+                if (term_1.par_exp) {
                     for (slong p = 0; p < poly->npars; p++) {
-                        if (poly->terms[t].par_exp[p] > max_par_exp) {
-                            max_par_exp = poly->terms[t].par_exp[p];
+                        if (term_1.par_exp[p] > max_par_exp) {
+                            max_par_exp = term_1.par_exp[p];
                         }
                     }
                 }
@@ -286,42 +286,44 @@ void fq_evaluate_matrix_at_point_batch(fq_nmod_mat_t result_mat,
     
     for (slong i = 0; i < size; i++) {
         for (slong j = 0; j < size; j++) {
-            fq_mvpoly_t *poly = &poly_matrix[i][j];
-            
+            unified_mpoly_struct *poly = &poly_matrix[i][j];
+
             field_set_zero(&result_elem, unified_ctx.field_id, ctx_ptr);
             
             // Evaluate polynomial
-            for (slong t = 0; t < poly->nterms; t++) {
+            for (slong t = 0; t < dr_mpoly_length(poly); t++) {
+                DR_MPOLY_TERM(term_2, poly, t);
+
                 // Convert coefficient
-                fq_nmod_to_field_elem(&term_val, poly->terms[t].coeff, &unified_ctx);
-                
+                fq_nmod_to_field_elem(&term_val, term_2.coeff, &unified_ctx);
+
                 // Multiply by variable powers
-                if (var_powers_unified && poly->terms[t].var_exp) {
+                if (var_powers_unified && term_2.var_exp) {
                     for (slong v = 0; v < poly->nvars; v++) {
-                        slong exp = poly->terms[t].var_exp[v];
+                        slong exp = term_2.var_exp[v];
                         if (exp > 0) {
                             field_mul(&term_val, &term_val, &var_powers_unified[v][exp], 
                                      unified_ctx.field_id, ctx_ptr);
                         }
                     }
                 }
-                
+
                 // Multiply by parameter powers
-                if (par_powers_unified && poly->terms[t].par_exp) {
+                if (par_powers_unified && term_2.par_exp) {
                     for (slong p = 0; p < poly->npars; p++) {
-                        slong exp = poly->terms[t].par_exp[p];
+                        slong exp = term_2.par_exp[p];
                         if (exp > 0) {
                             field_mul(&term_val, &term_val, &par_powers_unified[p][exp], 
                                      unified_ctx.field_id, ctx_ptr);
                         }
                     }
                 }
-                
+
                 // Add to result
                 field_add(&result_elem, &result_elem, &term_val, 
                          unified_ctx.field_id, ctx_ptr);
             }
-            
+
             // Convert back to fq_nmod and store
             field_elem_to_fq_nmod(fq_nmod_mat_entry(result_mat, i, j), 
                                  &result_elem, &unified_ctx);
@@ -685,14 +687,11 @@ cleanup:
 // Copy tensor interpolation functions unchanged
 // Modified version of fq_tensor_interpolation_recursive_optimized with fixed timing
 
-void fq_tensor_interpolation_recursive_optimized(fq_mvpoly_t *result,
-                                                slong current_dim,
-                                                const fq_nmod_t **grids,
-                                                const slong *grid_sizes,
-                                                const fq_nmod_t *flat_values,
-                                                slong *value_offset,
-                                                slong total_dims,
-                                                const fq_nmod_ctx_t ctx) {
+void fq_tensor_interpolation_recursive_optimized(unified_mpoly_struct *result, slong current_dim,
+                                                 const fq_nmod_t **grids, const slong *grid_sizes,
+                                                 const fq_nmod_t *flat_values, slong *value_offset,
+                                                 slong total_dims, const fq_nmod_ctx_t ctx)
+{
     double func_start = get_time();
     g_stats.recursive_calls++;
     
@@ -749,8 +748,8 @@ void fq_tensor_interpolation_recursive_optimized(fq_mvpoly_t *result,
         local_lagrange_time = g_stats.lagrange_time - lagrange_time_before;
         
         double result_start = get_time();
-        fq_mvpoly_init(result, total_dims, 0, ctx);
-        
+        dr_mpoly_init(result, total_dims, 0, ctx);
+
         slong deg = fq_nmod_poly_degree(uni_result, ctx);
         for (slong i = 0; i <= deg; i++) {
             fq_nmod_t coeff;
@@ -760,7 +759,7 @@ void fq_tensor_interpolation_recursive_optimized(fq_mvpoly_t *result,
             if (!fq_nmod_is_zero(coeff, ctx)) {
                 slong *var_exp = (slong*) flint_calloc(total_dims, sizeof(slong));
                 var_exp[0] = i;
-                fq_mvpoly_add_term(result, var_exp, NULL, coeff);
+                dr_mpoly_add_term(result, var_exp, NULL, coeff);
                 flint_free(var_exp);
             }
             fq_nmod_clear(coeff, ctx);
@@ -799,16 +798,17 @@ void fq_tensor_interpolation_recursive_optimized(fq_mvpoly_t *result,
     
     // Recursive case
     double init_start = get_time();
-    fq_mvpoly_init(result, total_dims, 0, ctx);
-    
+    dr_mpoly_init(result, total_dims, 0, ctx);
+
     slong block_size = 1;
     for (slong i = 0; i < current_dim; i++) {
         block_size *= grid_sizes[i];
     }
     
     FQ_INTERP_PRINT("Block size for dim %ld: %ld\n", current_dim, block_size);
-    
-    fq_mvpoly_t *H_polys = (fq_mvpoly_t*) flint_malloc(grid_sizes[current_dim] * sizeof(fq_mvpoly_t));
+
+    unified_mpoly_struct *H_polys = (unified_mpoly_struct *)flint_calloc(
+        1, grid_sizes[current_dim] * sizeof(unified_mpoly_struct));
     local_mem_time = get_time() - init_start;
     
     // Recursive calls
@@ -832,15 +832,17 @@ void fq_tensor_interpolation_recursive_optimized(fq_mvpoly_t *result,
     slong alloc_monomials = 0;
     
     for (slong j = 0; j < grid_sizes[current_dim]; j++) {
-        g_stats.total_terms_processed += H_polys[j].nterms;
-        
-        for (slong t = 0; t < H_polys[j].nterms; t++) {
+        g_stats.total_terms_processed += dr_mpoly_length(&(H_polys[j]));
+
+        for (slong t = 0; t < dr_mpoly_length(&(H_polys[j])); t++) {
+            DR_MPOLY_TERM(term_3, &(H_polys[j]), t);
+
             int found = 0;
             for (slong m = 0; m < n_monomials; m++) {
                 int same = 1;
                 for (slong k = 0; k < total_dims; k++) {
                     if (k == current_dim) continue;
-                    slong exp1 = H_polys[j].terms[t].var_exp ? H_polys[j].terms[t].var_exp[k] : 0;
+                    slong exp1 = term_3.var_exp ? term_3.var_exp[k] : 0;
                     slong exp2 = monomials[m].exp[k];
                     if (exp1 != exp2) {
                         same = 0;
@@ -861,10 +863,10 @@ void fq_tensor_interpolation_recursive_optimized(fq_mvpoly_t *result,
                 }
                 
                 monomials[n_monomials].exp = (slong*) flint_calloc(total_dims, sizeof(slong));
-                if (H_polys[j].terms[t].var_exp) {
+                if (term_3.var_exp) {
                     for (slong k = 0; k < total_dims; k++) {
                         if (k != current_dim) {
-                            monomials[n_monomials].exp[k] = H_polys[j].terms[t].var_exp[k];
+                            monomials[n_monomials].exp[k] = term_3.var_exp[k];
                         }
                     }
                 }
@@ -906,13 +908,15 @@ void fq_tensor_interpolation_recursive_optimized(fq_mvpoly_t *result,
     
     for (slong j = 0; j < grid_sizes[current_dim]; j++) {
         monomial_lists[j] = (term_node_t**)calloc(n_monomials, sizeof(term_node_t*));
-        
-        for (slong t = 0; t < H_polys[j].nterms; t++) {
+
+        for (slong t = 0; t < dr_mpoly_length(&(H_polys[j])); t++) {
+            DR_MPOLY_TERM(term_4, &(H_polys[j]), t);
+
             for (slong m = 0; m < n_monomials; m++) {
                 int same = 1;
                 for (slong k = 0; k < total_dims; k++) {
                     if (k == current_dim) continue;
-                    slong exp1 = H_polys[j].terms[t].var_exp ? H_polys[j].terms[t].var_exp[k] : 0;
+                    slong exp1 = term_4.var_exp ? term_4.var_exp[k] : 0;
                     slong exp2 = monomials[m].exp[k];
                     if (exp1 != exp2) {
                         same = 0;
@@ -954,7 +958,8 @@ void fq_tensor_interpolation_recursive_optimized(fq_mvpoly_t *result,
             term_node_t *node = monomial_lists[j][m];
             while (node) {
                 slong t = node->term_index;
-                fq_nmod_to_field_elem(&term_elem, H_polys[j].terms[t].coeff, &unified_ctx);
+                DR_MPOLY_TERM(term_5, &(H_polys[j]), t);
+                fq_nmod_to_field_elem(&term_elem, term_5.coeff, &unified_ctx);
                 field_add(&sum_elem, &sum_elem, &term_elem, unified_ctx.field_id, ctx_ptr);
                 node = node->next;
             }
@@ -985,7 +990,7 @@ void fq_tensor_interpolation_recursive_optimized(fq_mvpoly_t *result,
                         final_exp[k] = monomials[m].exp[k];
                     }
                 }
-                fq_mvpoly_add_term_fast(result, final_exp, NULL, temp_coeff);
+                dr_mpoly_add_term_fast(result, final_exp, NULL, temp_coeff);
             }
             fq_nmod_clear(temp_coeff, ctx);
         }
@@ -1022,7 +1027,7 @@ void fq_tensor_interpolation_recursive_optimized(fq_mvpoly_t *result,
     double cleanup_start = get_time();
     for (slong i = 0; i < grid_sizes[current_dim]; i++) {
         fq_nmod_clear(interp_values[i], ctx);
-        fq_mvpoly_clear(&H_polys[i]);
+        dr_mpoly_clear(&H_polys[i]);
     }
     flint_free(interp_values);
     flint_free(H_polys);
@@ -1032,9 +1037,10 @@ void fq_tensor_interpolation_recursive_optimized(fq_mvpoly_t *result,
     }
     if (monomials) free(monomials);
     local_mem_time += get_time() - cleanup_start;
-    
-    FQ_INTERP_PRINT("Completed dim %ld with %ld result terms\n", current_dim, result->nterms);
-    
+
+    FQ_INTERP_PRINT("Completed dim %ld with %ld result terms\n", current_dim,
+                    dr_mpoly_length(result));
+
     // Update global stats with LOCAL times
     g_stats.memory_time += local_mem_time;
     g_stats.monomial_collection_time += local_monomial_collect_time;
@@ -1049,13 +1055,11 @@ void fq_tensor_interpolation_recursive_optimized(fq_mvpoly_t *result,
     field_ctx_clear(&unified_ctx);
 }
 
-void fq_tensor_interpolation_all_vars_optimized(fq_mvpoly_t *result,
-                                               const fq_nmod_t **grids,
-                                               const fq_nmod_t *values,
-                                               const slong *grid_sizes,
-                                               slong nvars,
-                                               slong npars,
-                                               const fq_nmod_ctx_t ctx) {
+void fq_tensor_interpolation_all_vars_optimized(unified_mpoly_struct *result,
+                                                const fq_nmod_t **grids, const fq_nmod_t *values,
+                                                const slong *grid_sizes, slong nvars, slong npars,
+                                                const fq_nmod_ctx_t ctx)
+{
     slong total_dims = nvars + npars;
     
     FQ_INTERP_PRINT("Starting tensor interpolation: nvars=%ld, npars=%ld, total=%ld\n", 
@@ -1065,9 +1069,9 @@ void fq_tensor_interpolation_all_vars_optimized(fq_mvpoly_t *result,
     reset_interpolation_stats();
     
     if (total_dims == 0) {
-        fq_mvpoly_init(result, 0, 0, ctx);
+        dr_mpoly_init(result, 0, 0, ctx);
         if (!fq_nmod_is_zero(values[0], ctx)) {
-            fq_mvpoly_add_term(result, NULL, NULL, values[0]);
+            dr_mpoly_add_term(result, NULL, NULL, values[0]);
         }
         return;
     }
@@ -1085,39 +1089,40 @@ void fq_tensor_interpolation_all_vars_optimized(fq_mvpoly_t *result,
                         result->nvars, nvars, result->npars, npars);
         
         double fix_start = get_time();
-        fq_mvpoly_t fixed_result;
-        fq_mvpoly_init(&fixed_result, nvars, npars, ctx);
-        
-        for (slong t = 0; t < result->nterms; t++) {
+        unified_mpoly_struct fixed_result = {0};
+        dr_mpoly_init(&fixed_result, nvars, npars, ctx);
+
+        for (slong t = 0; t < dr_mpoly_length(result); t++) {
+            DR_MPOLY_TERM(term_6, result, t);
+
             slong *var_exp = NULL;
             slong *par_exp = NULL;
             
             if (nvars > 0) {
                 var_exp = (slong*) flint_calloc(nvars, sizeof(slong));
-                if (result->terms[t].var_exp) {
+                if (term_6.var_exp) {
                     for (slong i = 0; i < FLINT_MIN(nvars, total_dims); i++) {
-                        var_exp[i] = result->terms[t].var_exp[i];
+                        var_exp[i] = term_6.var_exp[i];
                     }
                 }
             }
             
             if (npars > 0) {
                 par_exp = (slong*) flint_calloc(npars, sizeof(slong));
-                if (result->terms[t].var_exp && nvars < total_dims) {
+                if (term_6.var_exp && nvars < total_dims) {
                     for (slong i = 0; i < FLINT_MIN(npars, total_dims - nvars); i++) {
-                        par_exp[i] = result->terms[t].var_exp[nvars + i];
+                        par_exp[i] = term_6.var_exp[nvars + i];
                     }
                 }
             }
-            
-            fq_mvpoly_add_term_fast(&fixed_result, var_exp, par_exp, result->terms[t].coeff);
-            
+
+            dr_mpoly_add_term_fast(&fixed_result, var_exp, par_exp, term_6.coeff);
+
             if (var_exp) flint_free(var_exp);
             if (par_exp) flint_free(par_exp);
         }
-        
-        fq_mvpoly_clear(result);
-        *result = fixed_result;
+
+        dr_mpoly_move(result, &fixed_result);
         g_stats.result_construction_time += get_time() - fix_start;
     }
     //printf("Interpolation Over\n");
@@ -1309,10 +1314,10 @@ int fq_generate_evaluation_points_optimized(fq_nmod_t **grids, slong *grid_sizes
     }
     return 1;
 }
-    
 
-void fq_compute_det_degree_bounds_optimized(slong *bounds, fq_mvpoly_t **matrix, 
-                                           slong size, slong total_vars) {
+void fq_compute_det_degree_bounds_optimized(slong *bounds, unified_mpoly_struct **matrix,
+                                            slong size, slong total_vars)
+{
     FQ_INTERP_PRINT("Computing degree bounds for %ld variables\n", total_vars);
     
     for (slong var = 0; var < total_vars; var++) {
@@ -1322,16 +1327,17 @@ void fq_compute_det_degree_bounds_optimized(slong *bounds, fq_mvpoly_t **matrix,
             slong row_max_deg = 0;
             
             for (slong col = 0; col < size; col++) {
-                for (slong t = 0; t < matrix[row][col].nterms; t++) {
+                for (slong t = 0; t < dr_mpoly_length(&(matrix[row][col])); t++) {
+                    DR_MPOLY_TERM(term_7, &(matrix[row][col]), t);
+
                     slong deg = 0;
-                    if (matrix[row][col].terms[t].var_exp && var < matrix[row][col].nvars) {
-                        deg = matrix[row][col].terms[t].var_exp[var];
-                    } else if (matrix[row][col].terms[t].par_exp && 
-                              var >= matrix[row][col].nvars && 
-                              var - matrix[row][col].nvars < matrix[row][col].npars) {
-                        deg = matrix[row][col].terms[t].par_exp[var - matrix[row][col].nvars];
+                    if (term_7.var_exp && var < matrix[row][col].nvars) {
+                        deg = term_7.var_exp[var];
+                    } else if (term_7.par_exp && var >= matrix[row][col].nvars &&
+                               var - matrix[row][col].nvars < matrix[row][col].npars) {
+                        deg = term_7.par_exp[var - matrix[row][col].nvars];
                     }
-                    
+
                     if (deg > row_max_deg) {
                         row_max_deg = deg;
                     }
@@ -1348,13 +1354,11 @@ void fq_compute_det_degree_bounds_optimized(slong *bounds, fq_mvpoly_t **matrix,
 
 // Main interpolation function with PARALLELIZATION ON POINTS
 // Main interpolation function with PARALLELIZATION ON POINTS
-void fq_compute_det_by_interpolation_optimized(fq_mvpoly_t *result,
-                                              fq_mvpoly_t **matrix,
-                                              slong size,
-                                              slong nvars,
-                                              slong npars,
-                                              const fq_nmod_ctx_t ctx,
-                                              slong *degree_bounds) {
+void fq_compute_det_by_interpolation_optimized(unified_mpoly_struct *result,
+                                               unified_mpoly_struct **matrix, slong size,
+                                               slong nvars, slong npars, const fq_nmod_ctx_t ctx,
+                                               slong *degree_bounds)
+{
     FQ_INTERP_PRINT("\n=== Optimized FQ Determinant Interpolation ===\n");
     #ifdef _OPENMP
     //printf("OpenMP available: %d threads max\n", omp_get_max_threads());
@@ -1400,9 +1404,9 @@ void fq_compute_det_by_interpolation_optimized(fq_mvpoly_t *result,
         
         for (slong i = 0; i < size; i++) {
             for (slong j = 0; j < size; j++) {
-                if (matrix[i][j].nterms > 0) {
-                    fq_nmod_set(fq_nmod_mat_entry(const_mat, i, j), 
-                               matrix[i][j].terms[0].coeff, ctx);
+                if (dr_mpoly_length(&(matrix[i][j])) > 0) {
+                    DR_MPOLY_TERM(term_8, &(matrix[i][j]), 0);
+                    fq_nmod_set(fq_nmod_mat_entry(const_mat, i, j), term_8.coeff, ctx);
                 } else {
                     fq_nmod_zero(fq_nmod_mat_entry(const_mat, i, j), ctx);
                 }
@@ -1412,10 +1416,10 @@ void fq_compute_det_by_interpolation_optimized(fq_mvpoly_t *result,
         fq_nmod_t det;
         fq_nmod_init(det, ctx);
         fq_nmod_mat_det(det, const_mat, ctx);
-        
-        fq_mvpoly_init(result, actual_nvars, actual_npars, ctx);
+
+        dr_mpoly_init(result, actual_nvars, actual_npars, ctx);
         if (!fq_nmod_is_zero(det, ctx)) {
-            fq_mvpoly_add_term(result, NULL, NULL, det);
+            dr_mpoly_add_term(result, NULL, NULL, det);
         }
         
         fq_nmod_clear(det, ctx);
@@ -1441,7 +1445,7 @@ void fq_compute_det_by_interpolation_optimized(fq_mvpoly_t *result,
         }
         free(grids);
         free(grid_sizes);
-        fq_mvpoly_init(result, actual_nvars, actual_npars, ctx);
+        dr_mpoly_init(result, actual_nvars, actual_npars, ctx);
         return;
     }
     
@@ -1748,9 +1752,9 @@ void fq_compute_det_by_interpolation_optimized(fq_mvpoly_t *result,
     #else
     time_interpolation = (double)(clock() - interp_start) / CLOCKS_PER_SEC;
     #endif
-    
-    FQ_INTERP_PRINT("Interpolation complete: %ld terms\n", result->nterms);
-    
+
+    FQ_INTERP_PRINT("Interpolation complete: %ld terms\n", dr_mpoly_length(result));
+
     // Calculate total time - FIX: Use consistent timing
     #ifdef _OPENMP
     double total_time = omp_get_wtime() - start_total_wtime;
@@ -1818,13 +1822,10 @@ void fq_compute_det_by_interpolation_optimized(fq_mvpoly_t *result,
     }
 }
 // Compatible interface wrapper
-void fq_compute_det_by_interpolation(fq_mvpoly_t *result,
-                                     fq_mvpoly_t **matrix,
-                                     slong size,
-                                     slong nvars,
-                                     slong npars,
-                                     const fq_nmod_ctx_t ctx,
-                                     slong uniform_bound) {
+void fq_compute_det_by_interpolation(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
+                                     slong size, slong nvars, slong npars, const fq_nmod_ctx_t ctx,
+                                     slong uniform_bound)
+{
     FQ_INTERP_PRINT("=== Using Optimized FQ Interpolation Algorithm ===\n");
     FQ_INTERP_PRINT("Input parameters: size=%ld, nvars=%ld, npars=%ld\n", size, nvars, npars);
     

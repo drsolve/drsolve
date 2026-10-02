@@ -56,10 +56,8 @@ static void subres_cli_log(int level, const char *fmt, ...)
     va_end(args);
 }
 
-static void resultant_summary_collect_usage(const fq_mvpoly_t *result,
-                                            int use_par_exponents,
-                                            int *used,
-                                            slong used_len)
+static void resultant_summary_collect_usage(const unified_mpoly_struct *result,
+                                            int use_par_exponents, int *used, slong used_len)
 {
     slong limit = 0;
 
@@ -72,9 +70,10 @@ static void resultant_summary_collect_usage(const fq_mvpoly_t *result,
         limit = used_len;
     }
 
-    for (slong i = 0; i < result->nterms; i++) {
-        const slong *exp = use_par_exponents ? result->terms[i].par_exp
-                                             : result->terms[i].var_exp;
+    for (slong i = 0; i < dr_mpoly_length(result); i++) {
+        DR_MPOLY_TERM(term_1, result, i);
+
+        const slong *exp = use_par_exponents ? term_1.par_exp : term_1.var_exp;
         if (!exp) {
             continue;
         }
@@ -86,8 +85,7 @@ static void resultant_summary_collect_usage(const fq_mvpoly_t *result,
     }
 }
 
-void print_resultant_summary(const fq_mvpoly_t *result,
-                             char **remaining_vars,
+void print_resultant_summary(const unified_mpoly_struct *result, char **remaining_vars,
                              slong num_remaining_vars)
 {
     slong total_degree = 0;
@@ -96,17 +94,19 @@ void print_resultant_summary(const fq_mvpoly_t *result,
 
     if (!result) return;
 
-    for (slong i = 0; i < result->nterms; i++) {
+    for (slong i = 0; i < dr_mpoly_length(result); i++) {
+        DR_MPOLY_TERM(term_2, result, i);
+
         slong term_degree = 0;
 
-        if (result->terms[i].var_exp) {
+        if (term_2.var_exp) {
             for (slong j = 0; j < result->nvars; j++) {
-                term_degree += result->terms[i].var_exp[j];
+                term_degree += term_2.var_exp[j];
             }
         }
-        if (result->terms[i].par_exp) {
+        if (term_2.par_exp) {
             for (slong j = 0; j < result->npars; j++) {
-                term_degree += result->terms[i].par_exp[j];
+                term_degree += term_2.par_exp[j];
             }
         }
 
@@ -116,7 +116,7 @@ void print_resultant_summary(const fq_mvpoly_t *result,
     }
 
     printf("  Resultant summary: %ld terms, total degree %ld, remaining variables: ",
-           result->nterms, total_degree);
+           dr_mpoly_length(result), total_degree);
     if (!remaining_vars || num_remaining_vars <= 0) {
         printf("(none)\n");
         return;
@@ -165,8 +165,7 @@ static void subres_cli_print_name_list(char **names, slong count)
     }
 }
 
-static slong fq_mvpoly_parameter_total_degree(const fq_mvpoly_t *poly,
-                                              slong *par_degs)
+static slong dr_mpoly_parameter_total_degree(const unified_mpoly_struct *poly, slong *par_degs)
 {
     slong total_degree = -1;
 
@@ -176,14 +175,16 @@ static slong fq_mvpoly_parameter_total_degree(const fq_mvpoly_t *poly,
         par_degs[j] = -1;
     }
 
-    for (slong i = 0; i < poly->nterms; i++) {
+    for (slong i = 0; i < dr_mpoly_length(poly); i++) {
+        DR_MPOLY_TERM(term_3, poly, i);
+
         slong term_degree = 0;
 
         for (slong j = 0; j < poly->npars; j++) {
             slong exp = 0;
 
-            if (poly->terms[i].par_exp) {
-                exp = poly->terms[i].par_exp[j];
+            if (term_3.par_exp) {
+                exp = term_3.par_exp[j];
             }
 
             if (exp > par_degs[j]) {
@@ -198,7 +199,7 @@ static slong fq_mvpoly_parameter_total_degree(const fq_mvpoly_t *poly,
         }
     }
 
-    if (poly->nterms > 0 && poly->npars == 0) {
+    if (dr_mpoly_length(poly) > 0 && poly->npars == 0) {
         total_degree = 0;
     }
 
@@ -691,13 +692,14 @@ static void scan_identifiers_for_parameters(parser_state_t *state, const char *i
     }
 }
 
-void parse_primary(parser_state_t *state, fq_mvpoly_t *poly) {
+void parse_primary(parser_state_t *state, unified_mpoly_struct *poly)
+{
     if (state->current.type == TOK_NUMBER) {
-        fq_mvpoly_add_term(poly, NULL, NULL, state->current.value);
+        dr_mpoly_add_term(poly, NULL, NULL, state->current.value);
         next_token(state);
         
     } else if (state->current.type == TOK_GENERATOR) {
-        fq_mvpoly_add_term(poly, NULL, NULL, state->current.value);
+        dr_mpoly_add_term(poly, NULL, NULL, state->current.value);
         next_token(state);
         
     } else if (state->current.type == TOK_VARIABLE) {
@@ -712,7 +714,7 @@ void parse_primary(parser_state_t *state, fq_mvpoly_t *poly) {
             fq_nmod_t one;
             fq_nmod_init(one, state->ctx);
             fq_nmod_one(one, state->ctx);
-            fq_mvpoly_add_term(poly, var_exp, NULL, one);
+            dr_mpoly_add_term(poly, var_exp, NULL, one);
             fq_nmod_clear(one, state->ctx);
             free(var_exp);
         } else {
@@ -724,7 +726,7 @@ void parse_primary(parser_state_t *state, fq_mvpoly_t *poly) {
                 fq_nmod_t one;
                 fq_nmod_init(one, state->ctx);
                 fq_nmod_one(one, state->ctx);
-                fq_mvpoly_add_term(poly, NULL, par_exp, one);
+                dr_mpoly_add_term(poly, NULL, par_exp, one);
                 fq_nmod_clear(one, state->ctx);
                 free(par_exp);
             }
@@ -740,24 +742,27 @@ void parse_primary(parser_state_t *state, fq_mvpoly_t *poly) {
         
     } else if (state->current.type == TOK_MINUS) {
         next_token(state);
-        fq_mvpoly_t temp;
-        fq_mvpoly_init(&temp, state->nvars, state->npars, state->ctx);
+        unified_mpoly_struct temp = {0};
+        dr_mpoly_init(&temp, state->nvars, state->npars, state->ctx);
         parse_primary(state, &temp);
-        
-        for (slong i = 0; i < temp.nterms; i++) {
+
+        for (slong i = 0; i < dr_mpoly_length(&(temp)); i++) {
+            DR_MPOLY_TERM(term_4, &(temp), i);
+
             fq_nmod_t neg_coeff;
             fq_nmod_init(neg_coeff, state->ctx);
-            fq_nmod_neg(neg_coeff, temp.terms[i].coeff, state->ctx);
-            fq_mvpoly_add_term(poly, temp.terms[i].var_exp, temp.terms[i].par_exp, neg_coeff);
+            fq_nmod_neg(neg_coeff, term_4.coeff, state->ctx);
+            dr_mpoly_add_term(poly, term_4.var_exp, term_4.par_exp, neg_coeff);
             fq_nmod_clear(neg_coeff, state->ctx);
         }
-        fq_mvpoly_clear(&temp);
+        dr_mpoly_clear(&temp);
     }
 }
 
-void parse_factor(parser_state_t *state, fq_mvpoly_t *poly) {
-    fq_mvpoly_t base;
-    fq_mvpoly_init(&base, state->nvars, state->npars, state->ctx);
+void parse_factor(parser_state_t *state, unified_mpoly_struct *poly)
+{
+    unified_mpoly_struct base = {0};
+    dr_mpoly_init(&base, state->nvars, state->npars, state->ctx);
     parse_primary(state, &base);
     
     if (state->current.type == TOK_POWER) {
@@ -766,58 +771,66 @@ void parse_factor(parser_state_t *state, fq_mvpoly_t *poly) {
             if (!state->current.int_value_valid) {
                 fprintf(stderr, "Error: exponent '%s' exceeds supported slong range\n",
                         state->current.str ? state->current.str : "<unknown>");
-                fq_mvpoly_clear(&base);
+                dr_mpoly_clear(&base);
                 return;
             }
             slong exp = state->current.int_value;
             next_token(state);
-            
-            fq_mvpoly_t result;
-            fq_mvpoly_pow(&result, &base, exp);
-            
-            for (slong i = 0; i < result.nterms; i++) {
-                fq_mvpoly_add_term(poly, result.terms[i].var_exp, result.terms[i].par_exp, result.terms[i].coeff);
+
+            unified_mpoly_struct result = {0};
+            dr_mpoly_pow(&result, &base, exp);
+
+            for (slong i = 0; i < dr_mpoly_length(&(result)); i++) {
+                DR_MPOLY_TERM(term_5, &(result), i);
+
+                dr_mpoly_add_term(poly, term_5.var_exp, term_5.par_exp, term_5.coeff);
             }
-            fq_mvpoly_clear(&result);
+            dr_mpoly_clear(&result);
         }
     } else {
-        for (slong i = 0; i < base.nterms; i++) {
-            fq_mvpoly_add_term(poly, base.terms[i].var_exp, base.terms[i].par_exp, base.terms[i].coeff);
+        for (slong i = 0; i < dr_mpoly_length(&(base)); i++) {
+            DR_MPOLY_TERM(term_6, &(base), i);
+
+            dr_mpoly_add_term(poly, term_6.var_exp, term_6.par_exp, term_6.coeff);
         }
     }
-    
-    fq_mvpoly_clear(&base);
+
+    dr_mpoly_clear(&base);
 }
 
-void parse_term(parser_state_t *state, fq_mvpoly_t *poly) {
-    fq_mvpoly_t result;
-    fq_mvpoly_init(&result, state->nvars, state->npars, state->ctx);
-    
+void parse_term(parser_state_t *state, unified_mpoly_struct *poly)
+{
+    unified_mpoly_struct result = {0};
+    dr_mpoly_init(&result, state->nvars, state->npars, state->ctx);
+
     parse_factor(state, &result);
     
     while (state->current.type == TOK_MULT) {
         next_token(state);
-        
-        fq_mvpoly_t factor;
-        fq_mvpoly_init(&factor, state->nvars, state->npars, state->ctx);
+
+        unified_mpoly_struct factor = {0};
+        dr_mpoly_init(&factor, state->nvars, state->npars, state->ctx);
         parse_factor(state, &factor);
-        
-        fq_mvpoly_t temp;
-        fq_mvpoly_mul(&temp, &result, &factor);
-        
-        fq_mvpoly_clear(&result);
-        fq_mvpoly_clear(&factor);
-        fq_mvpoly_copy(&result, &temp);
-        fq_mvpoly_clear(&temp);
+
+        unified_mpoly_struct temp = {0};
+        dr_mpoly_mul(&temp, &result, &factor);
+
+        dr_mpoly_clear(&result);
+        dr_mpoly_clear(&factor);
+        dr_mpoly_copy(&result, &temp);
+        dr_mpoly_clear(&temp);
     }
-    
-    for (slong i = 0; i < result.nterms; i++) {
-        fq_mvpoly_add_term_fast(poly, result.terms[i].var_exp, result.terms[i].par_exp, result.terms[i].coeff);
+
+    for (slong i = 0; i < dr_mpoly_length(&(result)); i++) {
+        DR_MPOLY_TERM(term_7, &(result), i);
+
+        dr_mpoly_add_term_fast(poly, term_7.var_exp, term_7.par_exp, term_7.coeff);
     }
-    fq_mvpoly_clear(&result);
+    dr_mpoly_clear(&result);
 }
 
-void parse_expression(parser_state_t *state, fq_mvpoly_t *poly) {
+void parse_expression(parser_state_t *state, unified_mpoly_struct *poly)
+{
     int negate = 0;
     if (state->current.type == TOK_MINUS) {
         negate = 1;
@@ -825,51 +838,59 @@ void parse_expression(parser_state_t *state, fq_mvpoly_t *poly) {
     } else if (state->current.type == TOK_PLUS) {
         next_token(state);
     }
-    
-    fq_mvpoly_t first_term;
-    fq_mvpoly_init(&first_term, state->nvars, state->npars, state->ctx);
+
+    unified_mpoly_struct first_term = {0};
+    dr_mpoly_init(&first_term, state->nvars, state->npars, state->ctx);
     parse_term(state, &first_term);
     
     if (negate) {
-        for (slong i = 0; i < first_term.nterms; i++) {
+        for (slong i = 0; i < dr_mpoly_length(&(first_term)); i++) {
+            DR_MPOLY_TERM(term_8, &(first_term), i);
+
             fq_nmod_t neg_coeff;
             fq_nmod_init(neg_coeff, state->ctx);
-            fq_nmod_neg(neg_coeff, first_term.terms[i].coeff, state->ctx);
-            fq_mvpoly_add_term_fast(poly, first_term.terms[i].var_exp, first_term.terms[i].par_exp, neg_coeff);
+            fq_nmod_neg(neg_coeff, term_8.coeff, state->ctx);
+            dr_mpoly_add_term_fast(poly, term_8.var_exp, term_8.par_exp, neg_coeff);
             fq_nmod_clear(neg_coeff, state->ctx);
         }
     } else {
-        for (slong i = 0; i < first_term.nterms; i++) {
-            fq_mvpoly_add_term_fast(poly, first_term.terms[i].var_exp, first_term.terms[i].par_exp, 
-                           first_term.terms[i].coeff);
+        for (slong i = 0; i < dr_mpoly_length(&(first_term)); i++) {
+            DR_MPOLY_TERM(term_9, &(first_term), i);
+
+            dr_mpoly_add_term_fast(poly, term_9.var_exp, term_9.par_exp, term_9.coeff);
         }
     }
-    fq_mvpoly_clear(&first_term);
-    
+    dr_mpoly_clear(&first_term);
+
     while (state->current.type == TOK_PLUS || state->current.type == TOK_MINUS) {
         int subtract = (state->current.type == TOK_MINUS);
         next_token(state);
-        
-        fq_mvpoly_t term;
-        fq_mvpoly_init(&term, state->nvars, state->npars, state->ctx);
+
+        unified_mpoly_struct term = {0};
+        dr_mpoly_init(&term, state->nvars, state->npars, state->ctx);
         parse_term(state, &term);
-        
-        for (slong i = 0; i < term.nterms; i++) {
+
+        for (slong i = 0; i < dr_mpoly_length(&(term)); i++) {
+            DR_MPOLY_TERM(term_10, &(term), i);
+
             if (subtract) {
                 fq_nmod_t neg_coeff;
                 fq_nmod_init(neg_coeff, state->ctx);
-                fq_nmod_neg(neg_coeff, term.terms[i].coeff, state->ctx);
-                fq_mvpoly_add_term_fast(poly, term.terms[i].var_exp, term.terms[i].par_exp, neg_coeff);
+                fq_nmod_neg(neg_coeff, term_10.coeff, state->ctx);
+                dr_mpoly_add_term_fast(poly, term_10.var_exp, term_10.par_exp, neg_coeff);
                 fq_nmod_clear(neg_coeff, state->ctx);
             } else {
-                fq_mvpoly_add_term_fast(poly, term.terms[i].var_exp, term.terms[i].par_exp, term.terms[i].coeff);
+                dr_mpoly_add_term_fast(poly, term_10.var_exp, term_10.par_exp, term_10.coeff);
             }
         }
-        fq_mvpoly_clear(&term);
+        dr_mpoly_clear(&term);
     }
 }
 
-void find_and_print_roots_of_univariate_resultant_with_file(const fq_mvpoly_t *result, parser_state_t *state, FILE *fp_file, int print_to_stdout) {
+void find_and_print_roots_of_univariate_resultant_with_file(const unified_mpoly_struct *result,
+                                                            parser_state_t *state, FILE *fp_file,
+                                                            int print_to_stdout)
+{
     char *root_report = NULL;
     size_t root_report_len = 0;
     size_t root_report_cap = 0;
@@ -878,7 +899,7 @@ void find_and_print_roots_of_univariate_resultant_with_file(const fq_mvpoly_t *r
 #ifdef _OPENMP
         #pragma omp atomic write
 #endif
-        g_last_resultant_term_count = result->nterms;
+        g_last_resultant_term_count = dr_mpoly_length(result);
     }
     if (g_suppress_univariate_root_reporting) {
         return;
@@ -891,11 +912,13 @@ void find_and_print_roots_of_univariate_resultant_with_file(const fq_mvpoly_t *r
     int *par_used = (int*) calloc(result->npars, sizeof(int));
     slong actual_par_count = 0;
     slong main_par_idx = -1;
-    
-    for (slong t = 0; t < result->nterms; t++) {
-        if (result->terms[t].par_exp) {
+
+    for (slong t = 0; t < dr_mpoly_length(result); t++) {
+        DR_MPOLY_TERM(term_11, result, t);
+
+        if (term_11.par_exp) {
             for (slong p = 0; p < result->npars; p++) {
-                if (result->terms[t].par_exp[p] > 0 && !par_used[p]) {
+                if (term_11.par_exp[p] > 0 && !par_used[p]) {
                     par_used[p] = 1;
                     main_par_idx = p;
                     actual_par_count++;
@@ -903,7 +926,7 @@ void find_and_print_roots_of_univariate_resultant_with_file(const fq_mvpoly_t *r
             }
         }
     }
-    
+
     if (actual_par_count > 1) {
         free(par_used);
         return;
@@ -916,15 +939,17 @@ void find_and_print_roots_of_univariate_resultant_with_file(const fq_mvpoly_t *r
     
     fq_nmod_poly_t poly;
     fq_nmod_poly_init(poly, result->ctx);
-    
-    for (slong i = 0; i < result->nterms; i++) {
+
+    for (slong i = 0; i < dr_mpoly_length(result); i++) {
+        DR_MPOLY_TERM(term_12, result, i);
+
         slong degree = 0;
-        if (result->terms[i].par_exp && result->terms[i].par_exp[main_par_idx] > 0) {
-            degree = result->terms[i].par_exp[main_par_idx];
+        if (term_12.par_exp && term_12.par_exp[main_par_idx] > 0) {
+            degree = term_12.par_exp[main_par_idx];
         }
-        fq_nmod_poly_set_coeff(poly, degree, result->terms[i].coeff, result->ctx);
+        fq_nmod_poly_set_coeff(poly, degree, term_12.coeff, result->ctx);
     }
-    
+
     const char *var_name = "unknown";
     if (state->par_names && state->par_names[main_par_idx]) {
         var_name = state->par_names[main_par_idx];
@@ -1051,7 +1076,9 @@ void find_and_print_roots_of_univariate_resultant_with_file(const fq_mvpoly_t *r
     free(root_report);
 }
 
-void find_and_print_roots_of_univariate_resultant(const fq_mvpoly_t *result, parser_state_t *state) {
+void find_and_print_roots_of_univariate_resultant(const unified_mpoly_struct *result,
+                                                  parser_state_t *state)
+{
     find_and_print_roots_of_univariate_resultant_with_file(result, state, NULL, 1);
 }
 
@@ -1319,33 +1346,42 @@ void fq_nmod_to_string_builder(string_builder_t *sb, const fq_nmod_t elem,
     }
 }
 
-// New optimized version function - directly replace original fq_mvpoly_to_string
-char* fq_mvpoly_to_string(const fq_mvpoly_t *poly, char **par_names, const char *gen_name) {
-    if (poly->nterms == 0) {
+// New optimized version function - directly replace original dr_mpoly_to_string
+char *dr_mpoly_to_string(const unified_mpoly_struct *poly, char **par_names, const char *gen_name)
+{
+    if (dr_mpoly_length(poly) == 0) {
         return strdup("0");
     }
 
-    size_t estimated_size = poly->nterms * (50 + 10 * (poly->nvars + poly->npars));
+    size_t estimated_size = dr_mpoly_length(poly) * (50 + 10 * (poly->nvars + poly->npars));
     if (estimated_size < 1024) estimated_size = 1024;
 
     string_builder_t sb;
     sb_init(&sb, estimated_size);
 
-    for (slong i = 0; i < poly->nterms; i++) {
+    for (slong i = 0; i < dr_mpoly_length(poly); i++) {
+        DR_MPOLY_TERM(term_13, poly, i);
+
         if (i > 0) {
             sb_append(&sb, " + ");
         }
 
         int has_vars_or_pars = 0;
 
-        if (poly->nvars > 0 && poly->terms[i].var_exp) {
+        if (poly->nvars > 0 && term_13.var_exp) {
             for (slong j = 0; j < poly->nvars; j++) {
-                if (poly->terms[i].var_exp[j] > 0) { has_vars_or_pars = 1; break; }
+                if (term_13.var_exp[j] > 0) {
+                    has_vars_or_pars = 1;
+                    break;
+                }
             }
         }
-        if (!has_vars_or_pars && poly->npars > 0 && poly->terms[i].par_exp) {
+        if (!has_vars_or_pars && poly->npars > 0 && term_13.par_exp) {
             for (slong j = 0; j < poly->npars; j++) {
-                if (poly->terms[i].par_exp[j] > 0) { has_vars_or_pars = 1; break; }
+                if (term_13.par_exp[j] > 0) {
+                    has_vars_or_pars = 1;
+                    break;
+                }
             }
         }
 
@@ -1353,9 +1389,9 @@ char* fq_mvpoly_to_string(const fq_mvpoly_t *poly, char **par_names, const char 
         fq_nmod_init(one, poly->ctx);
         fq_nmod_one(one, poly->ctx);
 
-        if (fq_nmod_is_one(poly->terms[i].coeff, poly->ctx) && has_vars_or_pars) {
+        if (fq_nmod_is_one(term_13.coeff, poly->ctx) && has_vars_or_pars) {
         } else {
-            fq_nmod_to_string_builder(&sb, poly->terms[i].coeff, poly->ctx, gen_name);
+            fq_nmod_to_string_builder(&sb, term_13.coeff, poly->ctx, gen_name);
             if (has_vars_or_pars) {
                 sb_append_char(&sb, '*');
             }
@@ -1364,9 +1400,9 @@ char* fq_mvpoly_to_string(const fq_mvpoly_t *poly, char **par_names, const char 
 
         int term_has_content = 0;
 
-        if (poly->nvars > 0 && poly->terms[i].var_exp) {
+        if (poly->nvars > 0 && term_13.var_exp) {
             for (slong j = 0; j < poly->nvars; j++) {
-                if (poly->terms[i].var_exp[j] > 0) {
+                if (term_13.var_exp[j] > 0) {
                     if (term_has_content) sb_append_char(&sb, '*');
                     if (par_names && par_names[j]) {
                         sb_append(&sb, par_names[j]);
@@ -1374,18 +1410,18 @@ char* fq_mvpoly_to_string(const fq_mvpoly_t *poly, char **par_names, const char 
                         sb_append_char(&sb, 'x');
                         sb_append_long(&sb, j);
                     }
-                    if (poly->terms[i].var_exp[j] > 1) {
+                    if (term_13.var_exp[j] > 1) {
                         sb_append_char(&sb, '^');
-                        sb_append_long(&sb, poly->terms[i].var_exp[j]);
+                        sb_append_long(&sb, term_13.var_exp[j]);
                     }
                     term_has_content = 1;
                 }
             }
         }
 
-        if (poly->npars > 0 && poly->terms[i].par_exp) {
+        if (poly->npars > 0 && term_13.par_exp) {
             for (slong j = 0; j < poly->npars; j++) {
-                if (poly->terms[i].par_exp[j] > 0) {
+                if (term_13.par_exp[j] > 0) {
                     if (term_has_content) sb_append_char(&sb, '*');
                     if (par_names && par_names[j]) {
                         sb_append(&sb, par_names[j]);
@@ -1393,9 +1429,9 @@ char* fq_mvpoly_to_string(const fq_mvpoly_t *poly, char **par_names, const char 
                         sb_append_char(&sb, 'p');
                         sb_append_long(&sb, j);
                     }
-                    if (poly->terms[i].par_exp[j] > 1) {
+                    if (term_13.par_exp[j] > 1) {
                         sb_append_char(&sb, '^');
-                        sb_append_long(&sb, poly->terms[i].par_exp[j]);
+                        sb_append_long(&sb, term_13.par_exp[j]);
                     }
                     term_has_content = 1;
                 }
@@ -1409,13 +1445,12 @@ char* fq_mvpoly_to_string(const fq_mvpoly_t *poly, char **par_names, const char 
 // Core Dixon Function
 
 // Internal computation function with file output
-char* compute_dixon_internal_with_file(const char **poly_strings, slong npoly_strings,
-                                       const char **var_names, slong nvars,
-                                       const fq_nmod_ctx_t ctx,
-                                       char ***remaining_vars, slong *num_remaining,
-                                       FILE *fp_file, int print_to_stdout,
-                                       fq_mvpoly_t *result_poly_out) {
-    
+char *compute_dixon_internal_with_file(const char **poly_strings, slong npoly_strings,
+                                       const char **var_names, slong nvars, const fq_nmod_ctx_t ctx,
+                                       char ***remaining_vars, slong *num_remaining, FILE *fp_file,
+                                       int print_to_stdout, unified_mpoly_struct *result_poly_out)
+{
+
     if (npoly_strings != nvars + 1) {
         fprintf(stderr, "Error: Need exactly %ld polynomials for %ld variables\n",
                 nvars + 1, nvars);
@@ -1459,11 +1494,12 @@ char* compute_dixon_internal_with_file(const char **poly_strings, slong npoly_st
     }
     
     // Second pass: parse polynomials
-    fq_mvpoly_t *polys = (fq_mvpoly_t*) malloc(npoly_strings * sizeof(fq_mvpoly_t));
-    
+    unified_mpoly_struct *polys =
+        (unified_mpoly_struct *)calloc(1, npoly_strings * sizeof(unified_mpoly_struct));
+
     for (slong i = 0; i < npoly_strings; i++) {
-        fq_mvpoly_init(&polys[i], nvars, state.npars, ctx);
-        
+        dr_mpoly_init(&polys[i], nvars, state.npars, ctx);
+
         state.input = poly_strings[i];
         state.pos = 0;
         state.len = strlen(poly_strings[i]);
@@ -1476,7 +1512,7 @@ char* compute_dixon_internal_with_file(const char **poly_strings, slong npoly_st
         parse_expression(&state, &polys[i]);
     }
     // Compute resultant with original names
-    fq_mvpoly_t dixon_result_poly;
+    unified_mpoly_struct dixon_result_poly = {0};
     if (g_resultant_method == RESULTANT_METHOD_MACAULAY) {
         fq_macaulay_resultant_with_names(&dixon_result_poly, polys, nvars, state.npars,
                                          state.var_names, state.par_names, gen_name);
@@ -1489,26 +1525,26 @@ char* compute_dixon_internal_with_file(const char **poly_strings, slong npoly_st
     }
 
     if (result_poly_out) {
-        *result_poly_out = dixon_result_poly;
+        dr_mpoly_move(result_poly_out, &dixon_result_poly);
     }
 
     // Find roots with proper parameter names and convert to string for the CLI path.
     char *result_string;
     if (result_poly_out) {
         result_string = NULL;
-    } else if (dixon_result_poly.nterms == 0) {
+    } else if (dr_mpoly_length(&(dixon_result_poly)) == 0) {
         result_string = strdup("0");
     } else {
         find_and_print_roots_of_univariate_resultant_with_file(&dixon_result_poly, &state, fp_file, print_to_stdout);
-        result_string = fq_mvpoly_to_string(&dixon_result_poly, state.par_names, gen_name);
+        result_string = dr_mpoly_to_string(&dixon_result_poly, state.par_names, gen_name);
     }
 
     // Cleanup
     if (!result_poly_out) {
-        fq_mvpoly_clear(&dixon_result_poly);
+        dr_mpoly_clear(&dixon_result_poly);
     }
     for (slong i = 0; i < npoly_strings; i++) {
-        fq_mvpoly_clear(&polys[i]);
+        dr_mpoly_clear(&polys[i]);
     }
     free(polys);
     
@@ -1841,11 +1877,9 @@ static ulong fq_nmod_get_ui_prime_field(const fq_nmod_t coeff, const fq_nmod_ctx
     return value;
 }
 
-static int parse_result_string_fixed_params(const char *result_str,
-                                           char **par_names,
-                                           slong npars,
-                                           const fq_nmod_ctx_t ctx,
-                                           fq_mvpoly_t *poly) {
+static int parse_result_string_fixed_params(const char *result_str, char **par_names, slong npars,
+                                            const fq_nmod_ctx_t ctx, unified_mpoly_struct *poly)
+{
     parser_state_t state = {0};
     char *gen_name = get_generator_name(ctx);
 
@@ -1865,7 +1899,7 @@ static int parse_result_string_fixed_params(const char *result_str,
     fq_nmod_init(state.current.value, ctx);
     state.generator_name = gen_name ? strdup(gen_name) : NULL;
 
-    fq_mvpoly_init(poly, 0, npars, ctx);
+    dr_mpoly_init(poly, 0, npars, ctx);
     next_token(&state);
     parse_expression(&state, poly);
 
@@ -1881,7 +1915,7 @@ static int parse_result_string_fixed_params(const char *result_str,
     if (gen_name) free(gen_name);
 
     if (!ok) {
-        fq_mvpoly_clear(poly);
+        dr_mpoly_clear(poly);
         memset(poly, 0, sizeof(*poly));
     }
 
@@ -1924,8 +1958,9 @@ static char **compute_remaining_vars_from_input(const char *poly_string,
 }
 
 static void qq_poly_recon_absorb_modular_result(qq_poly_recon_t *acc,
-                                                const fq_mvpoly_t *mod_poly,
-                                                const fq_nmod_ctx_t ctx) {
+                                                const unified_mpoly_struct *mod_poly,
+                                                const fq_nmod_ctx_t ctx)
+{
     ulong prime = fq_nmod_ctx_prime(ctx);
     int *matched = (int*) calloc((size_t) acc->nterms, sizeof(int));
     fmpz_t prev_mod, next_mod;
@@ -1935,11 +1970,13 @@ static void qq_poly_recon_absorb_modular_result(qq_poly_recon_t *acc,
     fmpz_set(prev_mod, acc->modulus);
     fmpz_mul_ui(next_mod, prev_mod, prime);
 
-    for (slong i = 0; i < mod_poly->nterms; i++) {
-        ulong residue_ui = fq_nmod_get_ui_prime_field(mod_poly->terms[i].coeff, ctx);
-        slong idx = qq_poly_recon_find_term(acc, mod_poly->terms[i].par_exp);
+    for (slong i = 0; i < dr_mpoly_length(mod_poly); i++) {
+        DR_MPOLY_TERM(term_14, mod_poly, i);
+
+        ulong residue_ui = fq_nmod_get_ui_prime_field(term_14.coeff, ctx);
+        slong idx = qq_poly_recon_find_term(acc, term_14.par_exp);
         if (idx < 0) {
-            idx = qq_poly_recon_add_term(acc, mod_poly->terms[i].par_exp);
+            idx = qq_poly_recon_add_term(acc, term_14.par_exp);
             if (!fmpz_is_one(prev_mod)) {
                 fmpz_t tmp_zero;
                 fmpz_init(tmp_zero);
@@ -2242,7 +2279,8 @@ static char *qq_compute_modular_resultant_for_prime(const char *poly_string,
 static int qq_compute_modular_resultant_poly_for_prime(const char *poly_string,
                                                        const char *vars_string,
                                                        const fq_nmod_ctx_t ctx,
-                                                       fq_mvpoly_t *result_poly) {
+                                                       unified_mpoly_struct *result_poly)
+{
     return dixon_compute_result_poly(poly_string, vars_string, ctx, result_poly);
 }
 
@@ -2373,7 +2411,7 @@ static char *qq_reconstruct_from_modular_dixon_with_file(const char *poly_string
             int outer_threads;
             int inner_threads;
             slong batch_count;
-            fq_mvpoly_t **mod_results;
+            unified_mpoly_struct **mod_results;
             fq_nmod_ctx_t *task_contexts;
             int saved_verbose = g_dixon_verbose_level;
 
@@ -2382,7 +2420,8 @@ static char *qq_reconstruct_from_modular_dixon_with_file(const char *poly_string
             if (outer_threads < 1) outer_threads = 1;
             batch_count = FLINT_MIN(remaining, (slong) outer_threads);
             inner_threads = FLINT_MAX(1, total_threads / outer_threads);
-            mod_results = (fq_mvpoly_t **) calloc((size_t) batch_count, sizeof(fq_mvpoly_t *));
+            mod_results = (unified_mpoly_struct **)calloc((size_t)batch_count,
+                                                          sizeof(unified_mpoly_struct *));
             task_contexts = (fq_nmod_ctx_t *) calloc((size_t) batch_count, sizeof(fq_nmod_ctx_t));
             if (!mod_results || !task_contexts) {
                 fprintf(stderr, "Failed to allocate modular-result batch.\n");
@@ -2410,7 +2449,8 @@ static char *qq_reconstruct_from_modular_dixon_with_file(const char *poly_string
                     fmpz_init(task_p);
                     fmpz_set_ui(task_p, primes[processed_primes]);
                     fq_nmod_ctx_init(task_contexts[0], task_p, 1, "t");
-                    mod_results[0] = (fq_mvpoly_t *) malloc(sizeof(fq_mvpoly_t));
+                    mod_results[0] =
+                        (unified_mpoly_struct *)calloc(1, sizeof(unified_mpoly_struct));
                     if (!mod_results[0] || !qq_compute_modular_resultant_poly_for_prime(
                             poly_string, vars_string, task_contexts[0], mod_results[0])) {
                         free(mod_results[0]);
@@ -2425,7 +2465,8 @@ static char *qq_reconstruct_from_modular_dixon_with_file(const char *poly_string
                         fmpz_init(task_p);
                         fmpz_set_ui(task_p, primes[processed_primes + j]);
                         fq_nmod_ctx_init(task_contexts[j], task_p, 1, "t");
-                        mod_results[j] = (fq_mvpoly_t *) malloc(sizeof(fq_mvpoly_t));
+                        mod_results[j] =
+                            (unified_mpoly_struct *)calloc(1, sizeof(unified_mpoly_struct));
                         if (!mod_results[j] || !qq_compute_modular_resultant_poly_for_prime(
                                 poly_string, vars_string, task_contexts[j], mod_results[j])) {
                             free(mod_results[j]);
@@ -2443,7 +2484,7 @@ static char *qq_reconstruct_from_modular_dixon_with_file(const char *poly_string
                 fmpz_init(task_p);
                 fmpz_set_ui(task_p, primes[processed_primes + j]);
                 fq_nmod_ctx_init(task_contexts[j], task_p, 1, "t");
-                mod_results[j] = (fq_mvpoly_t *) malloc(sizeof(fq_mvpoly_t));
+                mod_results[j] = (unified_mpoly_struct *)calloc(1, sizeof(unified_mpoly_struct));
                 if (!mod_results[j] || !qq_compute_modular_resultant_poly_for_prime(
                         poly_string, vars_string, task_contexts[j], mod_results[j])) {
                     free(mod_results[j]);
@@ -2507,7 +2548,7 @@ static char *qq_reconstruct_from_modular_dixon_with_file(const char *poly_string
 
             for (slong j = 0; j < batch_count; j++) {
                 if (mod_results[j]) {
-                    fq_mvpoly_clear(mod_results[j]);
+                    dr_mpoly_clear(mod_results[j]);
                     free(mod_results[j]);
                 }
                 fq_nmod_ctx_clear(task_contexts[j]);
@@ -2988,10 +3029,10 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
     }
 
     // Second pass: formal parsing
-    fq_mvpoly_t poly1, poly2;
-    fq_mvpoly_init(&poly1, 1, state.npars, ctx);
-    fq_mvpoly_init(&poly2, 1, state.npars, ctx);
-    
+    unified_mpoly_struct poly1 = {0}, poly2 = {0};
+    dr_mpoly_init(&poly1, 1, state.npars, ctx);
+    dr_mpoly_init(&poly2, 1, state.npars, ctx);
+
     state.input = poly1_str;
     state.pos = 0;
     state.len = strlen(poly1_str);
@@ -3001,89 +3042,93 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
     }
      next_token(&state);
      parse_expression(&state, &poly1);
-    fq_mvpoly_reduce_field_equation(&poly1);
-    
-    state.input = poly2_str;
-    state.pos = 0;
-    state.len = strlen(poly2_str);
-    if (state.current.str) {
-        free(state.current.str);
-        state.current.str = NULL;
+     dr_mpoly_reduce_field_equation(&poly1);
+
+     state.input = poly2_str;
+     state.pos = 0;
+     state.len = strlen(poly2_str);
+     if (state.current.str) {
+         free(state.current.str);
+         state.current.str = NULL;
      }
      next_token(&state);
      parse_expression(&state, &poly2);
-    fq_mvpoly_reduce_field_equation(&poly2);
-    
-    // Initialize unified field context
-    field_ctx_t field_ctx;
-    field_ctx_init(&field_ctx, ctx);
-    
-    // Create unified multivariate polynomial context
-    slong total_vars = 1 + state.npars;  // elimination variable + parameters
-    unified_mpoly_ctx_t unified_ctx = unified_mpoly_ctx_init(total_vars, ORD_LEX, &field_ctx);
-    
-    // Initialize unified polynomials
-    unified_mpoly_t A = unified_mpoly_init(unified_ctx);
-    unified_mpoly_t B = unified_mpoly_init(unified_ctx);
-    unified_mpoly_t R = unified_mpoly_init(unified_ctx);
+     dr_mpoly_reduce_field_equation(&poly2);
 
-    // Convert first polynomial
-    for (slong i = 0; i < poly1.nterms; i++) {
-        field_elem_u coeff;
-        ulong *exp = (ulong*) calloc(total_vars, sizeof(ulong));
-        
-        // Convert coefficient
-        void *ctx_ptr = (field_ctx.field_id == FIELD_ID_NMOD) ?
-                       (void*)&field_ctx.ctx.nmod_ctx :
-                       (field_ctx.field_id == FIELD_ID_FQ_ZECH) ?
-                       (void*)field_ctx.ctx.zech_ctx :
-                       (void*)field_ctx.ctx.fq_ctx;
-        field_init_elem(&coeff, field_ctx.field_id, ctx_ptr);
-        fq_nmod_to_field_elem(&coeff, poly1.terms[i].coeff, &field_ctx);
-        
-        // Set exponents
-        if (poly1.terms[i].var_exp) {
-            exp[0] = poly1.terms[i].var_exp[0];
-        }
-        if (poly1.terms[i].par_exp) {
-            for (slong j = 0; j < state.npars; j++) {
-                exp[1 + j] = poly1.terms[i].par_exp[j];
-            }
-        }
-        
-        unified_mpoly_set_coeff_ui(A, &coeff, exp);
-        field_clear_elem(&coeff, field_ctx.field_id, ctx_ptr);
-        free(exp);
-    }
+     // Initialize unified field context
+     field_ctx_t field_ctx;
+     field_ctx_init(&field_ctx, ctx);
+
+     // Create unified multivariate polynomial context
+     slong total_vars = 1 + state.npars; // elimination variable + parameters
+     unified_mpoly_ctx_t unified_ctx = unified_mpoly_ctx_init(total_vars, ORD_LEX, &field_ctx);
+
+     // Initialize unified polynomials
+     unified_mpoly_t A = unified_mpoly_init(unified_ctx);
+     unified_mpoly_t B = unified_mpoly_init(unified_ctx);
+     unified_mpoly_t R = unified_mpoly_init(unified_ctx);
+
+     // Convert first polynomial
+     for (slong i = 0; i < dr_mpoly_length(&(poly1)); i++) {
+         DR_MPOLY_TERM(term_15, &(poly1), i);
+
+         field_elem_u coeff;
+         ulong *exp = (ulong *)calloc(total_vars, sizeof(ulong));
+
+         // Convert coefficient
+         void *ctx_ptr = (field_ctx.field_id == FIELD_ID_NMOD)
+                             ? (void *)&field_ctx.ctx.nmod_ctx
+                             : (field_ctx.field_id == FIELD_ID_FQ_ZECH)
+                                   ? (void *)field_ctx.ctx.zech_ctx
+                                   : (void *)field_ctx.ctx.fq_ctx;
+         field_init_elem(&coeff, field_ctx.field_id, ctx_ptr);
+         fq_nmod_to_field_elem(&coeff, term_15.coeff, &field_ctx);
+
+         // Set exponents
+         if (term_15.var_exp) {
+             exp[0] = term_15.var_exp[0];
+         }
+         if (term_15.par_exp) {
+             for (slong j = 0; j < state.npars; j++) {
+                 exp[1 + j] = term_15.par_exp[j];
+             }
+         }
+
+         unified_mpoly_set_coeff_ui(A, &coeff, exp);
+         field_clear_elem(&coeff, field_ctx.field_id, ctx_ptr);
+         free(exp);
+     }
 
     // Convert second polynomial
-    for (slong i = 0; i < poly2.nterms; i++) {
-        field_elem_u coeff;
-        ulong *exp = (ulong*) calloc(total_vars, sizeof(ulong));
-        
-        // Convert coefficient
-        void *ctx_ptr = (field_ctx.field_id == FIELD_ID_NMOD) ?
-                       (void*)&field_ctx.ctx.nmod_ctx :
-                       (field_ctx.field_id == FIELD_ID_FQ_ZECH) ?
-                       (void*)field_ctx.ctx.zech_ctx :
-                       (void*)field_ctx.ctx.fq_ctx;
-        field_init_elem(&coeff, field_ctx.field_id, ctx_ptr);
-        fq_nmod_to_field_elem(&coeff, poly2.terms[i].coeff, &field_ctx);
-        
-        // Set exponents
-        if (poly2.terms[i].var_exp) {
-            exp[0] = poly2.terms[i].var_exp[0];
-        }
-        if (poly2.terms[i].par_exp) {
-            for (slong j = 0; j < state.npars; j++) {
-                exp[1 + j] = poly2.terms[i].par_exp[j];
-            }
-        }
-        
-        unified_mpoly_set_coeff_ui(B, &coeff, exp);
-        field_clear_elem(&coeff, field_ctx.field_id, ctx_ptr);
-        free(exp);
-    }
+     for (slong i = 0; i < dr_mpoly_length(&(poly2)); i++) {
+         DR_MPOLY_TERM(term_16, &(poly2), i);
+
+         field_elem_u coeff;
+         ulong *exp = (ulong *)calloc(total_vars, sizeof(ulong));
+
+         // Convert coefficient
+         void *ctx_ptr = (field_ctx.field_id == FIELD_ID_NMOD)
+                             ? (void *)&field_ctx.ctx.nmod_ctx
+                             : (field_ctx.field_id == FIELD_ID_FQ_ZECH)
+                                   ? (void *)field_ctx.ctx.zech_ctx
+                                   : (void *)field_ctx.ctx.fq_ctx;
+         field_init_elem(&coeff, field_ctx.field_id, ctx_ptr);
+         fq_nmod_to_field_elem(&coeff, term_16.coeff, &field_ctx);
+
+         // Set exponents
+         if (term_16.var_exp) {
+             exp[0] = term_16.var_exp[0];
+         }
+         if (term_16.par_exp) {
+             for (slong j = 0; j < state.npars; j++) {
+                 exp[1 + j] = term_16.par_exp[j];
+             }
+         }
+
+         unified_mpoly_set_coeff_ui(B, &coeff, exp);
+         field_clear_elem(&coeff, field_ctx.field_id, ctx_ptr);
+         free(exp);
+     }
 
     a_degs = (slong *) calloc((size_t) total_vars, sizeof(slong));
     b_degs = (slong *) calloc((size_t) total_vars, sizeof(slong));
@@ -3095,9 +3140,9 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
     b_total_deg = unified_mpoly_total_degree_si(B);
 
     subres_cli_log(1, "Subresultant: computing resultant eliminating %s.\n", elim_var);
-    subres_cli_log(1,
-                   "  Input summary: terms=(%ld, %ld), deg_%s=(%ld, %ld), remaining vars=%ld",
-                   poly1.nterms, poly2.nterms, elim_var, a_degs[0], b_degs[0], num_remaining);
+    subres_cli_log(1, "  Input summary: terms=(%ld, %ld), deg_%s=(%ld, %ld), remaining vars=%ld",
+                   dr_mpoly_length(&(poly1)), dr_mpoly_length(&(poly2)), elim_var, a_degs[0],
+                   b_degs[0], num_remaining);
     if (num_remaining > 0 && subres_cli_logging_enabled(1)) {
         printf(" [");
         subres_cli_print_name_list(state.par_names, state.npars);
@@ -3160,16 +3205,16 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
         fq_nmod_clear(state.current.value, ctx);
         if (state.current.str) free(state.current.str);
         free(gen_name);
-        fq_mvpoly_clear(&poly1);
-        fq_mvpoly_clear(&poly2);
-        
+        dr_mpoly_clear(&poly1);
+        dr_mpoly_clear(&poly2);
+
         return strdup("0");
     }
-    
-    // Convert result back to fq_mvpoly format
-    fq_mvpoly_t result_mvpoly;
-    fq_mvpoly_init(&result_mvpoly, 0, state.npars, ctx);
-    
+
+    // Convert result back to dr_mpoly format
+    unified_mpoly_struct result_mvpoly = {0};
+    dr_mpoly_init(&result_mvpoly, 0, state.npars, ctx);
+
     // Convert from unified format back
     slong result_len = unified_mpoly_length(R);
     if (result_len > 0) {
@@ -3201,9 +3246,9 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
                         par_exp[j] = exp[1 + j];
                     }
                 }
-                
-                fq_mvpoly_add_term_fast(&result_mvpoly, NULL, par_exp, coeff);
-                
+
+                dr_mpoly_add_term_fast(&result_mvpoly, NULL, par_exp, coeff);
+
                 fq_nmod_clear(coeff, ctx);
                 free(exp);
                 if (par_exp) free(par_exp);
@@ -3234,9 +3279,9 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
                     par_exp[j] = exp[1 + j];
                 }
             }
-            
-            fq_mvpoly_add_term_fast(&result_mvpoly, NULL, par_exp, coeff);
-            
+
+            dr_mpoly_add_term_fast(&result_mvpoly, NULL, par_exp, coeff);
+
             fq_nmod_clear(coeff, ctx);
             fq_zech_clear(zech_coeff, zech_ctx->fqctx);
             free(exp);
@@ -3262,9 +3307,9 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
                         par_exp[j] = exp[1 + j];
                     }
                 }
-                
-                fq_mvpoly_add_term_fast(&result_mvpoly, NULL, par_exp, coeff);
-                
+
+                dr_mpoly_add_term_fast(&result_mvpoly, NULL, par_exp, coeff);
+
                 fq_nmod_clear(coeff, ctx);
                 free(exp);
                 if (par_exp) free(par_exp);
@@ -3272,12 +3317,12 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
         }
     }
     if (g_field_equation_reduction || g_field_equation_final_only) {
-        fq_mvpoly_reduce_field_equation(&result_mvpoly);
+        dr_mpoly_reduce_field_equation(&result_mvpoly);
     }
-    fq_mvpoly_make_monic(&result_mvpoly);
-    result_total_deg = fq_mvpoly_parameter_total_degree(&result_mvpoly, result_par_degs);
+    dr_mpoly_make_monic(&result_mvpoly);
+    result_total_deg = dr_mpoly_parameter_total_degree(&result_mvpoly, result_par_degs);
 
-    if (result_mvpoly.nterms == 0) {
+    if (dr_mpoly_length(&(result_mvpoly)) == 0) {
         subres_cli_log(1, "Subresultant: obtained zero resultant.\n");
     } else {
         subres_cli_log(1, "Subresultant: resultant computed.\n");
@@ -3285,7 +3330,7 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
 
     if (g_dixon_verbose_level >= 1) {
         printf("  Resultant summary: %ld terms, total degree %ld, remaining variables: ",
-               result_mvpoly.nterms, result_total_deg);
+               dr_mpoly_length(&(result_mvpoly)), result_total_deg);
         if (state.npars <= 0) {
             printf("(none)\n");
         } else {
@@ -3296,7 +3341,7 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
         }
     }
 
-    if (subres_cli_logging_enabled(3) && result_mvpoly.nterms > 0) {
+    if (subres_cli_logging_enabled(3) && dr_mpoly_length(&(result_mvpoly)) > 0) {
         if (state.npars > 0) {
             printf("  Result degree profile: ");
             for (slong j = 0; j < state.npars; j++) {
@@ -3310,24 +3355,24 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
     }
 
     if (g_dixon_verbose_level >= 1) {
-        if (result_mvpoly.nterms < 100) {
-            fq_mvpoly_print_with_names(&result_mvpoly, "  Final Resultant",
-                                       NULL, state.par_names, gen_name, 0);
+        if (dr_mpoly_length(&(result_mvpoly)) < 100) {
+            dr_mpoly_print_with_names(&result_mvpoly, "  Final Resultant", NULL, state.par_names,
+                                      gen_name, 0);
         } else {
             printf("  Final resultant too large to display (%ld terms)\n",
-                   result_mvpoly.nterms);
+                   dr_mpoly_length(&(result_mvpoly)));
         }
     }
 
     // If it's a univariate polynomial, try to find roots
     find_and_print_roots_of_univariate_resultant(&result_mvpoly, &state);
-    //printf("fq_mvpoly_to_string\n");
+    // printf("dr_mpoly_to_string\n");
     // Convert result to string
     char *result_string;
-    if (result_mvpoly.nterms == 0) {
+    if (dr_mpoly_length(&(result_mvpoly)) == 0) {
         result_string = strdup("0");
     } else {
-        result_string = fq_mvpoly_to_string(&result_mvpoly, state.par_names, gen_name);
+        result_string = dr_mpoly_to_string(&result_mvpoly, state.par_names, gen_name);
     }
     //printf("%s", result_string);
     //printf("clean up\n");
@@ -3345,10 +3390,10 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
     unified_mpoly_clear(R);
     unified_mpoly_ctx_clear(unified_ctx);
     field_ctx_clear(&field_ctx);
-    fq_mvpoly_clear(&poly1);
-    fq_mvpoly_clear(&poly2);
-    fq_mvpoly_clear(&result_mvpoly);
-    
+    dr_mpoly_clear(&poly1);
+    dr_mpoly_clear(&poly2);
+    dr_mpoly_clear(&result_mvpoly);
+
     for (slong i = 0; i < state.nvars; i++) {
         free(state.var_names[i]);
     }
@@ -3426,10 +3471,9 @@ char* dixon_str(const char *poly_string,
     return dixon_str_with_file(poly_string, vars_string, ctx, NULL, 1);
 }
 
-int dixon_compute_result_poly(const char *poly_string,
-                              const char *vars_string,
-                              const fq_nmod_ctx_t ctx,
-                              fq_mvpoly_t *result_poly) {
+int dixon_compute_result_poly(const char *poly_string, const char *vars_string,
+                              const fq_nmod_ctx_t ctx, unified_mpoly_struct *result_poly)
+{
     char **poly_array = NULL;
     char **vars_array = NULL;
     char **remaining_vars = NULL;
@@ -3501,9 +3545,9 @@ void append_roots_to_file_from_result(const char *result_str,
     }
     
     // Parse the result string into a polynomial
-    fq_mvpoly_t result_poly;
-    fq_mvpoly_init(&result_poly, 0, state.npars, ctx);
-    
+    unified_mpoly_struct result_poly = {0};
+    dr_mpoly_init(&result_poly, 0, state.npars, ctx);
+
     parser_state_t parse_state = {0};
     parse_state.input = result_str;
     parse_state.pos = 0;
@@ -3528,8 +3572,8 @@ void append_roots_to_file_from_result(const char *result_str,
     find_and_print_roots_of_univariate_resultant_with_file(&result_poly, &state, fp_file, 0);
     
     // Cleanup
-    fq_mvpoly_clear(&result_poly);
-    
+    dr_mpoly_clear(&result_poly);
+
     for (slong i = 0; i < num_vars; i++) {
         free(state.var_names[i]);
     }

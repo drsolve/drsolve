@@ -11,8 +11,8 @@ int mq_layout_rank_layers(void);
 double mq_layout_plan_seconds(void);
 double mq_layout_arithmetic_seconds(void);
 
-static int layout_compute(fq_mvpoly_t *out, fq_mvpoly_t **matrix,
-                           fq_mvpoly_t *polys, slong n, int projected)
+static int layout_compute(unified_mpoly_struct *out, unified_mpoly_struct **matrix,
+                          unified_mpoly_struct *polys, slong n, int projected)
 {
     if (projected && dixon_try_mq_projection(out, matrix, polys, n-1, 1, DET_METHOD_RECURSIVE)) return 1;
     compute_fq_cancel_matrix_det(out, matrix, n-1, 1, DET_METHOD_RECURSIVE);
@@ -33,9 +33,9 @@ int main(int argc, char **argv)
     g_dixon_verbose_level = 0; g_dixon_det_cache_limit = 100000;
     flint_rand_t rng; flint_rand_init(rng); flint_rand_set_seed(rng, seed, 941);
     fq_nmod_ctx_t fq; fq_nmod_ctx_init_ui(fq, prime, 1, "a");
-    fq_mvpoly_t *p = random_mq(n-1, fq, rng), **m, **a, actual, expected;
-    build_fq_cancellation_matrix_mvpoly(&m, p, n-1, 1);
-    perform_fq_matrix_row_operations_mvpoly(&a, &m, n-1, 1);
+    unified_mpoly_struct *p = random_mq(n - 1, fq, rng), **m, **a, actual = {0}, expected = {0};
+    build_fq_cancellation_matrix(&m, p, n - 1, 1);
+    perform_fq_matrix_row_operations(&a, &m, n - 1, 1);
     mq_layout_configure(shared, profile, rotate);
     double start = omp_get_wtime();
     int verified = layout_compute(&actual, a, p, n, projected);
@@ -49,14 +49,15 @@ int main(int argc, char **argv)
     struct rusage usage; getrusage(RUSAGE_SELF, &usage);
     nmod_mpoly_ctx_t ctx; nmod_mpoly_ctx_init(ctx, 2*n-1, ORD_LEX, prime);
     nmod_mpoly_t x, y; nmod_mpoly_init(x, ctx); nmod_mpoly_init(y, ctx);
-    fq_mvpoly_to_nmod_mpoly(x, &actual, ctx);
+    dr_mpoly_to_nmod_mpoly(x, &actual, ctx);
     assert(nmod_mpoly_is_canonical(x, ctx));
     if (audit) {
         mq_layout_configure(0, 0, 0);
         int reference_verified = layout_compute(&expected, a, p, n, projected);
         assert(reference_verified == verified);
-        fq_mvpoly_to_nmod_mpoly(y, &expected, ctx);
-        assert(nmod_mpoly_equal(x, y, ctx)); fq_mvpoly_clear(&expected);
+        dr_mpoly_to_nmod_mpoly(y, &expected, ctx);
+        assert(nmod_mpoly_equal(x, y, ctx));
+        dr_mpoly_clear(&expected);
     }
     /* Stable, canonical coefficient fingerprint for repeated timing runs.
      * The audit above uses exact coefficient equality, not this fingerprint. */
@@ -66,10 +67,15 @@ int main(int argc, char **argv)
         hash = (hash ^ x->coeffs[t])*UINT64_C(1099511628211);
         for (slong v = 0; v < 2*n-1; v++) hash = (hash ^ exp[v])*UINT64_C(1099511628211);
     }
-    printf("{\"kind\":\"run\",\"n\":%ld,\"q\":%lu,\"seed\":%lu,\"threads\":%d,\"shared\":%d,\"projected\":%d,\"verified\":%d,\"quadratic_first\":%d,\"profile\":%d,\"audit\":%d,\"seconds\":%.9f,\"peak_rss_kib_before_audit\":%ld,\"terms\":%ld,\"fingerprint\":\"%016llx\",\"plan_seconds\":%.9f,\"arithmetic_seconds\":%.9f}\n",
-        n, prime, seed, threads, shared, projected, verified, rotate, profile, audit, seconds,
-        usage.ru_maxrss, actual.nterms, (unsigned long long)hash, plan_seconds, arithmetic_seconds);
+    printf("{\"kind\":\"run\",\"n\":%ld,\"q\":%lu,\"seed\":%lu,\"threads\":%d,\"shared\":%d,"
+           "\"projected\":%d,\"verified\":%d,\"quadratic_first\":%d,\"profile\":%d,\"audit\":%d,"
+           "\"seconds\":%.9f,\"peak_rss_kib_before_audit\":%ld,\"terms\":%ld,\"fingerprint\":\"%"
+           "016llx\",\"plan_seconds\":%.9f,\"arithmetic_seconds\":%.9f}\n",
+           n, prime, seed, threads, shared, projected, verified, rotate, profile, audit, seconds,
+           usage.ru_maxrss, dr_mpoly_length(&(actual)), (unsigned long long)hash, plan_seconds,
+           arithmetic_seconds);
     nmod_mpoly_clear(x, ctx); nmod_mpoly_clear(y, ctx); nmod_mpoly_ctx_clear(ctx);
-    fq_mvpoly_clear(&actual); clear_input(p, m, a, n-1);
+    dr_mpoly_clear(&actual);
+    clear_input(p, m, a, n - 1);
     fq_nmod_ctx_clear(fq); flint_rand_clear(rng); flint_cleanup_master(); return 0;
 }

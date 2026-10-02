@@ -27,7 +27,7 @@
 
 #include "dixon_flint.h"
 #include "dixon_interface_flint.h"
-#include "fq_mvpoly.h"
+#include "dr_mpoly.h"
 #include "fq_unified_interface.h"
 #include "fq_multivariate_interpolation.h"
 #include "unified_mpoly_resultant.h"

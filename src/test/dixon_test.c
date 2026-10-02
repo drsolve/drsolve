@@ -387,7 +387,7 @@ static int dtest_generate_random_system_string(const solver_field_case_t *field,
     fmpz_t p;
     char *polys_str = NULL;
     char **poly_strs = NULL;
-    fq_mvpoly_t *polys = NULL;
+    unified_mpoly_struct *polys = NULL;
     char *gen_name = NULL;
     size_t total_len = 4;
     flint_rand_t rstate;
@@ -445,7 +445,8 @@ static int dtest_generate_random_system_string(const solver_field_case_t *field,
 
     poly_strs = (char **) malloc((size_t) npolys * sizeof(char *));
     if (!poly_strs) {
-        for (slong i = 0; i < npolys; i++) fq_mvpoly_clear(&polys[i]);
+        for (slong i = 0; i < npolys; i++)
+            dr_mpoly_clear(&polys[i]);
         free(polys);
         fq_nmod_ctx_clear(ctx);
         return 0;
@@ -453,12 +454,13 @@ static int dtest_generate_random_system_string(const solver_field_case_t *field,
 
     gen_name = get_generator_name(ctx);
     for (slong i = 0; i < npolys; i++) {
-        char *s = fq_mvpoly_to_string(&polys[i], NULL, gen_name);
+        char *s = dr_mpoly_to_string(&polys[i], NULL, gen_name);
         poly_strs[i] = (s && strlen(s) > 0) ? s : (free(s), strdup("0"));
         if (!poly_strs[i]) {
             for (slong j = 0; j <= i; j++) free(poly_strs[j]);
             free(poly_strs);
-            for (slong j = 0; j < npolys; j++) fq_mvpoly_clear(&polys[j]);
+            for (slong j = 0; j < npolys; j++)
+                dr_mpoly_clear(&polys[j]);
             free(polys);
             if (gen_name) free(gen_name);
             fq_nmod_ctx_clear(ctx);
@@ -471,7 +473,8 @@ static int dtest_generate_random_system_string(const solver_field_case_t *field,
     if (!polys_str) {
         for (slong i = 0; i < npolys; i++) free(poly_strs[i]);
         free(poly_strs);
-        for (slong i = 0; i < npolys; i++) fq_mvpoly_clear(&polys[i]);
+        for (slong i = 0; i < npolys; i++)
+            dr_mpoly_clear(&polys[i]);
         free(polys);
         if (gen_name) free(gen_name);
         fq_nmod_ctx_clear(ctx);
@@ -485,7 +488,8 @@ static int dtest_generate_random_system_string(const solver_field_case_t *field,
 
     for (slong i = 0; i < npolys; i++) free(poly_strs[i]);
     free(poly_strs);
-    for (slong i = 0; i < npolys; i++) fq_mvpoly_clear(&polys[i]);
+    for (slong i = 0; i < npolys; i++)
+        dr_mpoly_clear(&polys[i]);
     free(polys);
     if (gen_name) free(gen_name);
     fq_nmod_ctx_clear(ctx);
@@ -557,31 +561,34 @@ static int dtest_verify_large_prime_solutions(const char *polys_str,
 // ============= DEGREE CHECKING FUNCTIONS =============
 
 // Get maximum total degree of a polynomial
-slong fq_mvpoly_max_total_degree(const fq_mvpoly_t *poly) {
+slong dr_mpoly_max_total_degree(const unified_mpoly_struct *poly)
+{
     slong max_deg = 0;
-    
-    for (slong i = 0; i < poly->nterms; i++) {
+
+    for (slong i = 0; i < dr_mpoly_length(poly); i++) {
+        DR_MPOLY_TERM(term_1, poly, i);
+
         slong total_deg = 0;
         
         // Sum variable exponents
-        if (poly->terms[i].var_exp) {
+        if (term_1.var_exp) {
             for (slong j = 0; j < poly->nvars; j++) {
-                total_deg += poly->terms[i].var_exp[j];
+                total_deg += term_1.var_exp[j];
             }
         }
-        
+
         // Sum parameter exponents
-        if (poly->terms[i].par_exp) {
+        if (term_1.par_exp) {
             for (slong j = 0; j < poly->npars; j++) {
-                total_deg += poly->terms[i].par_exp[j];
+                total_deg += term_1.par_exp[j];
             }
         }
-        
+
         if (total_deg > max_deg) {
             max_deg = total_deg;
         }
     }
-    
+
     return max_deg;
 }
 
@@ -945,15 +952,13 @@ void enumerate_homogeneous_monomials(monomial_t **monomials, slong *count,
 }
 
 // Improved polynomial generation with better density control
-static void generate_random_polynomial_mode(fq_mvpoly_t *poly, slong nvars,
-                                            slong npars, slong max_degree,
-                                            double density_ratio,
-                                            int homogeneous,
-                                            const fq_nmod_ctx_t ctx,
-                                            flint_rand_t state) {
-    
-    fq_mvpoly_init(poly, nvars, npars, ctx);
-    
+static void generate_random_polynomial_mode(unified_mpoly_struct *poly, slong nvars, slong npars,
+                                            slong max_degree, double density_ratio, int homogeneous,
+                                            const fq_nmod_ctx_t ctx, flint_rand_t state)
+{
+
+    dr_mpoly_init(poly, nvars, npars, ctx);
+
     slong total_indeterminates = nvars + npars;
     
     // Generate all possible monomials
@@ -1036,8 +1041,8 @@ static void generate_random_polynomial_mode(fq_mvpoly_t *poly, slong nvars,
         } while (fq_nmod_is_zero(coeff, ctx));
         
         // Add the term to polynomial
-        fq_mvpoly_add_term(poly, var_exp, par_exp, coeff);
-        
+        dr_mpoly_add_term(poly, var_exp, par_exp, coeff);
+
         // Cleanup
         fq_nmod_clear(coeff, ctx);
         if (var_exp) free(var_exp);
@@ -1052,33 +1057,32 @@ static void generate_random_polynomial_mode(fq_mvpoly_t *poly, slong nvars,
     
     if (!g_bezout_test_quiet_mode) {
         printf("    Generated polynomial with %ld terms (target: %ld, achieved density: %.1f%%)\n",
-               poly->nterms, target_terms,
-               (double) poly->nterms / total_monomials * 100);
+               dr_mpoly_length(poly), target_terms,
+               (double)dr_mpoly_length(poly) / total_monomials * 100);
     }
 }
 
-void generate_random_polynomial(fq_mvpoly_t *poly, slong nvars, slong npars,
-                               slong max_degree, double density_ratio,
-                               const fq_nmod_ctx_t ctx, flint_rand_t state) {
+void generate_random_polynomial(unified_mpoly_struct *poly, slong nvars, slong npars,
+                                slong max_degree, double density_ratio, const fq_nmod_ctx_t ctx,
+                                flint_rand_t state)
+{
     generate_random_polynomial_mode(poly, nvars, npars, max_degree,
                                     density_ratio, 0, ctx, state);
 }
 
 // Generate polynomial system with specified degrees and density
-static void generate_polynomial_system_mode(fq_mvpoly_t **polys, slong nvars,
-                                            slong npolys, slong npars,
-                                            const slong *degrees,
-                                            double density_ratio,
-                                            int homogeneous,
-                                            const fq_nmod_ctx_t ctx,
-                                            flint_rand_t state) {
-    
+static void generate_polynomial_system_mode(unified_mpoly_struct **polys, slong nvars, slong npolys,
+                                            slong npars, const slong *degrees, double density_ratio,
+                                            int homogeneous, const fq_nmod_ctx_t ctx,
+                                            flint_rand_t state)
+{
+
     if (degrees == NULL) {
         printf("Error: degrees array cannot be NULL\n");
         return;
     }
-    
-    *polys = (fq_mvpoly_t*) malloc(npolys * sizeof(fq_mvpoly_t));
+
+    *polys = (unified_mpoly_struct *)calloc(1, npolys * sizeof(unified_mpoly_struct));
     if (!*polys) {
         printf("[ERROR] Failed to allocate polynomial array\n");
         return;
@@ -1099,23 +1103,20 @@ static void generate_polynomial_system_mode(fq_mvpoly_t **polys, slong nvars,
                                         ctx, state);
         
     }
-    
 }
 
-void generate_polynomial_system(fq_mvpoly_t **polys, slong nvars, slong npolys,
-                               slong npars, const slong *degrees,
-                               double density_ratio,
-                               const fq_nmod_ctx_t ctx, flint_rand_t state) {
+void generate_polynomial_system(unified_mpoly_struct **polys, slong nvars, slong npolys,
+                                slong npars, const slong *degrees, double density_ratio,
+                                const fq_nmod_ctx_t ctx, flint_rand_t state)
+{
     generate_polynomial_system_mode(polys, nvars, npolys, npars, degrees,
                                     density_ratio, 0, ctx, state);
 }
 
-void generate_homogeneous_polynomial_system(fq_mvpoly_t **polys, slong nvars,
-                                            slong npolys, slong npars,
-                                            const slong *degrees,
-                                            double density_ratio,
-                                            const fq_nmod_ctx_t ctx,
-                                            flint_rand_t state) {
+void generate_homogeneous_polynomial_system(unified_mpoly_struct **polys, slong nvars, slong npolys,
+                                            slong npars, const slong *degrees, double density_ratio,
+                                            const fq_nmod_ctx_t ctx, flint_rand_t state)
+{
     generate_polynomial_system_mode(polys, nvars, npolys, npars, degrees,
                                     density_ratio, 1, ctx, state);
 }
@@ -1158,7 +1159,7 @@ void test_dixon_system(const char *test_name, slong nvars, slong npars,
     fmpz_clear(p_fmpz);
     
     // Generate polynomial system
-    fq_mvpoly_t *polys;
+    unified_mpoly_struct *polys;
     generate_polynomial_system(&polys, nvars, npolys, npars, 
                               degrees, density_ratio, ctx, state);
     
@@ -1166,19 +1167,19 @@ void test_dixon_system(const char *test_name, slong nvars, slong npars,
     printf("\nPolynomial system:\n");
     slong actual_total_terms = 0;
     for (slong i = 0; i < npolys; i++) {
-        printf("  p%ld (degree %ld): %ld terms", i, degrees[i], polys[i].nterms);
+        printf("  p%ld (degree %ld): %ld terms", i, degrees[i], dr_mpoly_length(&(polys[i])));
         if (polys[i].npars > 0) {
             printf(" (with %ld parameters)", polys[i].npars);
         }
         printf("\n");
-        actual_total_terms += polys[i].nterms;
+        actual_total_terms += dr_mpoly_length(&(polys[i]));
     }
     printf("System actual total terms: %ld (density: %.1f%%)\n", 
            actual_total_terms, (double)actual_total_terms / total_theoretical_terms * 100);
     
     // Compute Dixon resultant
-    fq_mvpoly_t result;
-    
+    unified_mpoly_struct result = {0};
+
     clock_t start = clock();
     fq_dixon_resultant(&result, polys, nvars, npars);
     clock_t end = clock();
@@ -1186,7 +1187,7 @@ void test_dixon_system(const char *test_name, slong nvars, slong npars,
     
     double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
     printf("Computation time: %.3f seconds\n", elapsed);
-    printf("Resultant: %ld terms", result.nterms);
+    printf("Resultant: %ld terms", dr_mpoly_length(&(result)));
     if (result.npars > 0) {
         printf(" with %ld parameters", result.npars);
     }
@@ -1195,7 +1196,7 @@ void test_dixon_system(const char *test_name, slong nvars, slong npars,
     // ========== DEGREE CHECKING CODE ==========
     
     // Calculate resultant degree
-    slong resultant_degree = fq_mvpoly_max_total_degree(&result);
+    slong resultant_degree = dr_mpoly_max_total_degree(&result);
     printf("Resultant total degree: %ld\n", resultant_degree);
     
     // Calculate expected degree bound (product of input degrees)
@@ -1218,17 +1219,17 @@ void test_dixon_system(const char *test_name, slong nvars, slong npars,
                            resultant_degree, algo_type, test_case_index);
     
     // ========== END DEGREE CHECKING CODE ==========
-    
-    if (result.nterms > 0 && result.nterms <= 10) {
+
+    if (dr_mpoly_length(&(result)) > 0 && dr_mpoly_length(&(result)) <= 10) {
         printf("  ");
-        fq_mvpoly_print(&result, "R");
+        dr_mpoly_print(&result, "R");
         printf("\n");
     }
-    
+
     // Cleanup
-    fq_mvpoly_clear(&result);
+    dr_mpoly_clear(&result);
     for (slong i = 0; i < npolys; i++) {
-        fq_mvpoly_clear(&polys[i]);
+        dr_mpoly_clear(&polys[i]);
     }
     free(polys);
     fq_nmod_ctx_clear(ctx);
@@ -1240,8 +1241,8 @@ static void test_dixon_system_quiet(const char *test_name, slong nvars, slong np
                                     int test_case_index) {
     fq_nmod_ctx_t ctx;
     fmpz_t p_fmpz;
-    fq_mvpoly_t *polys;
-    fq_mvpoly_t result;
+    unified_mpoly_struct *polys;
+    unified_mpoly_struct result = {0};
     slong resultant_degree;
     int algo_type;
     int saved_verbose_level = g_dixon_verbose_level;
@@ -1261,14 +1262,14 @@ static void test_dixon_system_quiet(const char *test_name, slong nvars, slong np
     g_dixon_verbose_level = saved_verbose_level;
     g_dixon_debug_mode = saved_debug_mode;
 
-    resultant_degree = fq_mvpoly_max_total_degree(&result);
+    resultant_degree = dr_mpoly_max_total_degree(&result);
     algo_type = (g_matrix_transpose_threshold == 0) ? 0 : 1;
     add_degree_check_result(test_name, nvars, npars, npolys, degrees,
                             resultant_degree, algo_type, test_case_index);
 
-    fq_mvpoly_clear(&result);
+    dr_mpoly_clear(&result);
     for (slong i = 0; i < npolys; i++) {
-        fq_mvpoly_clear(&polys[i]);
+        dr_mpoly_clear(&polys[i]);
     }
     free(polys);
     fq_nmod_ctx_clear(ctx);

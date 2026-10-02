@@ -74,13 +74,13 @@ static void dixon_mq_native_det(fq_nmod_poly_t out, nmod_poly_mat_t matrix,
 
 typedef fq_mq_compact_term dixon_prime_term;
 
-static slong dixon_projected_poly_matrix(fq_nmod_poly_mat_t out,
-    nmod_poly_mat_t *prime_out, fq_mvpoly_t *consume,
-    slong *rows, slong *cols, slong size, const fq_mvpoly_t *poly,
-    slong *term_rows, slong *term_cols)
+static slong dixon_projected_poly_matrix(fq_nmod_poly_mat_t out, nmod_poly_mat_t *prime_out,
+                                         unified_mpoly_struct *consume, slong *rows, slong *cols,
+                                         slong size, const unified_mpoly_struct *poly,
+                                         slong *term_rows, slong *term_cols)
 {
     double phase=get_wall_time();
-    slong workers=1, nt=poly->nterms;
+    slong workers = 1, nt = dr_mpoly_length(poly);
 #ifdef _OPENMP
     if(prime_out && nt>=65536 && !omp_in_parallel()) workers=omp_get_max_threads();
 #endif
@@ -101,9 +101,13 @@ static slong dixon_projected_poly_matrix(fq_nmod_poly_mat_t out,
         for(slong r=0;r<size;r++) minimum[r]=WORD_MAX;
         slong begin=(nt/workers)*w+FLINT_MIN(w,nt%workers);
         slong end=begin+nt/workers+(w<nt%workers);
-        for(slong t=begin;t<end;t++) if(term_rows[t]>=0) {
-            slong r=term_rows[t], d=poly->terms[t].par_exp?poly->terms[t].par_exp[0]:0;
-            minimum[r]=FLINT_MIN(minimum[r],d); count[r]++;
+        for (slong t = begin; t < end; t++) {
+            DR_MPOLY_TERM(term_1, poly, t);
+            if (term_rows[t] >= 0) {
+                slong r = term_rows[t], d = term_1.par_exp ? term_1.par_exp[0] : 0;
+                minimum[r] = FLINT_MIN(minimum[r], d);
+                count[r]++;
+            }
         }
     }
     for(slong r=0;r<size;r++) {
@@ -121,10 +125,13 @@ static slong dixon_projected_poly_matrix(fq_nmod_poly_mat_t out,
         for(slong c=0;c<size;c++) minimum[c]=WORD_MAX;
         slong begin=(nt/workers)*w+FLINT_MIN(w,nt%workers);
         slong end=begin+nt/workers+(w<nt%workers);
-        for(slong t=begin;t<end;t++) if(term_rows[t]>=0) {
-            slong c=term_cols[t];
-            slong d=(poly->terms[t].par_exp?poly->terms[t].par_exp[0]:0)-rp[term_rows[t]];
-            minimum[c]=FLINT_MIN(minimum[c],d);
+        for (slong t = begin; t < end; t++) {
+            DR_MPOLY_TERM(term_2, poly, t);
+            if (term_rows[t] >= 0) {
+                slong c = term_cols[t];
+                slong d = (term_2.par_exp ? term_2.par_exp[0] : 0) - rp[term_rows[t]];
+                minimum[c] = FLINT_MIN(minimum[c], d);
+            }
         }
     }
     slong content=0;
@@ -139,11 +146,15 @@ static slong dixon_projected_poly_matrix(fq_nmod_poly_mat_t out,
         for(slong i=0;i<size;i++) rmax[i]=cmax[i]=-1;
         slong begin=(nt/workers)*w+FLINT_MIN(w,nt%workers);
         slong end=begin+nt/workers+(w<nt%workers);
-        for(slong t=begin;t<end;t++) if(term_rows[t]>=0) {
-            slong r=term_rows[t],c=term_cols[t];
-            slong d=(poly->terms[t].par_exp?poly->terms[t].par_exp[0]:0)-rp[r]-cp[c];
-            FLINT_ASSERT(d>=0);
-            rmax[r]=FLINT_MAX(rmax[r],d); cmax[c]=FLINT_MAX(cmax[c],d);
+        for (slong t = begin; t < end; t++) {
+            DR_MPOLY_TERM(term_3, poly, t);
+            if (term_rows[t] >= 0) {
+                slong r = term_rows[t], c = term_cols[t];
+                slong d = (term_3.par_exp ? term_3.par_exp[0] : 0) - rp[r] - cp[c];
+                FLINT_ASSERT(d >= 0);
+                rmax[r] = FLINT_MAX(rmax[r], d);
+                cmax[c] = FLINT_MAX(cmax[c], d);
+            }
         }
     }
     for(slong i=0;i<size;i++) for(slong w=0;w<workers;w++) {
@@ -187,8 +198,10 @@ static slong dixon_projected_poly_matrix(fq_nmod_poly_mat_t out,
          * Consume serially: release each source allocation immediately after
          * packing it, instead of retaining all source terms until packing ends.
          * This also preserves per-row last-write order for duplicate terms. */
-        for(slong t=0;t<nt;t++) {
-            fq_monomial_t *term=consume->terms+t;
+        for (slong t = 0; t < nt; t++) {
+            DR_MPOLY_TERM(term_4, consume, t);
+
+            dr_mpoly_term_view *term = &term_4;
             if(term_rows[t]>=0) {
                 slong r=term_rows[t],c=term_cols[t];
                 slong d=(term->par_exp?term->par_exp[0]:0)-rp[r]-cp[c];
@@ -202,15 +215,13 @@ static slong dixon_projected_poly_matrix(fq_nmod_poly_mat_t out,
                     }
                 } else packed[write[r]++]=record;
             }
-            fq_nmod_clear(term->coeff,poly->ctx);
-            flint_free(term->var_exp); flint_free(term->par_exp);
         }
         if(capacity) for(slong r=0;r<size;r++) {
             memcpy(packed+write[r],staging+(size_t)r*capacity,used[r]*sizeof(*staging));
             write[r]+=used[r];
         }
         flint_free(staging); flint_free(used);
-        flint_free(consume->terms); consume->terms=NULL; consume->nterms=consume->alloc=0;
+        dr_mpoly_clear(consume);
         flint_free(write); flint_free(term_rows); flint_free(term_cols);
         dixon_debug_log("  Released source Dixon terms and term maps; allocating native prime-field matrix...\n");
         dixon_debug_log("  Step 2 direct pack/release: %.3fs (serial streaming)\n",get_wall_time()-phase);
@@ -251,7 +262,9 @@ static slong dixon_projected_poly_matrix(fq_nmod_poly_mat_t out,
         dixon_debug_log("  Step 2 direct buffer cleanup: %.3fs\n",get_wall_time()-phase);
     } else {
     slong *terms=flint_malloc(offset[size]*sizeof(slong));
-    for(slong t=0;t<poly->nterms;t++) if(term_rows[t]>=0) terms[write[term_rows[t]]++]=t;
+    for (slong t = 0; t < dr_mpoly_length(poly); t++)
+        if (term_rows[t] >= 0)
+            terms[write[term_rows[t]]++] = t;
     flint_free(write);
     fq_nmod_poly_mat_init(out,size,size,poly->ctx);
 #ifdef _OPENMP
@@ -266,15 +279,18 @@ static slong dixon_projected_poly_matrix(fq_nmod_poly_mat_t out,
             for(slong c=0;c<size;c++) maximum[c]=-1;
             for(slong i=offset[r];i<offset[r+1];i++) {
                 slong t=terms[i],c=term_cols[t];
-                slong d=(poly->terms[t].par_exp ? poly->terms[t].par_exp[0] : 0)-rp[r]-cp[c];
+                DR_MPOLY_TERM(term_5, poly, t);
+                slong d = (term_5.par_exp ? term_5.par_exp[0] : 0) - rp[r] - cp[c];
                 maximum[c]=FLINT_MAX(maximum[c],d);
             }
             for(slong c=0;c<size;c++) if(maximum[c]>=0)
                 fq_nmod_poly_fit_length(fq_nmod_poly_mat_entry(out,rmap[r],cmap[c]),maximum[c]+1,poly->ctx);
             for(slong i=offset[r];i<offset[r+1];i++) {
                 slong t=terms[i],c=term_cols[t];
-                slong d=(poly->terms[t].par_exp ? poly->terms[t].par_exp[0] : 0)-rp[r]-cp[c];
-                fq_nmod_poly_set_coeff(fq_nmod_poly_mat_entry(out,rmap[r],cmap[c]),d,poly->terms[t].coeff,poly->ctx);
+                DR_MPOLY_TERM(term_6, poly, t);
+                slong d = (term_6.par_exp ? term_6.par_exp[0] : 0) - rp[r] - cp[c];
+                fq_nmod_poly_set_coeff(fq_nmod_poly_mat_entry(out, rmap[r], cmap[c]), d,
+                                       term_6.coeff, poly->ctx);
             }
         }
         flint_free(maximum);

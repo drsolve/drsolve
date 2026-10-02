@@ -2,6 +2,7 @@
 /* unified_mpoly_interface.c - Implementation of unified multivariate polynomial interface */
 
 #include "unified_mpoly_interface.h"
+#include "zech_mpoly_access.h"
 extern int g_field_equation_reduction;
 
 /* ============================================================================
@@ -43,11 +44,11 @@ unified_mpoly_ctx_t unified_mpoly_ctx_init(slong nvars, const ordering_t ord, fi
         case FIELD_ID_FQ_ZECH:
             /* For Zech logarithm fields */
             if (field_ctx->ctx.zech_ctx) {
-                /* Use fq_zech_mpoly_ctx_init_deg for initialization */
-                mp_limb_t p = field_ctx->ctx.zech_ctx->fq_nmod_ctx->modulus->mod.n;
-                slong d = fq_zech_ctx_degree(field_ctx->ctx.zech_ctx);
-                fq_zech_mpoly_ctx_init_deg(GET_ZECH_CTX(ctx), nvars, ord, p, d);
-                // printf("Using Zech logarithm representation for field of size %lu\n", field_ctx->ctx.zech_ctx->qm1 + 1);
+                /* Preserve the caller's defining polynomial and Zech basis. */
+                fq_zech_mpoly_ctx_struct *z = GET_ZECH_CTX(ctx);
+                mpoly_ctx_init(z->minfo, nvars, ord);
+                fq_zech_ctx_init_modulus(
+                    z->fqctx, fq_nmod_ctx_modulus(field_ctx->ctx.zech_ctx->fq_nmod_ctx), "a");
             }
             break;
             
@@ -87,7 +88,7 @@ void unified_mpoly_ctx_clear(unified_mpoly_ctx_t ctx) {
    ============================================================================ */
 
 unified_mpoly_t unified_mpoly_init(unified_mpoly_ctx_t ctx) {
-    unified_mpoly_t poly = (unified_mpoly_t)malloc(sizeof(unified_mpoly_struct));
+    unified_mpoly_t poly = (unified_mpoly_t)calloc(1, sizeof(unified_mpoly_struct));
     if (!poly) return NULL;
     
     poly->field_id = ctx->field_ctx->field_id;
@@ -1048,96 +1049,7 @@ void unified_mpoly_set_coeff_ui(unified_mpoly_t poly, const field_elem_u *c,
             break;
             
         case FIELD_ID_FQ_ZECH:
-            {
-                /* Implement coefficient setting for fq_zech_mpoly */
-                fq_zech_t coeff;
-                fq_zech_ctx_struct *zech_field_ctx = ctx->field_ctx->ctx.zech_ctx;
-                fq_zech_init(coeff, zech_field_ctx);
-                
-                /* Convert field element to fq_zech format */
-                if (ctx->field_ctx->field_id == FIELD_ID_FQ_ZECH) {
-                    fq_zech_set(coeff, &c->fq_zech, zech_field_ctx);
-                } else {
-                    /* Convert from other field types through fq_nmod */
-                    fq_nmod_t fq_temp;
-                    fq_nmod_init(fq_temp, ctx->field_ctx->ctx.fq_ctx);
-                    field_elem_to_fq_nmod(fq_temp, c, ctx->field_ctx);
-                    fq_zech_set_fq_nmod(coeff, fq_temp, zech_field_ctx);
-                    fq_nmod_clear(fq_temp, ctx->field_ctx->ctx.fq_ctx);
-                }
-                
-                /* Build monomial x^exp with given coefficient */
-                fq_zech_mpoly_t monomial, temp_poly;
-                fq_zech_mpoly_init(monomial, GET_ZECH_CTX(ctx));
-                fq_zech_mpoly_init(temp_poly, GET_ZECH_CTX(ctx));
-                
-                /* Start with coefficient as constant term */
-                fq_zech_mpoly_set_fq_zech(monomial, coeff, GET_ZECH_CTX(ctx));
-                
-                /* Multiply by each variable raised to its exponent */
-                for (slong i = 0; i < ctx->nvars; i++) {
-                    if (exp[i] > 0) {
-                        fq_zech_mpoly_gen(temp_poly, i, GET_ZECH_CTX(ctx));
-                        if (exp[i] > 1) {
-                            fq_zech_mpoly_pow_ui(temp_poly, temp_poly, exp[i], GET_ZECH_CTX(ctx));
-                        }
-                        fq_zech_mpoly_mul(monomial, monomial, temp_poly, GET_ZECH_CTX(ctx));
-                    }
-                }
-                
-                /* Now we need to remove any existing term with the same exponent and add the new one */
-                /* First, create a polynomial with just the term to remove */
-                fq_zech_mpoly_t term_to_remove;
-                fq_zech_mpoly_init(term_to_remove, GET_ZECH_CTX(ctx));
-                
-                /* Extract the existing coefficient at this exponent */
-                /* We'll do this by creating the monomial and looking for it */
-                fq_zech_t one;
-                fq_zech_init(one, zech_field_ctx);
-                fq_zech_one(one, zech_field_ctx);
-                fq_zech_mpoly_set_fq_zech(term_to_remove, one, GET_ZECH_CTX(ctx));
-                
-                for (slong i = 0; i < ctx->nvars; i++) {
-                    if (exp[i] > 0) {
-                        fq_zech_mpoly_gen(temp_poly, i, GET_ZECH_CTX(ctx));
-                        if (exp[i] > 1) {
-                            fq_zech_mpoly_pow_ui(temp_poly, temp_poly, exp[i], GET_ZECH_CTX(ctx));
-                        }
-                        fq_zech_mpoly_mul(term_to_remove, term_to_remove, temp_poly, GET_ZECH_CTX(ctx));
-                    }
-                }
-                
-                /* Create result polynomial: original - old_term + new_term */
-                fq_zech_mpoly_t result;
-                fq_zech_mpoly_init(result, GET_ZECH_CTX(ctx));
-                fq_zech_mpoly_set(result, GET_ZECH_POLY(poly), GET_ZECH_CTX(ctx));
-                
-                /* The approach is: result = poly - term_to_remove + monomial */
-                /* But we need to find the coefficient first */
-                /* For now, let's use a simpler approach: rebuild without the term, then add */
-                
-                /* Clear the polynomial and rebuild it term by term */
-                /* This is not the most efficient but works correctly */
-                if (fq_zech_is_zero(coeff, zech_field_ctx)) {
-                    /* If coefficient is zero, we need to remove the term */
-                    /* We'll rebuild the polynomial without this term */
-                    /* For now, we'll just set to the original minus the term */
-                    fq_zech_mpoly_sub(GET_ZECH_POLY(poly), GET_ZECH_POLY(poly), term_to_remove, GET_ZECH_CTX(ctx));
-                } else {
-                    /* Add or replace the term */
-                    /* Simple approach: add the new monomial */
-                    /* This might create duplicate terms, but FLINT should combine them */
-                    fq_zech_mpoly_add(GET_ZECH_POLY(poly), GET_ZECH_POLY(poly), monomial, GET_ZECH_CTX(ctx));
-                }
-                
-                /* Clean up */
-                fq_zech_clear(coeff, zech_field_ctx);
-                fq_zech_clear(one, zech_field_ctx);
-                fq_zech_mpoly_clear(monomial, GET_ZECH_CTX(ctx));
-                fq_zech_mpoly_clear(temp_poly, GET_ZECH_CTX(ctx));
-                fq_zech_mpoly_clear(term_to_remove, GET_ZECH_CTX(ctx));
-                fq_zech_mpoly_clear(result, GET_ZECH_CTX(ctx));
-            }
+            dr_zech_set_coeff(GET_ZECH_POLY(poly), &c->fq_zech, exp, GET_ZECH_CTX(ctx));
             break;
             
         default:
@@ -1162,57 +1074,9 @@ void unified_mpoly_get_coeff_ui(field_elem_u *c, const unified_mpoly_t poly,
             c->nmod = nmod_mpoly_get_coeff_ui_ui(GET_NMOD_POLY(poly), exp,
                                                 GET_NMOD_CTX(ctx));
             break;
-            
-          case FIELD_ID_FQ_ZECH:
-            {
-              /* Implement coefficient extraction for fq_zech_mpoly */
-                fq_zech_ctx_struct *zech_field_ctx = ctx->field_ctx->ctx.zech_ctx;
-                fq_zech_init(&c->fq_zech, zech_field_ctx);
-                
-                /* Create the monomial x^exp to search for */
-                fq_zech_mpoly_t monomial, temp;
-                fq_zech_mpoly_init(monomial, GET_ZECH_CTX(ctx));
-                fq_zech_mpoly_init(temp, GET_ZECH_CTX(ctx));
-                
-                /* Build monomial with coefficient 1 */
-                fq_zech_t one;
-                fq_zech_init(one, zech_field_ctx);
-                fq_zech_one(one, zech_field_ctx);
-                fq_zech_mpoly_set_fq_zech(monomial, one, GET_ZECH_CTX(ctx));
-                
-                /* Multiply by each variable raised to its exponent */
-                for (slong i = 0; i < ctx->nvars; i++) {
-                    if (exp[i] > 0) {
-                        fq_zech_mpoly_gen(temp, i, GET_ZECH_CTX(ctx));
-                        if (exp[i] > 1) {
-                            fq_zech_mpoly_pow_ui(temp, temp, exp[i], GET_ZECH_CTX(ctx));
-                        }
-                        fq_zech_mpoly_mul(monomial, monomial, temp, GET_ZECH_CTX(ctx));
-                    }
-                }
-                
-                /* Method: evaluate poly at a point where only the term x^exp contributes */
-                /* This is complex, so instead we'll use a different approach */
-                
-                /* Alternative: Build a polynomial that extracts just this coefficient */
-                /* We can evaluate (poly * monomial^(-1)) at the point where all vars = 1 */
-                /* But this requires division which might not work well */
-                
-                /* Simpler approach: subtract all other terms and get what's left */
-                /* This is inefficient but works */
-                
-                /* For now, return zero - proper implementation would require */
-                /* iterating through the polynomial's terms */
-                fq_zech_zero(&c->fq_zech, zech_field_ctx);
-                
-                /* TODO: Implement proper term iteration for fq_zech_mpoly */
-                /* This would require access to the internal representation */
-                
-                /* Clean up */
-                fq_zech_clear(one, zech_field_ctx);
-                fq_zech_mpoly_clear(monomial, GET_ZECH_CTX(ctx));
-                fq_zech_mpoly_clear(temp, GET_ZECH_CTX(ctx));
-            }
+
+        case FIELD_ID_FQ_ZECH:
+            dr_zech_get_coeff(&c->fq_zech, GET_ZECH_POLY(poly), exp, GET_ZECH_CTX(ctx));
             break;
             
         default:
@@ -1339,10 +1203,23 @@ void unified_mpoly_scalar_mul_ui(unified_mpoly_t poly1, const unified_mpoly_t po
 
 void unified_mpoly_swap(unified_mpoly_t poly1, unified_mpoly_t poly2) {
     if (poly1 == poly2) return;
-    
-    unified_mpoly_struct temp = *poly1;
-    *poly1 = *poly2;
-    *poly2 = temp;
+
+    assert(poly1->field_id == poly2->field_id);
+    unified_mpoly_ctx_t ctx = poly1->ctx_ptr;
+    switch (poly1->field_id) {
+    case FIELD_ID_NMOD:
+        nmod_mpoly_swap(GET_NMOD_POLY(poly1), GET_NMOD_POLY(poly2), GET_NMOD_CTX(ctx));
+        break;
+    case FIELD_ID_FQ_ZECH:
+        fq_zech_mpoly_swap(GET_ZECH_POLY(poly1), GET_ZECH_POLY(poly2), GET_ZECH_CTX(ctx));
+        break;
+    default:
+        fq_nmod_mpoly_swap(GET_FQ_POLY(poly1), GET_FQ_POLY(poly2), GET_FQ_CTX(ctx));
+        break;
+    }
+    int canonical = poly1->canonical;
+    poly1->canonical = poly2->canonical;
+    poly2->canonical = canonical;
 }
 
 void unified_mpoly_set_fmpz(unified_mpoly_t poly, const fmpz_t c) {

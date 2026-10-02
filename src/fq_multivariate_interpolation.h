@@ -14,7 +14,7 @@
 #include <flint/fq_nmod.h>
 #include <string.h>
 #include <time.h>
-#include "fq_mvpoly.h"
+#include "dr_mpoly.h"
 #include "fq_mat_det.h"
 
 // OpenMP support (optional)
@@ -50,7 +50,7 @@ extern int g_dixon_verbose_level;
     } while (0)
 
 // Forward declaration
-//typedef struct fq_mvpoly_struct fq_mvpoly_t;
+// typedef struct dr_mpoly_struct unified_mpoly_struct;
 
 // Global timing statistics
 typedef struct {
@@ -67,9 +67,10 @@ typedef struct {
 } InterpolationStats;
 
 // Forward declarations
-void fq_mvpoly_init(fq_mvpoly_t *p, slong nvars, slong npars, const fq_nmod_ctx_t ctx);
-void fq_mvpoly_clear(fq_mvpoly_t *p);
-void fq_mvpoly_add_term(fq_mvpoly_t *p, const slong *var_exp, const slong *par_exp, const fq_nmod_t coeff);
+void dr_mpoly_init(unified_mpoly_struct *p, slong nvars, slong npars, const fq_nmod_ctx_t ctx);
+void dr_mpoly_clear(unified_mpoly_struct *p);
+void dr_mpoly_add_term(unified_mpoly_struct *p, const slong *var_exp, const slong *par_exp,
+                       const fq_nmod_t coeff);
 
 // Parallelization control functions
 void fq_interpolation_set_parallel(int use_parallel);
@@ -84,12 +85,9 @@ void print_interpolation_stats(void);
 double get_time(void);
 
 // Core optimization: batch matrix evaluation
-void fq_evaluate_matrix_at_point_batch(fq_nmod_mat_t result_mat,
-                                               fq_mvpoly_t **poly_matrix,
-                                               slong size,
-                                               const fq_nmod_t *var_vals,
-                                               const fq_nmod_t *param_vals,
-                                               const fq_nmod_ctx_t ctx);
+void fq_evaluate_matrix_at_point_batch(fq_nmod_mat_t result_mat, unified_mpoly_struct **poly_matrix,
+                                       slong size, const fq_nmod_t *var_vals,
+                                       const fq_nmod_t *param_vals, const fq_nmod_ctx_t ctx);
 
 // Divide-and-conquer approach for building product polynomials
 void fq_build_product_tree(fq_nmod_poly_t result, 
@@ -105,46 +103,32 @@ void fq_lagrange_interpolation_optimized(fq_nmod_poly_t result,
                                              const fq_nmod_ctx_t ctx);
 
 // Modified version of fq_tensor_interpolation_recursive_optimized with fixed timing
-void fq_tensor_interpolation_recursive_optimized(fq_mvpoly_t *result,
-                                                slong current_dim,
-                                                const fq_nmod_t **grids,
-                                                const slong *grid_sizes,
-                                                const fq_nmod_t *flat_values,
-                                                slong *value_offset,
-                                                slong total_dims,
-                                                const fq_nmod_ctx_t ctx);
+void fq_tensor_interpolation_recursive_optimized(unified_mpoly_struct *result, slong current_dim,
+                                                 const fq_nmod_t **grids, const slong *grid_sizes,
+                                                 const fq_nmod_t *flat_values, slong *value_offset,
+                                                 slong total_dims, const fq_nmod_ctx_t ctx);
 
-void fq_tensor_interpolation_all_vars_optimized(fq_mvpoly_t *result,
-                                               const fq_nmod_t **grids,
-                                               const fq_nmod_t *values,
-                                               const slong *grid_sizes,
-                                               slong nvars,
-                                               slong npars,
-                                               const fq_nmod_ctx_t ctx);
+void fq_tensor_interpolation_all_vars_optimized(unified_mpoly_struct *result,
+                                                const fq_nmod_t **grids, const fq_nmod_t *values,
+                                                const slong *grid_sizes, slong nvars, slong npars,
+                                                const fq_nmod_ctx_t ctx);
 
 int fq_generate_evaluation_points_optimized(fq_nmod_t **grids, slong *grid_sizes, 
                                            slong total_vars, slong *degrees, 
                                            const fq_nmod_ctx_t ctx);
 
-void fq_compute_det_degree_bounds_optimized(slong *bounds, fq_mvpoly_t **matrix, 
-                                           slong size, slong total_vars);
+void fq_compute_det_degree_bounds_optimized(slong *bounds, unified_mpoly_struct **matrix,
+                                            slong size, slong total_vars);
 
 // Main interpolation function with PARALLELIZATION ON POINTS
-void fq_compute_det_by_interpolation_optimized(fq_mvpoly_t *result,
-                                              fq_mvpoly_t **matrix,
-                                              slong size,
-                                              slong nvars,
-                                              slong npars,
-                                              const fq_nmod_ctx_t ctx,
-                                              slong *degree_bounds);
+void fq_compute_det_by_interpolation_optimized(unified_mpoly_struct *result,
+                                               unified_mpoly_struct **matrix, slong size,
+                                               slong nvars, slong npars, const fq_nmod_ctx_t ctx,
+                                               slong *degree_bounds);
 
 // Compatible interface wrapper
-void fq_compute_det_by_interpolation(fq_mvpoly_t *result,
-                                     fq_mvpoly_t **matrix,
-                                     slong size,
-                                     slong nvars,
-                                     slong npars,
-                                     const fq_nmod_ctx_t ctx,
+void fq_compute_det_by_interpolation(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
+                                     slong size, slong nvars, slong npars, const fq_nmod_ctx_t ctx,
                                      slong uniform_bound);
 
 #endif // FQ_MULTIVARIATE_INTERPOLATION_H

@@ -11,7 +11,7 @@ static void check_repair(const nmod_mat_t values, slong target,
                          const fq_nmod_ctx_t ctx, int expected, int degree_case)
 {
     slong nr = values->r, nc = values->c;
-    fq_mvpoly_t ***matrix = flint_malloc((size_t) nr * sizeof(*matrix));
+    unified_mpoly_struct ***matrix = flint_calloc(1, (size_t)nr * sizeof(*matrix));
     fq_nmod_t coeff, params[1];
     fq_nmod_init(coeff, ctx);
     fq_nmod_init(params[0], ctx);
@@ -21,14 +21,14 @@ static void check_repair(const nmod_mat_t values, slong target,
         matrix[i] = flint_calloc((size_t) nc, sizeof(**matrix));
         for (slong j = 0; j < nc; j++) {
             if (!nmod_mat_entry(values, i, j)) continue;
-            matrix[i][j] = flint_malloc(sizeof(fq_mvpoly_t));
-            fq_mvpoly_init(matrix[i][j], 1, 1, ctx);
+            matrix[i][j] = flint_calloc(1, sizeof(unified_mpoly_struct));
+            dr_mpoly_init(matrix[i][j], 1, 1, ctx);
             fq_nmod_set_ui(coeff, nmod_mat_entry(values, i, j), ctx);
             slong degree = ((degree_case == 1 && i == 1) ||
                             (degree_case == 2 && j == 1) ||
                             (degree_case == 3 && i == 0) ||
                             (degree_case == 4 && j == 0)) ? 8 : 0;
-            fq_mvpoly_add_term(matrix[i][j], &zero, &degree, coeff);
+            dr_mpoly_add_term(matrix[i][j], &zero, &degree, coeff);
         }
     }
     slong *rows = flint_malloc((size_t) target * sizeof(slong));
@@ -77,8 +77,8 @@ static void check_repair(const nmod_mat_t values, slong target,
     flint_free(co); flint_free(ro); flint_free(perm); flint_free(cols); flint_free(rows);
     for (slong i = 0; i < nr; i++) {
         for (slong j = 0; j < nc; j++) if (matrix[i][j]) {
-            fq_mvpoly_clear(matrix[i][j]);
-            flint_free(matrix[i][j]);
+                dr_mpoly_clear(matrix[i][j]);
+                flint_free(matrix[i][j]);
         }
         flint_free(matrix[i]);
     }
@@ -104,18 +104,20 @@ static void check_exchange_axes(flint_rand_t state, const fq_nmod_ctx_t ctx)
         for (slong i = 0; i < r; i++) for (slong j = 0; j < nc; j++)
             nmod_mat_entry(right, i, j) = j < nc - r ? n_randint(state, 65537) : j - (nc - r) == i;
         nmod_mat_mul(values, left, right);
-        fq_mvpoly_t ***matrix = flint_malloc((size_t) nr * sizeof(*matrix));
+        unified_mpoly_struct ***matrix = flint_calloc(1, (size_t)nr * sizeof(*matrix));
         fq_nmod_t coeff, params[1];
         fq_nmod_init(coeff, ctx); fq_nmod_init(params[0], ctx); fq_nmod_one(params[0], ctx);
         slong zero = 0;
         for (slong i = 0; i < nr; i++) {
             matrix[i] = flint_calloc((size_t) nc, sizeof(**matrix));
             for (slong j = 0; j < nc; j++) if (nmod_mat_entry(values, i, j)) {
-                matrix[i][j] = flint_malloc(sizeof(fq_mvpoly_t));
-                fq_mvpoly_init(matrix[i][j], 1, 1, ctx);
-                fq_nmod_set_ui(coeff, nmod_mat_entry(values, i, j), ctx);
-                slong degree = (trial % 2) ? n_randint(state, 4) + 4 * (i >= nr-r) + 4 * (j >= nc-r) : 0;
-                fq_mvpoly_add_term(matrix[i][j], &zero, &degree, coeff);
+                    matrix[i][j] = flint_calloc(1, sizeof(unified_mpoly_struct));
+                    dr_mpoly_init(matrix[i][j], 1, 1, ctx);
+                    fq_nmod_set_ui(coeff, nmod_mat_entry(values, i, j), ctx);
+                    slong degree = (trial % 2)
+                                       ? n_randint(state, 4) + 4 * (i >= nr - r) + 4 * (j >= nc - r)
+                                       : 0;
+                    dr_mpoly_add_term(matrix[i][j], &zero, &degree, coeff);
             }
         }
         dixon_eval_cache_t cache;
@@ -195,7 +197,8 @@ static void check_exchange_axes(flint_rand_t state, const fq_nmod_ctx_t ctx)
         flint_free(rhs); flint_free(vector); flint_free(cols); flint_free(rows);
         for (slong i = 0; i < nr; i++) {
             for (slong j = 0; j < nc; j++) if (matrix[i][j]) {
-                fq_mvpoly_clear(matrix[i][j]); flint_free(matrix[i][j]);
+                    dr_mpoly_clear(matrix[i][j]);
+                    flint_free(matrix[i][j]);
             }
             flint_free(matrix[i]);
         }
@@ -213,16 +216,16 @@ static void check_exchange_axes(flint_rand_t state, const fq_nmod_ctx_t ctx)
 static void check_large_repair_and_cache_limit(const fq_nmod_ctx_t ctx)
 {
     slong r = DIXON_DEGREE_BLOCK_THRESHOLD, n = 2 * r + 4, zero = 0;
-    fq_mvpoly_t entries[3];
+    unified_mpoly_struct entries[3] = {0};
     fq_nmod_t one, params[1];
     fq_nmod_init(one, ctx); fq_nmod_one(one, ctx);
     fq_nmod_init(params[0], ctx); fq_nmod_one(params[0], ctx);
     for (int i = 0; i < 3; i++) {
         slong degree = 8 * i;
-        fq_mvpoly_init(&entries[i], 1, 1, ctx);
-        fq_mvpoly_add_term(&entries[i], &zero, &degree, one);
+        dr_mpoly_init(&entries[i], 1, 1, ctx);
+        dr_mpoly_add_term(&entries[i], &zero, &degree, one);
     }
-    fq_mvpoly_t ***matrix = flint_malloc((size_t) n * sizeof(*matrix));
+    unified_mpoly_struct ***matrix = flint_calloc(1, (size_t)n * sizeof(*matrix));
     fq_index_degree_pair *order = flint_malloc((size_t) n * sizeof(*order));
     slong *rows = flint_malloc((size_t) r * sizeof(slong));
     slong *cols = flint_malloc((size_t) r * sizeof(slong));
@@ -282,8 +285,8 @@ static void check_large_repair_and_cache_limit(const fq_nmod_ctx_t ctx)
     flint_free(matrix);
 
     /* Two entirely dependent panels after a row-swapping first pivot. */
-    fq_mvpoly_t *sparse[12][4] = {{NULL}}, *transpose[4][12];
-    fq_mvpoly_t **small_rows[12], **small_cols[4];
+    unified_mpoly_struct *sparse[12][4] = {{NULL}}, *transpose[4][12];
+    unified_mpoly_struct **small_rows[12], **small_cols[4];
     for (slong i = 0; i < 12; i++) {
         sparse[i][i < 9 ? 3 : i-9] = &entries[0];
         small_rows[i] = sparse[i];
@@ -298,7 +301,7 @@ static void check_large_repair_and_cache_limit(const fq_nmod_ctx_t ctx)
 
     const size_t limit = ((size_t) 16 << 20) / sizeof(dixon_eval_slot_t);
     slong count = (slong) (limit / 2 + 1024);
-    fq_mvpoly_t **line = flint_calloc((size_t) count, sizeof(*line));
+    unified_mpoly_struct **line = flint_calloc((size_t)count, sizeof(*line));
     line[count-1] = &entries[0];
     dixon_eval_cache_t cache;
     dixon_eval_cache_init(&cache, &line, count, params, ctx);
@@ -308,7 +311,8 @@ static void check_large_repair_and_cache_limit(const fq_nmod_ctx_t ctx)
     assert(dixon_eval_cached(&cache, 0, count-1) == 1);
     assert(cache.count == limit / 2);
     dixon_eval_cache_clear(&cache); flint_free(line);
-    for (int i = 0; i < 3; i++) fq_mvpoly_clear(&entries[i]);
+    for (int i = 0; i < 3; i++)
+        dr_mpoly_clear(&entries[i]);
     fq_nmod_clear(params[0], ctx); fq_nmod_clear(one, ctx);
     puts("Large repair dispatch and bounded cache passed");
 }

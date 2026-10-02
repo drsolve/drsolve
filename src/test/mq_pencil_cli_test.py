@@ -44,7 +44,7 @@ for flags,active,inactive in [(['--mq-step1-simplex','--mq-step1-pencil'],'penci
 polys='x^2+y^2+t^2+1,x^2+x*y+t^2+2,y^2+x+t^2+3'
 logs=[]
 for flags in ([],['--mq-step1-pencil']):
-    p=subprocess.run([str(root/'drsolve'),*flags,'-v','2','--threads','1',polys,'x,y','101'],
+    p=subprocess.run([str(root/'drsolve'),*flags,'--method','0','-v','2','--threads','1',polys,'x,y','101'],
         cwd=root,text=True,capture_output=True,check=True)
     logs.append(p.stdout)
 assert 'parameter coefficient matrix is rank deficient' in logs[1]

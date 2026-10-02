@@ -56,30 +56,32 @@ static void split_equation_string(const char *equation_str, char **lhs_str, char
 }
 
 /* Extract main variable information from left-hand side expression */
-static void extract_main_variable_from_lhs(const fq_mvpoly_t *lhs, 
-                                   char **main_var_name, 
-                                   slong *main_var_degree,
-                                   char **var_names_hint) {
+static void extract_main_variable_from_lhs(const unified_mpoly_struct *lhs, char **main_var_name,
+                                           slong *main_var_degree, char **var_names_hint)
+{
     *main_var_name = NULL;
     *main_var_degree = 0;
     
     /* Find highest degree single variable term */
     slong max_degree = 0;
     slong main_var_idx = -1;
-    
-    for (slong t = 0; t < lhs->nterms; t++) {
-        if (!lhs->terms[t].var_exp) continue;
-        
+
+    for (slong t = 0; t < dr_mpoly_length(lhs); t++) {
+        DR_MPOLY_TERM(term_1, lhs, t);
+
+        if (!term_1.var_exp)
+            continue;
+
         /* Check this term, find highest degree single variable term */
         slong single_var_idx = -1;
         slong single_var_degree = 0;
         int is_single_var = 1;
         
         for (slong v = 0; v < lhs->nvars; v++) {
-            if (lhs->terms[t].var_exp[v] > 0) {
+            if (term_1.var_exp[v] > 0) {
                 if (single_var_idx == -1) {
                     single_var_idx = v;
-                    single_var_degree = lhs->terms[t].var_exp[v];
+                    single_var_degree = term_1.var_exp[v];
                 } else {
                     /* More than one variable */
                     is_single_var = 0;
@@ -89,22 +91,22 @@ static void extract_main_variable_from_lhs(const fq_mvpoly_t *lhs,
         }
         
         /* Check parameters (should be no parameters in single variable terms on left side) */
-        if (is_single_var && lhs->terms[t].par_exp) {
+        if (is_single_var && term_1.par_exp) {
             for (slong p = 0; p < lhs->npars; p++) {
-                if (lhs->terms[t].par_exp[p] > 0) {
+                if (term_1.par_exp[p] > 0) {
                     is_single_var = 0;
                     break;
                 }
             }
         }
-        
+
         /* If single variable term with higher degree, update main variable */
         if (is_single_var && single_var_degree > max_degree) {
             max_degree = single_var_degree;
             main_var_idx = single_var_idx;
         }
     }
-    
+
     if (main_var_idx >= 0) {
         *main_var_degree = max_degree;
         
@@ -174,8 +176,8 @@ static void parse_equation_generator(equation_info_t *eq_info,
                                   &eq_info->main_var_degree, var_names_hint);
     
     /* Build standard form: lhs - rhs */
-    fq_mvpoly_sub(&eq_info->standard, &eq_info->lhs, &eq_info->rhs);
-    
+    dr_mpoly_sub(&eq_info->standard, &eq_info->lhs, &eq_info->rhs);
+
     DEBUG_PRINT_R("Equation parsing complete:\n");
     DEBUG_PRINT_R("  Main variable: %s^%ld\n", 
            eq_info->main_var_name ? eq_info->main_var_name : "unknown", 
@@ -1483,10 +1485,11 @@ void compute_fq_nmod_det_with_triangular_reduction(fq_nmod_mpoly_t det,
     compute_fq_nmod_det_with_triangular_reduction_with_names(det, matrix, size, ideal, NULL);
 }
 
-static void reduce_fq_mvpoly_with_triangular_ideal(fq_mvpoly_t *result,
-                                                  const fq_mvpoly_t *poly,
+static void reduce_dr_mpoly_with_triangular_ideal(unified_mpoly_struct *result,
+                                                  const unified_mpoly_struct *poly,
                                                   const unified_triangular_ideal_t *ideal,
-                                                  char **current_var_names) {
+                                                  char **current_var_names)
+{
     slong current_nvars = poly->npars;
     char **complete_var_names = (char**) malloc(current_nvars * sizeof(char*));
 
@@ -1507,20 +1510,20 @@ static void reduce_fq_mvpoly_with_triangular_ideal(fq_mvpoly_t *result,
     if (ideal->is_prime_field) {
         nmod_mpoly_t reduced_poly;
         nmod_mpoly_init(reduced_poly, reduced_ideal.ctx.nmod_ctx);
-        fq_mvpoly_to_nmod_mpoly(reduced_poly, poly, reduced_ideal.ctx.nmod_ctx);
+        dr_mpoly_to_nmod_mpoly(reduced_poly, poly, reduced_ideal.ctx.nmod_ctx);
         triangular_ideal_reduce_nmod_mpoly_with_names(reduced_poly, &reduced_ideal,
                                                       complete_var_names);
-        nmod_mpoly_to_fq_mvpoly(result, reduced_poly, 0, current_nvars,
-                                reduced_ideal.ctx.nmod_ctx, ideal->field_ctx);
+        nmod_mpoly_to_dr_mpoly(result, reduced_poly, 0, current_nvars, reduced_ideal.ctx.nmod_ctx,
+                               ideal->field_ctx);
         nmod_mpoly_clear(reduced_poly, reduced_ideal.ctx.nmod_ctx);
     } else {
         fq_nmod_mpoly_t reduced_poly;
         fq_nmod_mpoly_init(reduced_poly, reduced_ideal.ctx.fq_ctx);
-        fq_mvpoly_to_fq_nmod_mpoly(reduced_poly, poly, reduced_ideal.ctx.fq_ctx);
+        dr_mpoly_to_fq_nmod_mpoly(reduced_poly, poly, reduced_ideal.ctx.fq_ctx);
         triangular_ideal_reduce_fq_nmod_mpoly_with_names(reduced_poly, &reduced_ideal,
                                                          complete_var_names);
-        fq_nmod_mpoly_to_fq_mvpoly(result, reduced_poly, 0, current_nvars,
-                                   reduced_ideal.ctx.fq_ctx, ideal->field_ctx);
+        fq_nmod_mpoly_to_dr_mpoly(result, reduced_poly, 0, current_nvars, reduced_ideal.ctx.fq_ctx,
+                                  ideal->field_ctx);
         fq_nmod_mpoly_clear(reduced_poly, reduced_ideal.ctx.fq_ctx);
     }
 
@@ -1534,10 +1537,11 @@ static void reduce_fq_mvpoly_with_triangular_ideal(fq_mvpoly_t *result,
     free(complete_var_names);
 }
 
-static void reduce_fq_mvpoly_full_with_triangular_ideal(fq_mvpoly_t *result,
-                                                       const fq_mvpoly_t *poly,
+static void reduce_dr_mpoly_full_with_triangular_ideal(unified_mpoly_struct *result,
+                                                       const unified_mpoly_struct *poly,
                                                        const unified_triangular_ideal_t *ideal,
-                                                       char **current_var_names) {
+                                                       char **current_var_names)
+{
     slong current_nvars = poly->nvars + poly->npars;
     char **complete_var_names = (char**) malloc(current_nvars * sizeof(char*));
 
@@ -1558,20 +1562,20 @@ static void reduce_fq_mvpoly_full_with_triangular_ideal(fq_mvpoly_t *result,
     if (ideal->is_prime_field) {
         nmod_mpoly_t reduced_poly;
         nmod_mpoly_init(reduced_poly, reduced_ideal.ctx.nmod_ctx);
-        fq_mvpoly_to_nmod_mpoly(reduced_poly, poly, reduced_ideal.ctx.nmod_ctx);
+        dr_mpoly_to_nmod_mpoly(reduced_poly, poly, reduced_ideal.ctx.nmod_ctx);
         triangular_ideal_reduce_nmod_mpoly_with_names(reduced_poly, &reduced_ideal,
                                                       complete_var_names);
-        nmod_mpoly_to_fq_mvpoly(result, reduced_poly, poly->nvars, poly->npars,
-                                reduced_ideal.ctx.nmod_ctx, ideal->field_ctx);
+        nmod_mpoly_to_dr_mpoly(result, reduced_poly, poly->nvars, poly->npars,
+                               reduced_ideal.ctx.nmod_ctx, ideal->field_ctx);
         nmod_mpoly_clear(reduced_poly, reduced_ideal.ctx.nmod_ctx);
     } else {
         fq_nmod_mpoly_t reduced_poly;
         fq_nmod_mpoly_init(reduced_poly, reduced_ideal.ctx.fq_ctx);
-        fq_mvpoly_to_fq_nmod_mpoly(reduced_poly, poly, reduced_ideal.ctx.fq_ctx);
+        dr_mpoly_to_fq_nmod_mpoly(reduced_poly, poly, reduced_ideal.ctx.fq_ctx);
         triangular_ideal_reduce_fq_nmod_mpoly_with_names(reduced_poly, &reduced_ideal,
                                                          complete_var_names);
-        fq_nmod_mpoly_to_fq_mvpoly(result, reduced_poly, poly->nvars, poly->npars,
-                                   reduced_ideal.ctx.fq_ctx, ideal->field_ctx);
+        fq_nmod_mpoly_to_dr_mpoly(result, reduced_poly, poly->nvars, poly->npars,
+                                  reduced_ideal.ctx.fq_ctx, ideal->field_ctx);
         fq_nmod_mpoly_clear(reduced_poly, reduced_ideal.ctx.fq_ctx);
     }
 
@@ -1586,16 +1590,15 @@ static void reduce_fq_mvpoly_full_with_triangular_ideal(fq_mvpoly_t *result,
 }
 
 /* Simplified and safer matrix conversion with timeout protection */
-void compute_det_with_reduction_from_mvpoly(fq_mvpoly_t *result,
-                                           fq_mvpoly_t **matrix,
-                                           slong size,
-                                           const unified_triangular_ideal_t *ideal,
-                                           char **current_var_names,
-                                           det_method_t method) {
+void compute_det_with_reduction_from_mvpoly(unified_mpoly_struct *result,
+                                            unified_mpoly_struct **matrix, slong size,
+                                            const unified_triangular_ideal_t *ideal,
+                                            char **current_var_names, det_method_t method)
+{
     DEBUG_PRINT_R("Computing determinant with ideal reduction (matrix size: %ld x %ld)\n", size, size);
     
     if (size == 0) {
-        fq_mvpoly_init(result, 0, 0, ideal->field_ctx);
+        dr_mpoly_init(result, 0, 0, ideal->field_ctx);
         return;
     }
     
@@ -1619,12 +1622,11 @@ void compute_det_with_reduction_from_mvpoly(fq_mvpoly_t *result,
                                current_nvars, ideal->field_ctx);
     
     if (method != DET_METHOD_RECURSIVE) {
-        fq_mvpoly_t unreduced_result;
+        unified_mpoly_struct unreduced_result = {0};
         compute_fq_coefficient_matrix_det(&unreduced_result, matrix, size, current_nvars,
                                           ideal->field_ctx, method, 0);
-        reduce_fq_mvpoly_with_triangular_ideal(result, &unreduced_result, ideal,
-                                               current_var_names);
-        fq_mvpoly_clear(&unreduced_result);
+        reduce_dr_mpoly_with_triangular_ideal(result, &unreduced_result, ideal, current_var_names);
+        dr_mpoly_clear(&unreduced_result);
 
         for (slong i = 0; i < current_nvars; i++) {
             if (!current_var_names || complete_var_names[i] != current_var_names[i]) {
@@ -1646,24 +1648,26 @@ void compute_det_with_reduction_from_mvpoly(fq_mvpoly_t *result,
             for (slong j = 0; j < size; j++) {
                 nmod_mpoly_init(&nmod_matrix[i][j], reduced_ideal.ctx.nmod_ctx);
                 nmod_mpoly_zero(&nmod_matrix[i][j], reduced_ideal.ctx.nmod_ctx);
-                
-                /* Convert fq_mvpoly to nmod_mpoly - SIMPLIFIED AND SAFER */
+
+                /* Convert dr_mpoly to nmod_mpoly - SIMPLIFIED AND SAFER */
                 DEBUG_PRINT_R("Converting matrix[%ld][%ld] with %ld terms...\n", i, j, matrix[i][j].nterms);
                 
                 /* Process each term with safety checks */
-                for (slong t = 0; t < matrix[i][j].nterms && t < 10000; t++) { /* Limit terms to prevent infinite loops */
+                for (slong t = 0; t < dr_mpoly_length(&(matrix[i][j])) && t < 10000; t++) {
+                    DR_MPOLY_TERM(term_2, &(matrix[i][j]), t);
+                    /* Limit terms to prevent infinite loops */
                     /* Get coefficient as mp_limb_t */
                     mp_limb_t coeff = 0;
                     
                     /* For prime field, extract the coefficient safely */
-                    if (fq_nmod_is_one(matrix[i][j].terms[t].coeff, ideal->field_ctx)) {
+                    if (fq_nmod_is_one(term_2.coeff, ideal->field_ctx)) {
                         coeff = 1;
-                    } else if (!fq_nmod_is_zero(matrix[i][j].terms[t].coeff, ideal->field_ctx)) {
+                    } else if (!fq_nmod_is_zero(term_2.coeff, ideal->field_ctx)) {
                         /* Extract coefficient value - for prime field, it's the constant term */
                         fq_nmod_t temp;
                         fq_nmod_init(temp, ideal->field_ctx);
-                        fq_nmod_set(temp, matrix[i][j].terms[t].coeff, ideal->field_ctx);
-                        
+                        fq_nmod_set(temp, term_2.coeff, ideal->field_ctx);
+
                         /* For prime field (degree 1), coefficient is directly the value */
                         nmod_poly_struct *p = &temp[0];
                         if (p->length > 0) {
@@ -1672,17 +1676,17 @@ void compute_det_with_reduction_from_mvpoly(fq_mvpoly_t *result,
                         
                         fq_nmod_clear(temp, ideal->field_ctx);
                     }
-                    
+
                     /* Build exponent vector for nmod_mpoly */
                     ulong *exp = (ulong*) flint_calloc(current_nvars, sizeof(ulong));
                     
                     /* Copy parameter exponents - these become the variables */
-                    if (matrix[i][j].terms[t].par_exp) {
+                    if (term_2.par_exp) {
                         for (slong v = 0; v < matrix[i][j].npars && v < current_nvars; v++) {
-                            exp[v] = matrix[i][j].terms[t].par_exp[v];
+                            exp[v] = term_2.par_exp[v];
                         }
                     }
-                    
+
                     /* Add term if coefficient is non-zero */
                     if (coeff != 0) {
                         nmod_mpoly_t temp;
@@ -1694,7 +1698,7 @@ void compute_det_with_reduction_from_mvpoly(fq_mvpoly_t *result,
                     
                     flint_free(exp);
                 }
-                
+
                 DEBUG_PRINT_R("  Converted to %ld terms\n", nmod_mpoly_length(&nmod_matrix[i][j], reduced_ideal.ctx.nmod_ctx));
             }
         }
@@ -1849,8 +1853,9 @@ void compute_det_with_reduction_from_mvpoly(fq_mvpoly_t *result,
         DEBUG_PRINT_R("Determinant computation time: %.3f seconds\n", (double)(end - start) / CLOCKS_PER_SEC);
         
         /* Convert result back - result has 0 vars and npars parameters */
-        nmod_mpoly_to_fq_mvpoly(result, det, 0, current_nvars, reduced_ideal.ctx.nmod_ctx, ideal->field_ctx);
-        
+        nmod_mpoly_to_dr_mpoly(result, det, 0, current_nvars, reduced_ideal.ctx.nmod_ctx,
+                               ideal->field_ctx);
+
         /* Cleanup */
         nmod_mpoly_clear(det, reduced_ideal.ctx.nmod_ctx);
         for (slong i = 0; i < size; i++) {
@@ -1872,30 +1877,31 @@ void compute_det_with_reduction_from_mvpoly(fq_mvpoly_t *result,
             for (slong j = 0; j < size; j++) {
                 fq_nmod_mpoly_init(&fq_matrix[i][j], reduced_ideal.ctx.fq_ctx);
                 fq_nmod_mpoly_zero(&fq_matrix[i][j], reduced_ideal.ctx.fq_ctx);
-                
-                /* Convert fq_mvpoly to fq_nmod_mpoly */
+
+                /* Convert dr_mpoly to fq_nmod_mpoly */
                 DEBUG_PRINT_R("Converting matrix[%ld][%ld] with %ld terms...\n", i, j, matrix[i][j].nterms);
                 
                 /* Process each term */
-                for (slong t = 0; t < matrix[i][j].nterms && t < 10000; t++) {
+                for (slong t = 0; t < dr_mpoly_length(&(matrix[i][j])) && t < 10000; t++) {
+                    DR_MPOLY_TERM(term_3, &(matrix[i][j]), t);
+
                     /* Build exponent vector for fq_nmod_mpoly */
                     ulong *exp = (ulong*) flint_calloc(current_nvars, sizeof(ulong));
                     
                     /* Copy parameter exponents - these become the variables */
-                    if (matrix[i][j].terms[t].par_exp) {
+                    if (term_3.par_exp) {
                         for (slong v = 0; v < matrix[i][j].npars && v < current_nvars; v++) {
-                            exp[v] = matrix[i][j].terms[t].par_exp[v];
+                            exp[v] = term_3.par_exp[v];
                         }
                     }
-                    
+
                     /* Set coefficient */
-                    fq_nmod_mpoly_set_coeff_fq_nmod_ui(&fq_matrix[i][j], 
-                                                       matrix[i][j].terms[t].coeff, 
-                                                       exp, reduced_ideal.ctx.fq_ctx);
-                    
+                    fq_nmod_mpoly_set_coeff_fq_nmod_ui(&fq_matrix[i][j], term_3.coeff, exp,
+                                                       reduced_ideal.ctx.fq_ctx);
+
                     flint_free(exp);
                 }
-                
+
                 DEBUG_PRINT_R("  Converted to %ld terms\n", 
                        fq_nmod_mpoly_length(&fq_matrix[i][j], reduced_ideal.ctx.fq_ctx));
             }
@@ -1933,8 +1939,9 @@ void compute_det_with_reduction_from_mvpoly(fq_mvpoly_t *result,
         DEBUG_PRINT_R("Determinant computation time: %.3f seconds\n", (double)(end - start) / CLOCKS_PER_SEC);
         
         /* Convert result back */
-        fq_nmod_mpoly_to_fq_mvpoly(result, det, 0, current_nvars, reduced_ideal.ctx.fq_ctx, ideal->field_ctx);
-        
+        fq_nmod_mpoly_to_dr_mpoly(result, det, 0, current_nvars, reduced_ideal.ctx.fq_ctx,
+                                  ideal->field_ctx);
+
         /* Cleanup */
         fq_nmod_mpoly_clear(det, reduced_ideal.ctx.fq_ctx);
         for (slong i = 0; i < size; i++) {
@@ -1962,9 +1969,9 @@ void compute_det_with_reduction_from_mvpoly(fq_mvpoly_t *result,
 void equation_info_init(equation_info_t *eq, slong nvars, slong npars, const fq_nmod_ctx_t ctx) {
     eq->main_var_name = NULL;
     eq->main_var_degree = 0;
-    fq_mvpoly_init(&eq->lhs, nvars, npars, ctx);
-    fq_mvpoly_init(&eq->rhs, nvars, npars, ctx);
-    fq_mvpoly_init(&eq->standard, nvars, npars, ctx);
+    dr_mpoly_init(&eq->lhs, nvars, npars, ctx);
+    dr_mpoly_init(&eq->rhs, nvars, npars, ctx);
+    dr_mpoly_init(&eq->standard, nvars, npars, ctx);
 }
 
 /* Clear equation information */
@@ -1973,9 +1980,9 @@ void equation_info_clear(equation_info_t *eq) {
         free(eq->main_var_name);
         eq->main_var_name = NULL;
     }
-    fq_mvpoly_clear(&eq->lhs);
-    fq_mvpoly_clear(&eq->rhs);
-    fq_mvpoly_clear(&eq->standard);
+    dr_mpoly_clear(&eq->lhs);
+    dr_mpoly_clear(&eq->rhs);
+    dr_mpoly_clear(&eq->standard);
 }
 
 /* Add generator in equation format to the ideal */
@@ -2029,10 +2036,10 @@ void unified_triangular_ideal_add_generator_equation_format(unified_triangular_i
     
     /* Convert and store generator (using standard form) */
     if (ideal->is_prime_field) {
-        fq_mvpoly_to_nmod_mpoly((nmod_mpoly_struct*)ideal->generators[ideal->num_gens], 
+        dr_mpoly_to_nmod_mpoly((nmod_mpoly_struct *)ideal->generators[ideal->num_gens],
                                &eq_info.standard, ideal->ctx.nmod_ctx);
     } else {
-        fq_mvpoly_to_fq_nmod_mpoly((fq_nmod_mpoly_struct*)ideal->generators[ideal->num_gens], 
+        dr_mpoly_to_fq_nmod_mpoly((fq_nmod_mpoly_struct *)ideal->generators[ideal->num_gens],
                                   &eq_info.standard, ideal->ctx.fq_ctx);
     }
     
@@ -2219,16 +2226,16 @@ char* dixon_with_ideal_reduction(const char **poly_strings, slong num_polys,
     
     /* First pass: parse to identify any additional parameters in polynomials */
     for (slong i = 0; i < num_polys; i++) {
-        fq_mvpoly_t temp;
-        fq_mvpoly_init(&temp, num_elim_vars, state.max_pars, ctx);
-        
+        unified_mpoly_struct temp = {0};
+        dr_mpoly_init(&temp, num_elim_vars, state.max_pars, ctx);
+
         state.input = poly_strings[i];
         state.pos = 0;
         state.len = strlen(poly_strings[i]);
         next_token(&state);
         
         parse_expression(&state, &temp);
-        fq_mvpoly_clear(&temp);
+        dr_mpoly_clear(&temp);
     }
     
     /* Build complete variable list: elimination variables + parameters */
@@ -2258,11 +2265,12 @@ char* dixon_with_ideal_reduction(const char **poly_strings, slong num_polys,
     DEBUG_PRINT_R("\n=== END DEBUG ===\n\n");
     
     /* Parse polynomials again with correct context */
-    fq_mvpoly_t *polys = (fq_mvpoly_t*) malloc(num_polys * sizeof(fq_mvpoly_t));
-    
+    unified_mpoly_struct *polys =
+        (unified_mpoly_struct *)calloc(1, num_polys * sizeof(unified_mpoly_struct));
+
     for (slong i = 0; i < num_polys; i++) {
-        fq_mvpoly_init(&polys[i], num_elim_vars, state.npars, ctx);
-        
+        dr_mpoly_init(&polys[i], num_elim_vars, state.npars, ctx);
+
         state.input = poly_strings[i];
         state.pos = 0;
         state.len = strlen(poly_strings[i]);
@@ -2277,28 +2285,26 @@ char* dixon_with_ideal_reduction(const char **poly_strings, slong num_polys,
 
     /* Reduce each input polynomial once before Step 1. */
     for (slong i = 0; i < num_polys; i++) {
-        fq_mvpoly_t reduced_poly;
-        reduce_fq_mvpoly_full_with_triangular_ideal(&reduced_poly, &polys[i], ideal,
-                                                    all_var_names);
-        fq_mvpoly_clear(&polys[i]);
-        polys[i] = reduced_poly;
+        unified_mpoly_struct reduced_poly = {0};
+        reduce_dr_mpoly_full_with_triangular_ideal(&reduced_poly, &polys[i], ideal, all_var_names);
+        dr_mpoly_move(&polys[i], &reduced_poly);
     }
     
     /* Build cancellation matrix */
     if (g_dixon_verbose_level >= 1) printf("\nStep 1: Build Dixon polynomial\n");
     clock_t step1_start = clock();
     double step1_wall_start = get_wall_time();
-    fq_mvpoly_t **M_mvpoly;
+    unified_mpoly_struct **M_mvpoly;
     if (g_dixon_verbose_level >= 2) printf("Build Cancellation Matrix\n");
-    build_fq_cancellation_matrix_mvpoly(&M_mvpoly, polys, num_elim_vars, state.npars);
-    
+    build_fq_cancellation_matrix(&M_mvpoly, polys, num_elim_vars, state.npars);
+
     /* Perform row operations */
-    fq_mvpoly_t **modified_M_mvpoly;
+    unified_mpoly_struct **modified_M_mvpoly;
     if (g_dixon_verbose_level >= 2) printf("Perform Matrix Row Operations\n");
-    perform_fq_matrix_row_operations_mvpoly(&modified_M_mvpoly, &M_mvpoly, num_elim_vars, state.npars);
-    
+    perform_fq_matrix_row_operations(&modified_M_mvpoly, &M_mvpoly, num_elim_vars, state.npars);
+
     /* Compute determinant of modified matrix */
-    fq_mvpoly_t d_poly;
+    unified_mpoly_struct d_poly = {0};
     det_method_t step1_method = DET_METHOD_RECURSIVE;
     if (dixon_global_method_step1 != -1) {
         step1_method = dixon_global_method_step1;
@@ -2309,10 +2315,10 @@ char* dixon_with_ideal_reduction(const char **poly_strings, slong num_polys,
     }
     compute_fq_cancel_matrix_det(&d_poly, modified_M_mvpoly, num_elim_vars, state.npars,
                                  step1_method);
-    if (g_dixon_verbose_level >= 1 && d_poly.nterms <= 100) {
-        printf("Dixon polynomial: %ld terms\n", d_poly.nterms);
+    if (g_dixon_verbose_level >= 1 && dr_mpoly_length(&(d_poly)) <= 100) {
+        printf("Dixon polynomial: %ld terms\n", dr_mpoly_length(&(d_poly)));
     } else if (g_dixon_verbose_level >= 1) {
-        printf("Dixon polynomial: %ld terms (not shown)\n", d_poly.nterms);
+        printf("Dixon polynomial: %ld terms (not shown)\n", dr_mpoly_length(&(d_poly)));
     }
     dixon_maybe_print_step_method_time("Step 1",
                                        step1_method,
@@ -2320,9 +2326,9 @@ char* dixon_with_ideal_reduction(const char **poly_strings, slong num_polys,
                                        get_wall_time() - step1_wall_start);
     
     /* Extract coefficient matrix */
-    fq_mvpoly_t **coeff_matrix = NULL;
-    slong *row_indices = (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
-    slong *col_indices = (slong*) flint_malloc(d_poly.nterms * sizeof(slong));
+    unified_mpoly_struct **coeff_matrix = NULL;
+    slong *row_indices = (slong *)flint_malloc(dr_mpoly_length(&(d_poly)) * sizeof(slong));
+    slong *col_indices = (slong *)flint_malloc(dr_mpoly_length(&(d_poly)) * sizeof(slong));
     slong matrix_size = 0;
     
     extract_fq_coefficient_matrix_from_dixon(&coeff_matrix, NULL,
@@ -2334,16 +2340,16 @@ char* dixon_with_ideal_reduction(const char **poly_strings, slong num_polys,
     /* Reduce each coefficient-matrix entry once before Step 4. */
     for (slong i = 0; i < matrix_size; i++) {
         for (slong j = 0; j < matrix_size; j++) {
-            fq_mvpoly_t reduced_entry;
-            reduce_fq_mvpoly_with_triangular_ideal(&reduced_entry, &coeff_matrix[i][j], ideal,
-                                                   state.par_names);
-            fq_mvpoly_clear(&coeff_matrix[i][j]);
+            unified_mpoly_struct reduced_entry = {0};
+            reduce_dr_mpoly_with_triangular_ideal(&reduced_entry, &coeff_matrix[i][j], ideal,
+                                                  state.par_names);
+            dr_mpoly_clear(&coeff_matrix[i][j]);
             coeff_matrix[i][j] = reduced_entry;
         }
     }
     
     /* Compute determinant with ideal reduction */
-    fq_mvpoly_t result_poly;
+    unified_mpoly_struct result_poly = {0};
     if (matrix_size > 0) {
         clock_t step4_start = clock();
         double step4_wall_start = get_wall_time();
@@ -2371,41 +2377,41 @@ char* dixon_with_ideal_reduction(const char **poly_strings, slong num_polys,
         /* Cleanup coefficient matrix */
         for (slong i = 0; i < matrix_size; i++) {
             for (slong j = 0; j < matrix_size; j++) {
-                fq_mvpoly_clear(&coeff_matrix[i][j]);
+                dr_mpoly_clear(&coeff_matrix[i][j]);
             }
             flint_free(coeff_matrix[i]);
         }
         flint_free(coeff_matrix);
     } else {
-        fq_mvpoly_init(&result_poly, 0, state.npars, ctx);
+        dr_mpoly_init(&result_poly, 0, state.npars, ctx);
         printf("Warning: Empty coefficient matrix, resultant is 0\n");
     }
-    fq_mvpoly_make_monic(&result_poly);
-    
+    dr_mpoly_make_monic(&result_poly);
+
     /* Convert result to string */
     print_resultant_summary(&result_poly, state.par_names, state.npars);
     find_and_print_roots_of_univariate_resultant(&result_poly, &state);
-    char *result = fq_mvpoly_to_string(&result_poly, state.par_names, state.generator_name);
-    
+    char *result = dr_mpoly_to_string(&result_poly, state.par_names, state.generator_name);
+
     /* Cleanup */
-    fq_mvpoly_clear(&result_poly);
+    dr_mpoly_clear(&result_poly);
     flint_free(row_indices);
     flint_free(col_indices);
     
     for (slong i = 0; i <= num_elim_vars; i++) {
         for (slong j = 0; j <= num_elim_vars; j++) {
-            fq_mvpoly_clear(&M_mvpoly[i][j]);
-            fq_mvpoly_clear(&modified_M_mvpoly[i][j]);
+            dr_mpoly_clear(&M_mvpoly[i][j]);
+            dr_mpoly_clear(&modified_M_mvpoly[i][j]);
         }
         flint_free(M_mvpoly[i]);
         flint_free(modified_M_mvpoly[i]);
     }
     flint_free(M_mvpoly);
     flint_free(modified_M_mvpoly);
-    fq_mvpoly_clear(&d_poly);
-    
+    dr_mpoly_clear(&d_poly);
+
     for (slong i = 0; i < num_polys; i++) {
-        fq_mvpoly_clear(&polys[i]);
+        dr_mpoly_clear(&polys[i]);
     }
     free(polys);
     

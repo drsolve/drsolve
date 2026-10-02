@@ -67,23 +67,24 @@ static void check_direct_nmod(unified_mpoly_t **matrix, slong n,
                               unified_mpoly_t expected, const fq_nmod_ctx_t fq)
 {
     unified_mpoly_ctx_t ctx = expected->ctx_ptr;
-    fq_mvpoly_t **input = malloc((size_t) n * sizeof(*input));
-    fq_mvpoly_t result;
+    unified_mpoly_struct **input = calloc(1, (size_t)n * sizeof(*input));
+    unified_mpoly_struct result = {0};
     nmod_mpoly_t actual;
     nmod_mpoly_init(actual, GET_NMOD_CTX(ctx));
     for (slong i = 0; i < n; i++) {
-        input[i] = malloc((size_t) n * sizeof(**input));
+        input[i] = calloc(1, (size_t)n * sizeof(**input));
         for (slong j = 0; j < n; j++)
-            nmod_mpoly_to_fq_mvpoly(&input[i][j], GET_NMOD_POLY(matrix[i][j]),
-                                    2, 0, GET_NMOD_CTX(ctx), fq);
+            nmod_mpoly_to_dr_mpoly(&input[i][j], GET_NMOD_POLY(matrix[i][j]), 2, 0,
+                                   GET_NMOD_CTX(ctx), fq);
     }
     compute_fq_det_unified_interface(&result, input, n);
-    fq_mvpoly_to_nmod_mpoly(actual, &result, GET_NMOD_CTX(ctx));
+    dr_mpoly_to_nmod_mpoly(actual, &result, GET_NMOD_CTX(ctx));
     if (!nmod_mpoly_equal(actual, GET_NMOD_POLY(expected), GET_NMOD_CTX(ctx))) abort();
-    fq_mvpoly_clear(&result);
+    dr_mpoly_clear(&result);
     nmod_mpoly_clear(actual, GET_NMOD_CTX(ctx));
     for (slong i = 0; i < n; i++) {
-        for (slong j = 0; j < n; j++) fq_mvpoly_clear(&input[i][j]);
+        for (slong j = 0; j < n; j++)
+            dr_mpoly_clear(&input[i][j]);
         free(input[i]);
     }
     free(input);

@@ -2,19 +2,20 @@
 #define main mq_support_fixture_main
 #include "dixon_mq_filter_test.c"
 #undef main
-int mq_support_count(fq_mvpoly_t **matrix, slong n, const slong *rows,
-                     const slong *cols, slong targets);
+int mq_support_count(unified_mpoly_struct **matrix, slong n, const slong *rows, const slong *cols,
+                     slong targets);
 
 /* Coefficients are placeholders only: identical equations deliberately give
  * no useful determinant. Only their generic MQ term supports are analyzed. */
-static fq_mvpoly_t *dense_support_fixture(slong n, const fq_nmod_ctx_t ctx, flint_rand_t state)
+static unified_mpoly_struct *dense_support_fixture(slong n, const fq_nmod_ctx_t ctx,
+                                                   flint_rand_t state)
 {
-    fq_mvpoly_t *p = flint_malloc((size_t) (n + 1) * sizeof(*p));
+    unified_mpoly_struct *p = flint_calloc(1, (size_t)(n + 1) * sizeof(*p));
     slong *e = flint_calloc((size_t) n + 1, sizeof(slong));
     fq_nmod_t c;
     fq_nmod_init(c, ctx);
     for (slong k = 0; k <= n; k++) {
-        fq_mvpoly_init(p + k, n, 1, ctx);
+        dr_mpoly_init(p + k, n, 1, ctx);
         for (slong i = -1; i <= n; i++) {
             for (slong j = i; j <= n; j++) {
                 if (i >= 0) e[i]++;
@@ -23,7 +24,8 @@ static fq_mvpoly_t *dense_support_fixture(slong n, const fq_nmod_ctx_t ctx, flin
                 /* Ensure elimination degree two even over F_2. */
                 if (i == 0 && j == 0) coeff = 1;
                 fq_nmod_set_ui(c, coeff, ctx);
-                if (coeff) fq_mvpoly_add_term_fast(p + k, e, e + n, c);
+                if (coeff)
+                    dr_mpoly_add_term_fast(p + k, e, e + n, c);
                 if (i >= 0) e[i]--;
                 if (j >= 0) e[j]--;
             }
@@ -33,9 +35,9 @@ static fq_mvpoly_t *dense_support_fixture(slong n, const fq_nmod_ctx_t ctx, flin
     return p;
 }
 
-static int count_candidate(fq_mvpoly_t **matrix, slong nvars)
+static int count_candidate(unified_mpoly_struct **matrix, slong nvars)
 {
-    long *degrees=flint_malloc((nvars+1)*sizeof(long));
+    long *degrees = flint_calloc(1, (nvars + 1) * sizeof(long));
     for(slong i=0;i<=nvars;i++) degrees[i]=2;
     slong *R = NULL, *H = NULL, rlen = 0, hlen = 0, sigma = 0, rank = 0;
     int model = dixon_rank_profile_from_degrees(&R, &rlen, &H, &hlen,
@@ -105,9 +107,9 @@ int main(int argc,char **argv)
     omp_set_num_threads(1); flint_set_num_threads(1); g_dixon_verbose_level=0;
     flint_rand_t rng; flint_rand_init(rng); flint_rand_set_seed(rng,132,941);
     fq_nmod_ctx_t fq; fq_nmod_ctx_init_ui(fq,65537,1,"a");
-    fq_mvpoly_t *p=dense_support_fixture(n-1,fq,rng), **m, **a;
-    build_fq_cancellation_matrix_mvpoly(&m,p,n-1,1);
-    perform_fq_matrix_row_operations_mvpoly(&a,&m,n-1,1);
+    unified_mpoly_struct *p = dense_support_fixture(n - 1, fq, rng), **m, **a;
+    build_fq_cancellation_matrix(&m, p, n - 1, 1);
+    perform_fq_matrix_row_operations(&a, &m, n - 1, 1);
     int ok=count_candidate(a,n-1);
     clear_input(p,m,a,n-1); fq_nmod_ctx_clear(fq); flint_rand_clear(rng);
     flint_cleanup_master(); return !ok;

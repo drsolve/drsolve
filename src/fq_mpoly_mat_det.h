@@ -57,19 +57,17 @@
 /* MQ coefficient projection. result is initialized only on success (1).
  * Targets are count exponent vectors of length size-1 for each axis.
  * Only prime-field, one-parameter, divided-difference MQ matrices qualify. */
-int compute_fq_det_mq_projected(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
-                              slong size, const slong *rows,
-                              const slong *cols, slong count);
+int compute_fq_det_mq_projected(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
+                                slong size, const slong *rows, const slong *cols, slong count);
 
 /* Rectangular counterpart, used for disjoint repair border strips. */
 /* Select exact coefficients from a previously constructed full polynomial. */
-int fq_mq_project_full(fq_mvpoly_t *result, const fq_mvpoly_t *full,
-                      const slong *rows, slong row_count,
-                      const slong *cols, slong col_count);
+int fq_mq_project_full(unified_mpoly_struct *result, const unified_mpoly_struct *full,
+                       const slong *rows, slong row_count, const slong *cols, slong col_count);
 
-int compute_fq_det_mq_projected_rect(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
-                                   slong size, const slong *rows, slong row_count,
-                                   const slong *cols, slong col_count);
+int compute_fq_det_mq_projected_rect(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
+                                     slong size, const slong *rows, slong row_count,
+                                     const slong *cols, slong col_count);
 
 // ============= Timing Utilities =============
 
@@ -101,14 +99,13 @@ static inline int is_prime_field(const fq_nmod_ctx_t ctx) {
 
 // ============= Conversion Functions for Polynomial Recursive =============
 
-// Convert fq_mvpoly to fq_nmod_poly for a specific variable
-void mvpoly_to_fq_nmod_poly(fq_nmod_poly_t poly, const fq_mvpoly_t *mvpoly, 
-                           slong var_index, const fq_nmod_ctx_t ctx);
+// Convert dr_mpoly to fq_nmod_poly for a specific variable
+void mvpoly_to_fq_nmod_poly(fq_nmod_poly_t poly, const unified_mpoly_struct *mvpoly,
+                            slong var_index, const fq_nmod_ctx_t ctx);
 
-// Convert fq_nmod_poly back to fq_mvpoly
-void fq_nmod_poly_to_mvpoly(fq_mvpoly_t *mvpoly, const fq_nmod_poly_t poly,
-                           slong var_index, slong nvars, slong npars,
-                           const fq_nmod_ctx_t ctx);
+// Convert fq_nmod_poly back to dr_mpoly
+void fq_nmod_poly_to_mvpoly(unified_mpoly_struct *mvpoly, const fq_nmod_poly_t poly,
+                            slong var_index, slong nvars, slong npars, const fq_nmod_ctx_t ctx);
 
 // ============= Polynomial Recursive Determinant =============
 
@@ -119,48 +116,42 @@ void compute_det_poly_recursive_helper(fq_nmod_poly_t det,
                                       const fq_nmod_ctx_t ctx);
 
 // Main function for polynomial recursive algorithm
-void compute_fq_det_poly_recursive(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size);
+void compute_fq_det_poly_recursive(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
+                                   slong size);
 
 // ============= Kronecker+HNF Implementation =============
 
 // Compute bounds for Kronecker+HNF
-void compute_kronecker_bounds(slong *var_bounds, fq_mvpoly_t **matrix, 
-                             slong size, slong nvars, slong npars);
+void compute_kronecker_bounds(slong *var_bounds, unified_mpoly_struct **matrix, slong size,
+                              slong nvars, slong npars);
 
 // Convert multivariate polynomial to univariate using Kronecker+HNF
-void mvpoly_to_univariate_kronecker(fq_nmod_poly_t uni_poly,
-                                   const fq_mvpoly_t *mv_poly,
-                                   const slong *substitution_powers,
-                                   const fq_nmod_ctx_t ctx);
+void mvpoly_to_univariate_kronecker(fq_nmod_poly_t uni_poly, const unified_mpoly_struct *mv_poly,
+                                    const slong *substitution_powers, const fq_nmod_ctx_t ctx);
 
 // Convert univariate polynomial back to multivariate
-void univariate_to_mvpoly_kronecker(fq_mvpoly_t *mv_poly,
-                                   const fq_nmod_poly_t uni_poly,
-                                   const slong *substitution_powers,
-                                   const slong *var_bounds,
-                                   slong nvars, slong npars,
-                                   const fq_nmod_ctx_t ctx);
+void univariate_to_mvpoly_kronecker(unified_mpoly_struct *mv_poly, const fq_nmod_poly_t uni_poly,
+                                    const slong *substitution_powers, const slong *var_bounds,
+                                    slong nvars, slong npars, const fq_nmod_ctx_t ctx);
 
 // Compute determinant using Kronecker+HNF
-void compute_fq_det_kronecker(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size);
+void compute_fq_det_kronecker(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
+                              slong size);
 
 // ============= Prime Field Conversion Functions =============
 
-// Convert fq_mvpoly to nmod_mpoly for prime fields
-void fq_mvpoly_to_nmod_mpoly(nmod_mpoly_t mpoly, const fq_mvpoly_t *poly, 
+// Convert dr_mpoly to nmod_mpoly for prime fields
+void dr_mpoly_to_nmod_mpoly(nmod_mpoly_t mpoly, const unified_mpoly_struct *poly,
                             nmod_mpoly_ctx_t mpoly_ctx);
 
-// Convert nmod_mpoly to fq_mvpoly
-void nmod_mpoly_to_fq_mvpoly(fq_mvpoly_t *result, const nmod_mpoly_t poly,
-                            slong nvars, slong npars,
-                            const nmod_mpoly_ctx_t mpoly_ctx,
+// Convert nmod_mpoly to dr_mpoly
+void nmod_mpoly_to_dr_mpoly(unified_mpoly_struct *result, const nmod_mpoly_t poly, slong nvars,
+                            slong npars, const nmod_mpoly_ctx_t mpoly_ctx,
                             const fq_nmod_ctx_t field_ctx);
 
-// Convert matrix from fq_mvpoly to nmod_mpoly format
-void fq_matrix_mvpoly_to_nmod_mpoly(nmod_mpoly_t **mpoly_matrix, 
-                                   fq_mvpoly_t **mvpoly_matrix, 
-                                   slong size, 
-                                   nmod_mpoly_ctx_t mpoly_ctx);
+// Convert matrix from dr_mpoly to nmod_mpoly format
+void dr_mpoly_matrix_export_nmod(nmod_mpoly_t **mpoly_matrix, unified_mpoly_struct **mvpoly_matrix,
+                                 slong size, nmod_mpoly_ctx_t mpoly_ctx);
 
 // ============= Prime Field Determinant Computation =============
 
@@ -185,27 +176,23 @@ void compute_nmod_mpoly_det_parallel_optimized(nmod_mpoly_t det_result,
 // ============= Univariate Optimization =============
 
 // Check if matrix contains only univariate polynomials
-int is_univariate_matrix(fq_mvpoly_t **matrix, slong size);
+int is_univariate_matrix(unified_mpoly_struct **matrix, slong size);
 
 // Compute determinant for univariate polynomial matrices
-void compute_fq_det_univariate_optimized(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size);
+void compute_fq_det_univariate_optimized(unified_mpoly_struct *result,
+                                         unified_mpoly_struct **matrix, slong size);
 
 // ============= Conversion Functions =============
 
-// Convert fq_mvpoly to fq_nmod_mpoly
-void fq_mvpoly_to_fq_nmod_mpoly(fq_nmod_mpoly_t mpoly, const fq_mvpoly_t *poly, 
+// Convert dr_mpoly to fq_nmod_mpoly
+void dr_mpoly_to_fq_nmod_mpoly(fq_nmod_mpoly_t mpoly, const unified_mpoly_struct *poly,
                                fq_nmod_mpoly_ctx_t mpoly_ctx);
 
-// Convert fq_nmod_mpoly to fq_mvpoly
-void fq_nmod_mpoly_to_fq_mvpoly(fq_mvpoly_t *poly, const fq_nmod_mpoly_t mpoly,
-                               slong nvars, slong npars, 
-                               fq_nmod_mpoly_ctx_t mpoly_ctx, const fq_nmod_ctx_t ctx);
+// Convert fq_nmod_mpoly to dr_mpoly
+void fq_nmod_mpoly_to_dr_mpoly(unified_mpoly_struct *poly, const fq_nmod_mpoly_t mpoly, slong nvars,
+                               slong npars, fq_nmod_mpoly_ctx_t mpoly_ctx, const fq_nmod_ctx_t ctx);
 
-// Convert matrix from fq_mvpoly to fq_nmod_mpoly format
-void fq_matrix_mvpoly_to_mpoly(fq_nmod_mpoly_t **mpoly_matrix, 
-                              fq_mvpoly_t **mvpoly_matrix, 
-                              slong size, 
-                              fq_nmod_mpoly_ctx_t mpoly_ctx);
+// Convert matrix from dr_mpoly to fq_nmod_mpoly format
 
 // ============= Optimized Determinant Computation =============
 
@@ -228,19 +215,25 @@ void compute_fq_nmod_mpoly_det_parallel_optimized(fq_nmod_mpoly_t det_result,
                                                   slong depth);
 
 // sparse interpolation determinant
-void compute_fq_det_huang_interpolation(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size);
+void compute_fq_det_huang_interpolation(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
+                                        slong size);
 
 // Direct recursive algorithm
-void compute_fq_det_unified_interface(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size);
-void compute_fq_det_bareiss(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size);
-void compute_fq_det_balanced_split_experimental(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size);
+void compute_fq_det_unified_interface(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
+                                      slong size);
+void compute_fq_det_bareiss(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
+                            slong size);
+void compute_fq_det_balanced_split_experimental(unified_mpoly_struct *result,
+                                                unified_mpoly_struct **matrix, slong size);
 
 // ============= Main Interface with Algorithm Selection =============
 
 // Main determinant computation function with algorithm selection
-void compute_fq_det_recursive_flint(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size);
+void compute_fq_det_recursive_flint(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
+                                    slong size);
 
 // Compatibility interface
-void compute_fq_det_recursive(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size);
+void compute_fq_det_recursive(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
+                              slong size);
 
 #endif // FQ_MPOLY_MAT_DET_H

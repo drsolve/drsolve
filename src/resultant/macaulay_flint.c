@@ -34,7 +34,7 @@ static slong macaulay_binomial(slong n, slong k)
     return result;
 }
 
-static slong compute_fq_polynomial_elimination_degree(const fq_mvpoly_t *poly, slong nvars)
+static slong compute_fq_polynomial_elimination_degree(const unified_mpoly_struct *poly, slong nvars)
 {
     slong max_degree = 0;
 
@@ -42,11 +42,13 @@ static slong compute_fq_polynomial_elimination_degree(const fq_mvpoly_t *poly, s
         return 0;
     }
 
-    for (slong t = 0; t < poly->nterms; t++) {
+    for (slong t = 0; t < dr_mpoly_length(poly); t++) {
+        DR_MPOLY_TERM(term_1, poly, t);
+
         slong degree = 0;
-        if (poly->terms[t].var_exp) {
+        if (term_1.var_exp) {
             for (slong v = 0; v < nvars && v < poly->nvars; v++) {
-                degree += poly->terms[t].var_exp[v];
+                degree += term_1.var_exp[v];
             }
         }
         if (degree > max_degree) {
@@ -57,12 +59,9 @@ static slong compute_fq_polynomial_elimination_degree(const fq_mvpoly_t *poly, s
     return max_degree;
 }
 
-static void compute_macaulay_dimensions(const fq_mvpoly_t *polys,
-                                        slong npolys,
-                                        slong nvars,
-                                        slong *elim_degrees,
-                                        slong *macaulay_degree_out,
-                                        slong *nrows_out,
+static void compute_macaulay_dimensions(const unified_mpoly_struct *polys, slong npolys,
+                                        slong nvars, slong *elim_degrees,
+                                        slong *macaulay_degree_out, slong *nrows_out,
                                         slong *ncols_out)
 {
     slong macaulay_degree = 0;
@@ -220,14 +219,11 @@ static slong lookup_monomial_index(hash_entry_t **buckets,
     return -1;
 }
 
-static void extract_fq_coefficient_matrix_from_macaulay(fq_mvpoly_t ***coeff_matrix,
+static void extract_fq_coefficient_matrix_from_macaulay(unified_mpoly_struct ***coeff_matrix,
                                                         slong *matrix_size,
-                                                        const fq_mvpoly_t *polys,
-                                                        slong npolys,
-                                                        slong nvars,
-                                                        slong npars,
-                                                        slong *full_rows_out,
-                                                        slong *full_cols_out,
+                                                        const unified_mpoly_struct *polys,
+                                                        slong npolys, slong nvars, slong npars,
+                                                        slong *full_rows_out, slong *full_cols_out,
                                                         slong *macaulay_degree_out)
 {
     const fq_nmod_ctx_struct *ctx = polys[0].ctx;
@@ -235,7 +231,7 @@ static void extract_fq_coefficient_matrix_from_macaulay(fq_mvpoly_t ***coeff_mat
     double step3_wall_start;
     slong *elim_degrees = (slong *) flint_calloc((size_t) npolys, sizeof(slong));
     slong macaulay_degree = 0;
-    fq_mvpoly_t ***full_matrix = NULL;
+    unified_mpoly_struct ***full_matrix = NULL;
     monom_t *column_monoms = NULL;
     slong ncols = 0;
     slong nrows = 0;
@@ -267,9 +263,11 @@ static void extract_fq_coefficient_matrix_from_macaulay(fq_mvpoly_t ***coeff_mat
         return;
     }
 
-    full_matrix = (fq_mvpoly_t ***) flint_malloc((size_t) nrows * sizeof(fq_mvpoly_t **));
+    full_matrix =
+        (unified_mpoly_struct ***)flint_calloc(1, (size_t)nrows * sizeof(unified_mpoly_struct **));
     for (slong i = 0; i < nrows; i++) {
-        full_matrix[i] = (fq_mvpoly_t **) flint_calloc((size_t) ncols, sizeof(fq_mvpoly_t *));
+        full_matrix[i] =
+            (unified_mpoly_struct **)flint_calloc((size_t)ncols, sizeof(unified_mpoly_struct *));
     }
 
     col_hash = build_monomial_hash_table(column_monoms, ncols, nvars, &col_hash_size);
@@ -282,24 +280,23 @@ static void extract_fq_coefficient_matrix_from_macaulay(fq_mvpoly_t ***coeff_mat
         enumerate_monomials_degree_leq(&multipliers, &num_multipliers, nvars, multiplier_degree);
 
         for (slong mi = 0; mi < num_multipliers; mi++) {
-            for (slong t = 0; t < polys[poly_idx].nterms; t++) {
+            for (slong t = 0; t < dr_mpoly_length(&(polys[poly_idx])); t++) {
+                DR_MPOLY_TERM(term_2, &(polys[poly_idx]), t);
+
                 slong *col_exp = (slong *) flint_calloc((size_t) (nvars > 0 ? nvars : 1), sizeof(slong));
                 slong col = -1;
 
                 for (slong v = 0; v < nvars; v++) {
-                    slong term_exp = (polys[poly_idx].terms[t].var_exp && v < polys[poly_idx].nvars)
-                                   ? polys[poly_idx].terms[t].var_exp[v]
-                                   : 0;
+                    slong term_exp =
+                        (term_2.var_exp && v < polys[poly_idx].nvars) ? term_2.var_exp[v] : 0;
                     col_exp[v] = multipliers[mi].exp[v] + term_exp;
                 }
 
                 col = lookup_monomial_index(col_hash, col_hash_size, col_exp, nvars);
                 if (col >= 0) {
-                    fq_mvpoly_t *entry = get_matrix_entry_lazy(full_matrix, row_counter, col,
-                                                               npars, ctx);
-                    fq_mvpoly_add_term(entry, NULL,
-                                       polys[poly_idx].terms[t].par_exp,
-                                       polys[poly_idx].terms[t].coeff);
+                    unified_mpoly_struct *entry =
+                        get_matrix_entry_lazy(full_matrix, row_counter, col, npars, ctx);
+                    dr_mpoly_add_term(entry, NULL, term_2.par_exp, term_2.coeff);
                 }
 
                 flint_free(col_exp);
@@ -333,15 +330,17 @@ static void extract_fq_coefficient_matrix_from_macaulay(fq_mvpoly_t ***coeff_mat
             *coeff_matrix = NULL;
             *matrix_size = 0;
         } else {
-            *coeff_matrix = (fq_mvpoly_t **) flint_malloc((size_t) submat_rank * sizeof(fq_mvpoly_t *));
+            *coeff_matrix = (unified_mpoly_struct **)flint_calloc(
+                1, (size_t)submat_rank * sizeof(unified_mpoly_struct *));
             for (slong i = 0; i < submat_rank; i++) {
-                (*coeff_matrix)[i] = (fq_mvpoly_t *) flint_malloc((size_t) submat_rank * sizeof(fq_mvpoly_t));
+                (*coeff_matrix)[i] = (unified_mpoly_struct *)flint_calloc(
+                    1, (size_t)submat_rank * sizeof(unified_mpoly_struct));
                 for (slong j = 0; j < submat_rank; j++) {
-                    fq_mvpoly_t *source = full_matrix[row_idx_array[i]][col_idx_array[j]];
+                    unified_mpoly_struct *source = full_matrix[row_idx_array[i]][col_idx_array[j]];
                     if (source != NULL) {
-                        fq_mvpoly_copy(&(*coeff_matrix)[i][j], source);
+                        dr_mpoly_copy(&(*coeff_matrix)[i][j], source);
                     } else {
-                        fq_mvpoly_init(&(*coeff_matrix)[i][j], 0, npars, ctx);
+                        dr_mpoly_init(&(*coeff_matrix)[i][j], 0, npars, ctx);
                     }
                 }
             }
@@ -357,7 +356,7 @@ static void extract_fq_coefficient_matrix_from_macaulay(fq_mvpoly_t ***coeff_mat
         if (full_matrix[i]) {
             for (slong j = 0; j < ncols; j++) {
                 if (full_matrix[i][j]) {
-                    fq_mvpoly_clear(full_matrix[i][j]);
+                    dr_mpoly_clear(full_matrix[i][j]);
                     flint_free(full_matrix[i][j]);
                 }
             }
@@ -370,14 +369,14 @@ static void extract_fq_coefficient_matrix_from_macaulay(fq_mvpoly_t ***coeff_mat
     if (column_monoms) flint_free(column_monoms);
 }
 
-static void clear_macaulay_coeff_matrix(fq_mvpoly_t **coeff_matrix, slong matrix_size)
+static void clear_macaulay_coeff_matrix(unified_mpoly_struct **coeff_matrix, slong matrix_size)
 {
     if (coeff_matrix == NULL) {
         return;
     }
     for (slong i = 0; i < matrix_size; i++) {
         for (slong j = 0; j < matrix_size; j++) {
-            fq_mvpoly_clear(&coeff_matrix[i][j]);
+            dr_mpoly_clear(&coeff_matrix[i][j]);
         }
         flint_free(coeff_matrix[i]);
     }
@@ -412,15 +411,15 @@ static det_method_t choose_macaulay_det_method(slong matrix_size, slong npars)
     return coeff_method;
 }
 
-void fq_macaulay_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
-                           slong nvars, slong npars)
+void fq_macaulay_resultant(unified_mpoly_struct *result, unified_mpoly_struct *polys, slong nvars,
+                           slong npars)
 {
     cleanup_unified_workspace();
 
     printf("\nStep 1: Build Macaulay coefficient matrix\n");
     double step1_wall_start = get_wall_time();
 
-    fq_mvpoly_t **coeff_matrix = NULL;
+    unified_mpoly_struct **coeff_matrix = NULL;
     slong macaulay_degree = 0;
     slong full_rows = 0, full_cols = 0;
     slong matrix_size = 0;
@@ -449,24 +448,23 @@ void fq_macaulay_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
                                            ((double)(clock() - step4_cpu_start) / CLOCKS_PER_SEC),
                                            get_wall_time() - step4_wall_start);
 
-        if (g_dixon_verbose_level >= 1 && result->nterms < 100) {
-            fq_mvpoly_print(result, "Final Resultant");
+        if (g_dixon_verbose_level >= 1 && dr_mpoly_length(result) < 100) {
+            dr_mpoly_print(result, "Final Resultant");
         } else {
-            printf("Final resultant too large to display (%ld terms)\n", result->nterms);
+            printf("Final resultant too large to display (%ld terms)\n", dr_mpoly_length(result));
         }
-        fq_mvpoly_make_monic(result);
+        dr_mpoly_make_monic(result);
         clear_macaulay_coeff_matrix(coeff_matrix, matrix_size);
     } else {
-        fq_mvpoly_init(result, 0, npars, polys[0].ctx);
+        dr_mpoly_init(result, 0, npars, polys[0].ctx);
         printf("Warning: Empty Macaulay coefficient matrix, resultant is 0\n");
     }
 
     printf("\n=== Macaulay Resultant Computation Complete ===\n");
 }
 
-void fq_macaulay_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
-                                      slong nvars, slong npars,
-                                      char **var_names, char **par_names,
+void fq_macaulay_resultant_with_names(unified_mpoly_struct *result, unified_mpoly_struct *polys,
+                                      slong nvars, slong npars, char **var_names, char **par_names,
                                       const char *gen_name)
 {
     (void) var_names;
@@ -475,7 +473,7 @@ void fq_macaulay_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
     printf("\nStep 1: Build Macaulay coefficient matrix\n");
     double step1_wall_start = get_wall_time();
 
-    fq_mvpoly_t **coeff_matrix = NULL;
+    unified_mpoly_struct **coeff_matrix = NULL;
     slong macaulay_degree = 0;
     slong full_rows = 0, full_cols = 0;
     slong matrix_size = 0;
@@ -504,15 +502,15 @@ void fq_macaulay_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
                                            ((double)(clock() - step4_cpu_start) / CLOCKS_PER_SEC),
                                            get_wall_time() - step4_wall_start);
 
-        if (g_dixon_verbose_level >= 1 && result->nterms < 100) {
-            fq_mvpoly_print_with_names(result, "Final Resultant", NULL, par_names, gen_name, 0);
+        if (g_dixon_verbose_level >= 1 && dr_mpoly_length(result) < 100) {
+            dr_mpoly_print_with_names(result, "Final Resultant", NULL, par_names, gen_name, 0);
         } else {
-            printf("Final resultant too large to display (%ld terms)\n", result->nterms);
+            printf("Final resultant too large to display (%ld terms)\n", dr_mpoly_length(result));
         }
-        fq_mvpoly_make_monic(result);
+        dr_mpoly_make_monic(result);
         clear_macaulay_coeff_matrix(coeff_matrix, matrix_size);
     } else {
-        fq_mvpoly_init(result, 0, npars, polys[0].ctx);
+        dr_mpoly_init(result, 0, npars, polys[0].ctx);
         printf("Warning: Empty Macaulay coefficient matrix, resultant is 0\n");
     }
 

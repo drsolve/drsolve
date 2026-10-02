@@ -1564,7 +1564,7 @@ static int generate_random_poly_strings(
     char *elim_vars = NULL;
     char *remaining_vars = NULL;
     slong *slong_deg = NULL;
-    fq_mvpoly_t *polys = NULL;
+    unified_mpoly_struct *polys = NULL;
     char *gen_name = NULL;
     char **poly_strs = NULL;
     char *polys_str = NULL;
@@ -1626,7 +1626,7 @@ static int generate_random_poly_strings(
     if (!poly_strs) goto fail;
 
     for (slong i = 0; i < npolys; i++) {
-        char *s = fq_mvpoly_to_string(&polys[i], NULL, gen_name);
+        char *s = dr_mpoly_to_string(&polys[i], NULL, gen_name);
         poly_strs[i] = (s && strlen(s) > 0) ? s : (free(s), strdup("0"));
         if (!poly_strs[i]) goto fail;
         total_len += strlen(poly_strs[i]) + 3;
@@ -1666,7 +1666,8 @@ static int generate_random_poly_strings(
 
     for (slong i = 0; i < npolys; i++) free(poly_strs[i]);
     free(poly_strs);
-    for (slong i = 0; i < npolys; i++) fq_mvpoly_clear(&polys[i]);
+    for (slong i = 0; i < npolys; i++)
+        dr_mpoly_clear(&polys[i]);
     free(polys);
     free(slong_deg);
     if (gen_name) free(gen_name);
@@ -1689,7 +1690,8 @@ fail:
         free(poly_strs);
     }
     if (polys) {
-        for (slong i = 0; i < npolys; i++) fq_mvpoly_clear(&polys[i]);
+        for (slong i = 0; i < npolys; i++)
+            dr_mpoly_clear(&polys[i]);
         free(polys);
     }
     free(polys_str);
@@ -3864,12 +3866,12 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
 
     /* ---- activate field-equation reduction mode ---- */
     if (!rational_mode && field_eq_mode) {
-        fq_mvpoly_set_field_equation_reduction(1);
+        dr_mpoly_set_field_equation_reduction(1);
         if (!silent_mode)
             printf("Reduction: field equations enabled\n");
     }
     if (!rational_mode && field_eq_final_only_mode) {
-        fq_mvpoly_set_field_equation_final_only(1);
+        dr_mpoly_set_field_equation_final_only(1);
         if (!silent_mode)
             printf("Reduction: final resultant field-equation reduction enabled\n");
     }

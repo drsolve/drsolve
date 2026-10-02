@@ -31,7 +31,7 @@
 #include "unified_mpoly_resultant.h"
 #include "fq_nmod_roots.h"
 #include "fmpq_acb_roots.h"
-#include "fq_mvpoly.h"
+#include "dr_mpoly.h"
 #include "dixon_flint.h"
 // Debug switch
 #define DEBUG_PARSER 0
@@ -90,24 +90,26 @@ typedef struct {
 } string_builder_t;
 
 void next_token(parser_state_t *state);
-void parse_expression(parser_state_t *state, fq_mvpoly_t *poly);
-void parse_term(parser_state_t *state, fq_mvpoly_t *poly);
-void parse_factor(parser_state_t *state, fq_mvpoly_t *poly);
-void parse_primary(parser_state_t *state, fq_mvpoly_t *poly);
+void parse_expression(parser_state_t *state, unified_mpoly_struct *poly);
+void parse_term(parser_state_t *state, unified_mpoly_struct *poly);
+void parse_factor(parser_state_t *state, unified_mpoly_struct *poly);
+void parse_primary(parser_state_t *state, unified_mpoly_struct *poly);
 char** split_string(const char *input, slong *count);
 void free_split_strings(char **strings, slong count);
 
 // Helper functions
 char* get_generator_name(const fq_nmod_ctx_t ctx);
 char* fq_nmod_to_string_with_gen(const fq_nmod_t elem, const fq_nmod_ctx_t ctx, const char *gen_name);
-char* fq_mvpoly_to_string(const fq_mvpoly_t *poly, char **var_names, const char *gen_name);
+char *dr_mpoly_to_string(const unified_mpoly_struct *poly, char **var_names, const char *gen_name);
 
 // Output functions
-void fq_nmod_print_pretty_enhanced(const fq_nmod_t a, const fq_nmod_ctx_t ctx);
-void fq_mvpoly_print_enhanced(const fq_mvpoly_t *p, const char *name);
-void find_and_print_roots_of_univariate_resultant(const fq_mvpoly_t *result, parser_state_t *state);
-void find_and_print_roots_of_univariate_resultant_with_file(const fq_mvpoly_t *result, parser_state_t *state, FILE *fp_file, int print_to_stdout);
-void print_resultant_summary(const fq_mvpoly_t *result, char **remaining_vars, slong num_remaining_vars);
+void find_and_print_roots_of_univariate_resultant(const unified_mpoly_struct *result,
+                                                  parser_state_t *state);
+void find_and_print_roots_of_univariate_resultant_with_file(const unified_mpoly_struct *result,
+                                                            parser_state_t *state, FILE *fp_file,
+                                                            int print_to_stdout);
+void print_resultant_summary(const unified_mpoly_struct *result, char **remaining_vars,
+                             slong num_remaining_vars);
 void dixon_clear_last_root_report(void);
 const char *dixon_get_last_root_report(void);
 void dixon_set_suppress_root_reporting(int enabled);
@@ -129,10 +131,8 @@ char* dixon_str(const char *poly_string,    // comma-separated polynomials
                 const fq_nmod_ctx_t ctx);
 
 /* Compute a finite-field resultant without serializing it to a string. */
-int dixon_compute_result_poly(const char *poly_string,
-                              const char *vars_string,
-                              const fq_nmod_ctx_t ctx,
-                              fq_mvpoly_t *result_poly);
+int dixon_compute_result_poly(const char *poly_string, const char *vars_string,
+                              const fq_nmod_ctx_t ctx, unified_mpoly_struct *result_poly);
 
 char* dixon_str_with_file(const char *poly_string,    // comma-separated polynomials
                           const char *vars_string,     // comma-separated variables

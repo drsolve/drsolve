@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef DRSOLVE_MQ_COMPACT_H
 #define DRSOLVE_MQ_COMPACT_H
-#include "fq_mvpoly.h"
+#include "dr_mpoly.h"
 
 /* Prime-field, one-parameter projected polynomial. Row supports and column
  * supports follow first occurrence in the canonical lex polynomial. Terms
@@ -17,10 +17,10 @@ typedef struct {
 
 void fq_mq_compact_clear(fq_mq_compact *p);
 /* Initialize a conventional polynomial, for repair/fallback or inspection. */
-void fq_mq_compact_materialize(fq_mvpoly_t *out, const fq_mq_compact *p,
-                              const fq_nmod_ctx_t ctx);
+void fq_mq_compact_materialize(unified_mpoly_struct *out, const fq_mq_compact *p,
+                               const fq_nmod_ctx_t ctx);
 /* Same eligibility and exact projection as compute_fq_det_mq_projected_rect.
  * On rejection leave the zero-initialized output untouched. */
-int compute_fq_det_mq_compact(fq_mq_compact *out, fq_mvpoly_t **matrix,
-    slong size, const slong *rows, slong nr, const slong *cols, slong nc);
+int compute_fq_det_mq_compact(fq_mq_compact *out, unified_mpoly_struct **matrix, slong size,
+                              const slong *rows, slong nr, const slong *cols, slong nc);
 #endif

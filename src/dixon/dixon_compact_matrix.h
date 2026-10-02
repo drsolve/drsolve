@@ -13,9 +13,10 @@ static void dixon_print_compact(const fq_mq_compact *p,const fq_nmod_ctx_t ctx,
 {
     dixon_info_log("  Dixon polynomial: %ld terms (compact row storage)\n",p->nterms);
     if(g_dixon_verbose_level>=1 && p->nterms<=100) {
-        fq_mvpoly_t small; fq_mq_compact_materialize(&small,p,ctx);
-        fq_mvpoly_print_with_names(&small,"  DixonPoly",vars,pars,gen,1);
-        fq_mvpoly_clear(&small);
+        unified_mpoly_struct small;
+        fq_mq_compact_materialize(&small, p, ctx);
+        dr_mpoly_print_with_names(&small, "  DixonPoly", vars, pars, gen, 1);
+        dr_mpoly_clear(&small);
     }
     if(g_dixon_debug_mode) {
         slong *degree=flint_calloc(2*p->nvars,sizeof(slong));

@@ -44,6 +44,15 @@ sudo make install                       # optional
 ```
 For more options, run `./configure --help` or `make help`.
 
+The generic finite-field pipeline stores polynomials in `unified_mpoly_struct`,
+using FLINT's native coefficient and packed-exponent arrays. `src/dr_mpoly.h`
+provides solver layout, ownership and term-access helpers; its field context
+must outlive the polynomials. Prime-field determinant, MQ and projected-matrix
+kernels use `nmod_mpoly`, `nmod_poly` and `nmod_poly_mat` directly. Extension-field
+arithmetic retains the unified backend and binary-field optimizations.
+Run `make test-native-mpoly` to check native arithmetic, aliasing, field reduction
+and backend conversions against FLINT.
+
 We also provide a Windows GUI, which can be built with CMake.
 ```bash
 cmake -B build-win -DCMAKE_TOOLCHAIN_FILE="$(pwd)/cmake/toolchain-mingw64.cmake"

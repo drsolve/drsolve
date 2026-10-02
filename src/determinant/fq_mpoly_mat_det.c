@@ -129,59 +129,62 @@ static void kronecker_print_slong_array(const char *label,
     DET_PRINT("\n");
 }
 
-// Convert fq_mvpoly to fq_nmod_poly for a specific variable
-void mvpoly_to_fq_nmod_poly(fq_nmod_poly_t poly, const fq_mvpoly_t *mvpoly, 
-                           slong var_index, const fq_nmod_ctx_t ctx) {
+// Convert dr_mpoly to fq_nmod_poly for a specific variable
+void mvpoly_to_fq_nmod_poly(fq_nmod_poly_t poly, const unified_mpoly_struct *mvpoly,
+                            slong var_index, const fq_nmod_ctx_t ctx)
+{
     fq_nmod_poly_zero(poly, ctx);
     
     slong nvars = mvpoly->nvars;
-    
-    for (slong t = 0; t < mvpoly->nterms; t++) {
+
+    for (slong t = 0; t < dr_mpoly_length(mvpoly); t++) {
+        DR_MPOLY_TERM(term_1, mvpoly, t);
+
         slong degree = 0;
         int other_vars_zero = 1;
         
         // Check if this term has non-zero exponents in other variables
-        if (mvpoly->terms[t].var_exp) {
+        if (term_1.var_exp) {
             for (slong v = 0; v < nvars; v++) {
                 if (v == var_index && var_index < nvars) {
-                    degree = mvpoly->terms[t].var_exp[v];
-                } else if (mvpoly->terms[t].var_exp[v] > 0) {
+                    degree = term_1.var_exp[v];
+                } else if (term_1.var_exp[v] > 0) {
                     other_vars_zero = 0;
                     break;
                 }
             }
         }
-        
-        if (mvpoly->terms[t].par_exp && other_vars_zero) {
+
+        if (term_1.par_exp && other_vars_zero) {
             for (slong p = 0; p < mvpoly->npars; p++) {
                 slong idx = nvars + p;
                 if (idx == var_index) {
-                    degree = mvpoly->terms[t].par_exp[p];
-                } else if (mvpoly->terms[t].par_exp[p] > 0) {
+                    degree = term_1.par_exp[p];
+                } else if (term_1.par_exp[p] > 0) {
                     other_vars_zero = 0;
                     break;
                 }
             }
         }
-        
+
         // Only include terms where all other variables have zero exponent
         if (other_vars_zero) {
             fq_nmod_t existing;
             fq_nmod_init(existing, ctx);
             fq_nmod_poly_get_coeff(existing, poly, degree, ctx);
-            fq_nmod_add(existing, existing, mvpoly->terms[t].coeff, ctx);
+            fq_nmod_add(existing, existing, term_1.coeff, ctx);
             fq_nmod_poly_set_coeff(poly, degree, existing, ctx);
             fq_nmod_clear(existing, ctx);
         }
     }
 }
 
-// Convert fq_nmod_poly back to fq_mvpoly
-void fq_nmod_poly_to_mvpoly(fq_mvpoly_t *mvpoly, const fq_nmod_poly_t poly,
-                           slong var_index, slong nvars, slong npars,
-                           const fq_nmod_ctx_t ctx) {
-    fq_mvpoly_init(mvpoly, nvars, npars, ctx);
-    
+// Convert fq_nmod_poly back to dr_mpoly
+void fq_nmod_poly_to_mvpoly(unified_mpoly_struct *mvpoly, const fq_nmod_poly_t poly,
+                            slong var_index, slong nvars, slong npars, const fq_nmod_ctx_t ctx)
+{
+    dr_mpoly_init(mvpoly, nvars, npars, ctx);
+
     slong degree = fq_nmod_poly_degree(poly, ctx);
     if (degree < 0) return;
     
@@ -201,9 +204,9 @@ void fq_nmod_poly_to_mvpoly(fq_mvpoly_t *mvpoly, const fq_nmod_poly_t poly,
                 par_exp = (slong*) flint_calloc(npars, sizeof(slong));
                 par_exp[var_index - nvars] = d;
             }
-            
-            fq_mvpoly_add_term(mvpoly, var_exp, par_exp, coeff);
-            
+
+            dr_mpoly_add_term(mvpoly, var_exp, par_exp, coeff);
+
             if (var_exp) flint_free(var_exp);
             if (par_exp) flint_free(par_exp);
         }
@@ -321,32 +324,34 @@ static slong kronecker_max_univariate_degree_nmod_poly_array(nmod_poly_t **poly_
 }
 
 static void mvpoly_to_univariate_kronecker_nmod(nmod_poly_t uni_poly,
-                                                const fq_mvpoly_t *mv_poly,
-                                                const slong *substitution_powers,
-                                                ulong prime) {
+                                                const unified_mpoly_struct *mv_poly,
+                                                const slong *substitution_powers, ulong prime)
+{
     nmod_poly_zero(uni_poly);
 
-    if (mv_poly->nterms == 0) return;
+    if (dr_mpoly_length(mv_poly) == 0)
+        return;
 
-    for (slong t = 0; t < mv_poly->nterms; t++) {
+    for (slong t = 0; t < dr_mpoly_length(mv_poly); t++) {
+        DR_MPOLY_TERM(term_2, mv_poly, t);
+
         slong uni_exp = 0;
         ulong coeff_val;
         ulong existing;
 
-        if (mv_poly->terms[t].var_exp) {
+        if (term_2.var_exp) {
             for (slong v = 0; v < mv_poly->nvars; v++) {
-                uni_exp += mv_poly->terms[t].var_exp[v] * substitution_powers[v];
+                uni_exp += term_2.var_exp[v] * substitution_powers[v];
             }
         }
 
-        if (mv_poly->terms[t].par_exp) {
+        if (term_2.par_exp) {
             for (slong p = 0; p < mv_poly->npars; p++) {
-                uni_exp += mv_poly->terms[t].par_exp[p] *
-                          substitution_powers[mv_poly->nvars + p];
+                uni_exp += term_2.par_exp[p] * substitution_powers[mv_poly->nvars + p];
             }
         }
 
-        coeff_val = nmod_poly_get_coeff_ui(mv_poly->terms[t].coeff, 0);
+        coeff_val = nmod_poly_get_coeff_ui(term_2.coeff, 0);
         if (coeff_val == 0) {
             continue;
         }
@@ -453,9 +458,11 @@ static void compute_det_nmod_poly_recursive_helper(nmod_poly_t det,
 }
 
 // Main function for polynomial recursive algorithm
-void compute_fq_det_poly_recursive(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size) {
+void compute_fq_det_poly_recursive(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
+                                   slong size)
+{
     if (size <= 0) {
-        fq_mvpoly_init(result, matrix[0][0].nvars, matrix[0][0].npars, matrix[0][0].ctx);
+        dr_mpoly_init(result, matrix[0][0].nvars, matrix[0][0].npars, matrix[0][0].ctx);
         return;
     }
     
@@ -481,15 +488,16 @@ void compute_fq_det_poly_recursive(fq_mvpoly_t *result, fq_mvpoly_t **matrix, sl
                 fq_nmod_poly_init(poly_matrix[i][j], ctx);
                 
                 // Convert mvpoly to poly (direct conversion for univariate)
-                for (slong t = 0; t < matrix[i][j].nterms; t++) {
+                for (slong t = 0; t < dr_mpoly_length(&(matrix[i][j])); t++) {
+                    DR_MPOLY_TERM(term_3, &(matrix[i][j]), t);
+
                     slong degree = 0;
-                    if (matrix[i][j].terms[t].var_exp && nvars > 0) {
-                        degree = matrix[i][j].terms[t].var_exp[0];
-                    } else if (matrix[i][j].terms[t].par_exp && npars > 0) {
-                        degree = matrix[i][j].terms[t].par_exp[0];
+                    if (term_3.var_exp && nvars > 0) {
+                        degree = term_3.var_exp[0];
+                    } else if (term_3.par_exp && npars > 0) {
+                        degree = term_3.par_exp[0];
                     }
-                    fq_nmod_poly_set_coeff(poly_matrix[i][j], degree, 
-                                          matrix[i][j].terms[t].coeff, ctx);
+                    fq_nmod_poly_set_coeff(poly_matrix[i][j], degree, term_3.coeff, ctx);
                 }
             }
         }
@@ -500,7 +508,7 @@ void compute_fq_det_poly_recursive(fq_mvpoly_t *result, fq_mvpoly_t **matrix, sl
         compute_det_poly_recursive_helper(det_poly, poly_matrix, size, ctx);
         
         // Convert back to mvpoly
-        fq_mvpoly_init(result, nvars, npars, ctx);
+        dr_mpoly_init(result, nvars, npars, ctx);
         slong degree = fq_nmod_poly_degree(det_poly, ctx);
         for (slong d = 0; d <= degree; d++) {
             fq_nmod_t coeff;
@@ -511,12 +519,12 @@ void compute_fq_det_poly_recursive(fq_mvpoly_t *result, fq_mvpoly_t **matrix, sl
                 if (nvars > 0) {
                     slong *var_exp = (slong*) flint_calloc(nvars, sizeof(slong));
                     var_exp[0] = d;
-                    fq_mvpoly_add_term(result, var_exp, NULL, coeff);
+                    dr_mpoly_add_term(result, var_exp, NULL, coeff);
                     flint_free(var_exp);
                 } else {
                     slong *par_exp = (slong*) flint_calloc(npars, sizeof(slong));
                     par_exp[0] = d;
-                    fq_mvpoly_add_term(result, NULL, par_exp, coeff);
+                    dr_mpoly_add_term(result, NULL, par_exp, coeff);
                     flint_free(par_exp);
                 }
             }
@@ -615,7 +623,7 @@ void compute_fq_det_poly_recursive(fq_mvpoly_t *result, fq_mvpoly_t **matrix, sl
         print_timing("Recursive determinant", det_elapsed);
         print_timing("Convert back", back_elapsed);
         print_timing("Total poly recursive", total_elapsed);
-        printf("Final result: %ld terms\n", result->nterms);
+        printf("Final result: %ld terms\n", dr_mpoly_length(result));
         printf("============================================\n");
     }
 }
@@ -623,8 +631,9 @@ void compute_fq_det_poly_recursive(fq_mvpoly_t *result, fq_mvpoly_t **matrix, sl
 // ============= Kronecker+HNF Implementation =============
 
 // Compute the Kronecker bound for a multivariate polynomial matrix
-void compute_kronecker_bounds(slong *var_bounds, fq_mvpoly_t **matrix, 
-                             slong size, slong nvars, slong npars) {
+void compute_kronecker_bounds(slong *var_bounds, unified_mpoly_struct **matrix, slong size,
+                              slong nvars, slong npars)
+{
     slong total_vars = nvars + npars;
     slong *entry_max = NULL;
     int is_step1_structured = (size > 0 && nvars > 0 && (nvars % 2) == 0 &&
@@ -642,23 +651,25 @@ void compute_kronecker_bounds(slong *var_bounds, fq_mvpoly_t **matrix,
     // Find maximum degree in each variable across all matrix entries
     for (slong i = 0; i < size; i++) {
         for (slong j = 0; j < size; j++) {
-            fq_mvpoly_t *poly = &matrix[i][j];
-            
-            for (slong t = 0; t < poly->nterms; t++) {
+            unified_mpoly_struct *poly = &matrix[i][j];
+
+            for (slong t = 0; t < dr_mpoly_length(poly); t++) {
+                DR_MPOLY_TERM(term_4, poly, t);
+
                 // Check variable degrees
-                if (poly->terms[t].var_exp && nvars > 0) {
+                if (term_4.var_exp && nvars > 0) {
                     for (slong v = 0; v < nvars && v < poly->nvars; v++) {
-                        if (poly->terms[t].var_exp[v] > entry_max[v]) {
-                            entry_max[v] = poly->terms[t].var_exp[v];
+                        if (term_4.var_exp[v] > entry_max[v]) {
+                            entry_max[v] = term_4.var_exp[v];
                         }
                     }
                 }
-                
+
                 // Check parameter degrees
-                if (poly->terms[t].par_exp && npars > 0) {
+                if (term_4.par_exp && npars > 0) {
                     for (slong p = 0; p < npars && p < poly->npars; p++) {
-                        if (poly->terms[t].par_exp[p] > entry_max[nvars + p]) {
-                            entry_max[nvars + p] = poly->terms[t].par_exp[p];
+                        if (term_4.par_exp[p] > entry_max[nvars + p]) {
+                            entry_max[nvars + p] = term_4.par_exp[p];
                         }
                     }
                 }
@@ -675,17 +686,19 @@ void compute_kronecker_bounds(slong *var_bounds, fq_mvpoly_t **matrix,
         for (slong col = 0; col < size; col++) {
             long col_max_total = 0;
             for (slong row = 0; row < size; row++) {
-                fq_mvpoly_t *poly = &matrix[row][col];
-                for (slong t = 0; t < poly->nterms; t++) {
+                unified_mpoly_struct *poly = &matrix[row][col];
+                for (slong t = 0; t < dr_mpoly_length(poly); t++) {
+                    DR_MPOLY_TERM(term_5, poly, t);
+
                     long total_deg = 0;
-                    if (poly->terms[t].var_exp) {
+                    if (term_5.var_exp) {
                         for (slong v = 0; v < poly->nvars; v++) {
-                            total_deg += poly->terms[t].var_exp[v];
+                            total_deg += term_5.var_exp[v];
                         }
                     }
-                    if (poly->terms[t].par_exp) {
+                    if (term_5.par_exp) {
                         for (slong p = 0; p < poly->npars; p++) {
-                            total_deg += poly->terms[t].par_exp[p];
+                            total_deg += term_5.par_exp[p];
                         }
                     }
                     if (total_deg > col_max_total) {
@@ -735,18 +748,19 @@ void compute_kronecker_bounds(slong *var_bounds, fq_mvpoly_t **matrix,
             slong row_max = 0;
             
             for (slong col = 0; col < size; col++) {
-                fq_mvpoly_t *poly = &matrix[row][col];
-                
-                for (slong t = 0; t < poly->nterms; t++) {
+                unified_mpoly_struct *poly = &matrix[row][col];
+
+                for (slong t = 0; t < dr_mpoly_length(poly); t++) {
+                    DR_MPOLY_TERM(term_6, poly, t);
+
                     slong deg = 0;
-                    
-                    if (v < nvars && poly->terms[t].var_exp && v < poly->nvars) {
-                        deg = poly->terms[t].var_exp[v];
-                    } else if (v >= nvars && poly->terms[t].par_exp && 
-                              v - nvars < poly->npars) {
-                        deg = poly->terms[t].par_exp[v - nvars];
+
+                    if (v < nvars && term_6.var_exp && v < poly->nvars) {
+                        deg = term_6.var_exp[v];
+                    } else if (v >= nvars && term_6.par_exp && v - nvars < poly->npars) {
+                        deg = term_6.par_exp[v - nvars];
                     }
-                    
+
                     if (deg > row_max) row_max = deg;
                 }
             }
@@ -760,52 +774,51 @@ void compute_kronecker_bounds(slong *var_bounds, fq_mvpoly_t **matrix,
 }
 
 // Convert multivariate polynomial to univariate using Kronecker+HNF
-void mvpoly_to_univariate_kronecker(fq_nmod_poly_t uni_poly,
-                                   const fq_mvpoly_t *mv_poly,
-                                   const slong *substitution_powers,
-                                   const fq_nmod_ctx_t ctx) {
+void mvpoly_to_univariate_kronecker(fq_nmod_poly_t uni_poly, const unified_mpoly_struct *mv_poly,
+                                    const slong *substitution_powers, const fq_nmod_ctx_t ctx)
+{
     fq_nmod_poly_zero(uni_poly, ctx);
-    
-    if (mv_poly->nterms == 0) return;
-    
+
+    if (dr_mpoly_length(mv_poly) == 0)
+        return;
+
     slong total_vars = mv_poly->nvars + mv_poly->npars;
-    
-    for (slong t = 0; t < mv_poly->nterms; t++) {
+
+    for (slong t = 0; t < dr_mpoly_length(mv_poly); t++) {
+        DR_MPOLY_TERM(term_7, mv_poly, t);
+
         slong uni_exp = 0;
         
         // Compute univariate exponent: sum of var_exp[i] * substitution_powers[i]
-        if (mv_poly->terms[t].var_exp) {
+        if (term_7.var_exp) {
             for (slong v = 0; v < mv_poly->nvars; v++) {
-                uni_exp += mv_poly->terms[t].var_exp[v] * substitution_powers[v];
+                uni_exp += term_7.var_exp[v] * substitution_powers[v];
             }
         }
-        
-        if (mv_poly->terms[t].par_exp) {
+
+        if (term_7.par_exp) {
             for (slong p = 0; p < mv_poly->npars; p++) {
-                uni_exp += mv_poly->terms[t].par_exp[p] * 
-                          substitution_powers[mv_poly->nvars + p];
+                uni_exp += term_7.par_exp[p] * substitution_powers[mv_poly->nvars + p];
             }
         }
-        
+
         // Add coefficient at computed degree
         fq_nmod_t existing;
         fq_nmod_init(existing, ctx);
         fq_nmod_poly_get_coeff(existing, uni_poly, uni_exp, ctx);
-        fq_nmod_add(existing, existing, mv_poly->terms[t].coeff, ctx);
+        fq_nmod_add(existing, existing, term_7.coeff, ctx);
         fq_nmod_poly_set_coeff(uni_poly, uni_exp, existing, ctx);
         fq_nmod_clear(existing, ctx);
     }
 }
 
 // Convert univariate polynomial back to multivariate
-void univariate_to_mvpoly_kronecker(fq_mvpoly_t *mv_poly,
-                                   const fq_nmod_poly_t uni_poly,
-                                   const slong *substitution_powers,
-                                   const slong *var_bounds,
-                                   slong nvars, slong npars,
-                                   const fq_nmod_ctx_t ctx) {
-    fq_mvpoly_init(mv_poly, nvars, npars, ctx);
-    
+void univariate_to_mvpoly_kronecker(unified_mpoly_struct *mv_poly, const fq_nmod_poly_t uni_poly,
+                                    const slong *substitution_powers, const slong *var_bounds,
+                                    slong nvars, slong npars, const fq_nmod_ctx_t ctx)
+{
+    dr_mpoly_init(mv_poly, nvars, npars, ctx);
+
     slong degree = fq_nmod_poly_degree(uni_poly, ctx);
     if (degree < 0) return;
     
@@ -841,9 +854,9 @@ void univariate_to_mvpoly_kronecker(fq_mvpoly_t *mv_poly,
                     par_exp[v - nvars] = exp;
                 }
             }
-            
-            fq_mvpoly_add_term(mv_poly, var_exp, par_exp, coeff);
-            
+
+            dr_mpoly_add_term(mv_poly, var_exp, par_exp, coeff);
+
             if (var_exp) flint_free(var_exp);
             if (par_exp) flint_free(par_exp);
         }
@@ -853,9 +866,11 @@ void univariate_to_mvpoly_kronecker(fq_mvpoly_t *mv_poly,
 }
 
 // Compute determinant using Kronecker+HNF
-void compute_fq_det_kronecker(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size) {
+void compute_fq_det_kronecker(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
+                              slong size)
+{
     if (size <= 0) {
-        fq_mvpoly_init(result, matrix[0][0].nvars, matrix[0][0].npars, matrix[0][0].ctx);
+        dr_mpoly_init(result, matrix[0][0].nvars, matrix[0][0].npars, matrix[0][0].ctx);
         return;
     }
     
@@ -944,114 +959,16 @@ void compute_fq_det_kronecker(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong s
         print_timing("Univariate determinant", det_elapsed);
         print_timing("Convert back", back_elapsed);
         print_timing("Total Kronecker", total_elapsed);
-        printf("Final result: %ld terms\n", result->nterms);
+        printf("Final result: %ld terms\n", dr_mpoly_length(result));
         printf("==============================================\n");
     }
-    
 }
 
 // ============= Prime Field Conversion Functions Implementation =============
 
-void fq_mvpoly_to_nmod_mpoly(nmod_mpoly_t mpoly, const fq_mvpoly_t *poly, 
-                             nmod_mpoly_ctx_t mpoly_ctx) {
-    nmod_mpoly_zero(mpoly, mpoly_ctx);
-    
-    if (poly->nterms == 0) return;
-    
-    slong total_vars = poly->nvars + poly->npars;
-    
-    // Pre-allocate space for better performance
-    nmod_mpoly_fit_length(mpoly, poly->nterms, mpoly_ctx);
-    
-    for (slong i = 0; i < poly->nterms; i++) {
-        ulong *exps = (ulong*) flint_calloc(total_vars, sizeof(ulong));
-        
-        if (poly->terms[i].var_exp && poly->nvars > 0) {
-            for (slong j = 0; j < poly->nvars; j++) {
-                exps[j] = (ulong)poly->terms[i].var_exp[j];
-            }
-        }
-        
-        if (poly->terms[i].par_exp && poly->npars > 0) {
-            for (slong j = 0; j < poly->npars; j++) {
-                exps[poly->nvars + j] = (ulong)poly->terms[i].par_exp[j];
-            }
-        }
-        
-        // For prime fields, extract the coefficient as ulong
-        ulong coeff_val = nmod_poly_get_coeff_ui(poly->terms[i].coeff, 0);
-        nmod_mpoly_push_term_ui_ui(mpoly, coeff_val, exps, mpoly_ctx);
-        flint_free(exps);
-    }
-    
-    nmod_mpoly_sort_terms(mpoly, mpoly_ctx);
-    nmod_mpoly_combine_like_terms(mpoly, mpoly_ctx);
-}
-
-void nmod_mpoly_to_fq_mvpoly(fq_mvpoly_t *result, const nmod_mpoly_t poly,
-                             slong nvars, slong npars,
-                             const nmod_mpoly_ctx_t mpoly_ctx,
-                             const fq_nmod_ctx_t field_ctx) {
-    fq_mvpoly_init(result, nvars, npars, field_ctx);
-    
-    slong nterms = nmod_mpoly_length(poly, mpoly_ctx);
-    if (nterms == 0) return;
-    
-    slong total_vars = nmod_mpoly_ctx_nvars(mpoly_ctx);
-    
-    if (result->alloc < nterms) {
-        result->alloc = nterms;
-        result->terms = (fq_monomial_t*) flint_realloc(result->terms, 
-                                                        result->alloc * sizeof(fq_monomial_t));
-    }
-    
-    // Batch allocate exponent buffer
-    ulong *exp_buffer = (ulong*) flint_malloc(total_vars * sizeof(ulong));
-    
-    // Batch convert with proper initialization
-    for (slong i = 0; i < nterms; i++) {
-        // Get coefficient
-        mp_limb_t coeff_limb = nmod_mpoly_get_term_coeff_ui(poly, i, mpoly_ctx);
-        
-        // Initialize coefficient (important!)
-        fq_nmod_init(result->terms[i].coeff, field_ctx);
-        fq_nmod_set_ui(result->terms[i].coeff, coeff_limb, field_ctx);
-        
-        // Get exponents
-        nmod_mpoly_get_term_exp_ui(exp_buffer, poly, i, mpoly_ctx);
-        
-        // Allocate and set variable exponents
-        if (nvars > 0) {
-            result->terms[i].var_exp = (slong*) flint_calloc(nvars, sizeof(slong));
-            for (slong j = 0; j < nvars && j < total_vars; j++) {
-                result->terms[i].var_exp[j] = (slong)exp_buffer[j];
-            }
-        } else {
-            result->terms[i].var_exp = NULL;
-        }
-        
-        // Allocate and set parameter exponents
-        if (npars > 0 && total_vars > nvars) {
-            result->terms[i].par_exp = (slong*) flint_calloc(npars, sizeof(slong));
-            for (slong j = 0; j < npars && (nvars + j) < total_vars; j++) {
-                result->terms[i].par_exp[j] = (slong)exp_buffer[nvars + j];
-            }
-        } else {
-            result->terms[i].par_exp = NULL;
-        }
-    }
-    
-    // Set term count
-    result->nterms = nterms;
-    
-    // Cleanup
-    flint_free(exp_buffer);
-}
-
-void fq_matrix_mvpoly_to_nmod_mpoly(nmod_mpoly_t **mpoly_matrix, 
-                                   fq_mvpoly_t **mvpoly_matrix, 
-                                   slong size, 
-                                   nmod_mpoly_ctx_t mpoly_ctx) {
+void dr_mpoly_matrix_export_nmod(nmod_mpoly_t **mpoly_matrix, unified_mpoly_struct **mvpoly_matrix,
+                                 slong size, nmod_mpoly_ctx_t mpoly_ctx)
+{
     DET_PRINT("Converting %ld x %ld matrix to nmod_mpoly\n", size, size);
     
     timing_info_t start = start_timing();
@@ -1059,7 +976,7 @@ void fq_matrix_mvpoly_to_nmod_mpoly(nmod_mpoly_t **mpoly_matrix,
     for (slong i = 0; i < size; i++) {
         for (slong j = 0; j < size; j++) {
             nmod_mpoly_init(mpoly_matrix[i][j], mpoly_ctx);
-            fq_mvpoly_to_nmod_mpoly(mpoly_matrix[i][j], &mvpoly_matrix[i][j], mpoly_ctx);
+            dr_mpoly_to_nmod_mpoly(mpoly_matrix[i][j], &mvpoly_matrix[i][j], mpoly_ctx);
         }
     }
     
@@ -1555,7 +1472,7 @@ static int mq_filter_init(mq_det_filter *f, slong nvars,
  * these trailing rows. Stop at the first term outside the order ideal. Since
  * zero was included, this bound only grows with the number of rows. */
 static slong mq_safe_axis_layers(const mq_det_filter *f, const mq_monom_set *closure,
-                                 fq_mvpoly_t **matrix, slong size, slong axis)
+                                 unified_mpoly_struct **matrix, slong size, slong axis)
 {
     mq_monom_set previous = {flint_calloc(16, sizeof(ulong)), 16, 0};
     mq_monom_insert(&previous, 0);
@@ -1563,10 +1480,14 @@ static slong mq_safe_axis_layers(const mq_det_filter *f, const mq_monom_set *clo
     for (slong row = size - 1; row >= 1; row--) {
         ulong active = 0;
         for (slong col = 0; col < size; col++) {
-            const fq_mvpoly_t *p = &matrix[row][col];
-            for (slong t = 0; t < p->nterms; t++) if (p->terms[t].var_exp)
-                for (slong v = 0; v < f->nvars; v++)
-                    if (p->terms[t].var_exp[axis * f->nvars + v]) active |= UWORD(1) << v;
+            const unified_mpoly_struct *p = &matrix[row][col];
+            for (slong t = 0; t < dr_mpoly_length(p); t++) {
+                DR_MPOLY_TERM(term_10, p, t);
+                if (term_10.var_exp)
+                    for (slong v = 0; v < f->nvars; v++)
+                        if (term_10.var_exp[axis * f->nvars + v])
+                            active |= UWORD(1) << v;
+            }
         }
         mq_monom_set next = {flint_calloc(16, sizeof(ulong)), 16, 0};
         int inside = 1;
@@ -2191,9 +2112,8 @@ static void compute_nmod_mpoly_det_minor(nmod_mpoly_t result, nmod_mpoly_t **mat
     free(rows);
 }
 
-static void compute_fq_det_nmod_minor_direct(fq_mvpoly_t *result,
-                                              fq_mvpoly_t **matrix,
-                                              slong size)
+static void compute_fq_det_nmod_minor_direct(unified_mpoly_struct *result,
+                                             unified_mpoly_struct **matrix, slong size)
 {
     const fq_nmod_ctx_struct *ctx = matrix[0][0].ctx;
     slong nvars = matrix[0][0].nvars;
@@ -2209,21 +2129,23 @@ static void compute_fq_det_nmod_minor_direct(fq_mvpoly_t *result,
     for (slong i = 0; i < size; i++) {
         nmod_matrix[i] = (nmod_mpoly_t *) flint_malloc((size_t) size * sizeof(nmod_mpoly_t));
     }
-    fq_matrix_mvpoly_to_nmod_mpoly(nmod_matrix, matrix, size, nmod_ctx);
+    /* Borrow read-only native arrays; only the small struct grid is copied. */
+    for (slong i = 0; i < size; i++)
+        for (slong j = 0; j < size; j++) {
+            dr_mpoly_normalize(&matrix[i][j]);
+            *nmod_matrix[i][j] = matrix[i][j].data.nmod_poly;
+        }
 
     nmod_mpoly_t det_nmod;
     nmod_mpoly_init(det_nmod, nmod_ctx);
     compute_nmod_mpoly_det_minor(det_nmod, nmod_matrix, size, nmod_ctx,
                                   use_parallel, g_dixon_det_cache_limit, NULL);
 
-    fq_mvpoly_clear(result);
-    nmod_mpoly_to_fq_mvpoly(result, det_nmod, nvars, npars, nmod_ctx, ctx);
+    dr_mpoly_clear(result);
+    dr_mpoly_take_nmod(result, det_nmod, nvars, npars, nmod_ctx, ctx);
 
     nmod_mpoly_clear(det_nmod, nmod_ctx);
     for (slong i = 0; i < size; i++) {
-        for (slong j = 0; j < size; j++) {
-            nmod_mpoly_clear(nmod_matrix[i][j], nmod_ctx);
-        }
         flint_free(nmod_matrix[i]);
     }
     flint_free(nmod_matrix);
@@ -2235,9 +2157,10 @@ static void compute_fq_det_nmod_minor_direct(fq_mvpoly_t *result,
  * Each axis contains its own count of exponent vectors of length size-1. */
 #include "mq_compact_output.h"
 
-static int compute_fq_det_mq_projected_impl(fq_mvpoly_t *result, fq_mq_compact *compact, fq_mvpoly_t **matrix,
-                                   slong size, const slong *rows, slong row_count,
-                                   const slong *cols, slong col_count)
+static int compute_fq_det_mq_projected_impl(unified_mpoly_struct *result, fq_mq_compact *compact,
+                                            unified_mpoly_struct **matrix, slong size,
+                                            const slong *rows, slong row_count, const slong *cols,
+                                            slong col_count)
 {
     if (size < 2 || size >= FLINT_BITS || row_count <= 0 || row_count > MQ_FILTER_MAX_MONOMS ||
         col_count <= 0 || col_count > MQ_FILTER_MAX_MONOMS || !rows || !cols || !is_prime_field(matrix[0][0].ctx) ||
@@ -2245,14 +2168,19 @@ static int compute_fq_det_mq_projected_impl(fq_mvpoly_t *result, fq_mq_compact *
     /* This backend intentionally accepts only divided-difference MQ matrices.
      * Check all entries, including the parameter degree, before packing. */
     for (slong i = 0; i < size; i++) for (slong j = 0; j < size; j++) {
-        const fq_mvpoly_t *p = &matrix[i][j];
-        if (p->nvars != 2 * (size - 1) || p->npars != 1) return 0;
-        for (slong k = 0; k < p->nterms; k++) {
-            slong degree = p->terms[k].par_exp ? p->terms[k].par_exp[0] : 0;
-            if (p->terms[k].var_exp)
-                for (slong v = 0; v < p->nvars; v++) degree += p->terms[k].var_exp[v];
-            if (degree > (i == 0 ? 2 : 1)) return 0;
-        }
+            const unified_mpoly_struct *p = &matrix[i][j];
+            if (p->nvars != 2 * (size - 1) || p->npars != 1)
+                return 0;
+            for (slong k = 0; k < dr_mpoly_length(p); k++) {
+                DR_MPOLY_TERM(term_11, p, k);
+
+                slong degree = term_11.par_exp ? term_11.par_exp[0] : 0;
+                if (term_11.var_exp)
+                    for (slong v = 0; v < p->nvars; v++)
+                        degree += term_11.var_exp[v];
+                if (degree > (i == 0 ? 2 : 1))
+                    return 0;
+            }
     }
     for (slong i = 0; i < row_count * (size - 1); i++)
         if (rows[i] < 0 || rows[i] > size + 1) return 0;
@@ -2273,7 +2201,7 @@ static int compute_fq_det_mq_projected_impl(fq_mvpoly_t *result, fq_mq_compact *
                filter.safe_linear_layers, filter.packed_bits ? "yes" : "no");
     nmod_mpoly_t **m = flint_malloc((size_t) size * sizeof(*m));
     for (slong i = 0; i < size; i++) m[i] = flint_malloc((size_t) size * sizeof(**m));
-    fq_matrix_mvpoly_to_nmod_mpoly(m, matrix, size, ctx);
+    dr_mpoly_matrix_export_nmod(m, matrix, size, ctx);
     /* Keep the small linear rows and cached minors in the same safe packing,
      * avoiding a repack for every shifted stream in the linear merge kernel. */
     for (slong i = 0; i < size; i++) for (slong j = 0; j < size; j++)
@@ -2291,12 +2219,12 @@ static int compute_fq_det_mq_projected_impl(fq_mvpoly_t *result, fq_mq_compact *
             printf("  MQ compact output: %.3fs, %ld rows x %ld columns, %.1f MiB records\n",
                 get_wall_time()-start,compact->nrows,compact->ncols,
                 (double)compact->nterms*sizeof(*compact->terms)/(1024.0*1024.0));
-    }
-    else nmod_mpoly_to_fq_mvpoly(result, det, nv, 1, ctx, fq);
+    } else
+        dr_mpoly_take_nmod(result, det, nv, 1, ctx, fq);
     if (g_dixon_verbose_level >= 2)
         printf("  MQ projected minor DP: targets=%ld x %ld, closures=%ld x %ld, output=%ld terms\n",
-               filter.row_targets.count, filter.col_targets.count,
-               filter.rows.count, filter.cols.count, compact ? compact->nterms : result->nterms);
+               filter.row_targets.count, filter.col_targets.count, filter.rows.count,
+               filter.cols.count, compact ? compact->nterms : dr_mpoly_length(result));
     nmod_mpoly_clear(det, ctx);
     for (slong i = 0; i < size; i++) {
         for (slong j = 0; j < size; j++) nmod_mpoly_clear(m[i][j], ctx);
@@ -2306,21 +2234,21 @@ static int compute_fq_det_mq_projected_impl(fq_mvpoly_t *result, fq_mq_compact *
     return 1;
 }
 
-int compute_fq_det_mq_projected_rect(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
-    slong size, const slong *rows, slong nr, const slong *cols, slong nc)
+int compute_fq_det_mq_projected_rect(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
+                                     slong size, const slong *rows, slong nr, const slong *cols,
+                                     slong nc)
 {
     return compute_fq_det_mq_projected_impl(result,NULL,matrix,size,rows,nr,cols,nc);
 }
 
-int compute_fq_det_mq_compact(fq_mq_compact *out, fq_mvpoly_t **matrix,
-    slong size, const slong *rows, slong nr, const slong *cols, slong nc)
+int compute_fq_det_mq_compact(fq_mq_compact *out, unified_mpoly_struct **matrix, slong size,
+                              const slong *rows, slong nr, const slong *cols, slong nc)
 {
     return compute_fq_det_mq_projected_impl(NULL,out,matrix,size,rows,nr,cols,nc);
 }
 
-int fq_mq_project_full(fq_mvpoly_t *result, const fq_mvpoly_t *full,
-                      const slong *rows, slong row_count,
-                      const slong *cols, slong col_count)
+int fq_mq_project_full(unified_mpoly_struct *result, const unified_mpoly_struct *full,
+                       const slong *rows, slong row_count, const slong *cols, slong col_count)
 {
     slong n=full->nvars/2;
     if (result==full || full->nvars!=2*n || full->npars!=1 || n<1 || n>=FLINT_BITS ||
@@ -2330,46 +2258,50 @@ int fq_mq_project_full(fq_mvpoly_t *result, const fq_mvpoly_t *full,
     for(slong i=0;i<col_count*n;i++)if(cols[i]<0 || cols[i]>n+2)return 0;
     mq_det_filter filter;
     if (!mq_filter_init(&filter,n,rows,row_count,cols,col_count))return 0;
-    fq_mvpoly_init(result,full->nvars,1,full->ctx);
+    dr_mpoly_init(result, full->nvars, 1, full->ctx);
     ulong exps[2*FLINT_BITS+1];
-    for(slong i=0;i<full->nterms;i++) {
-        const fq_monomial_t *term=full->terms+i;
+    for (slong i = 0; i < dr_mpoly_length(full); i++) {
+        DR_MPOLY_TERM(term_12, full, i);
+
+        const dr_mpoly_term_view *term = &term_12;
         for(slong j=0;j<2*n;j++)exps[j]=term->var_exp[j];
         exps[2*n]=term->par_exp[0];
         if (mq_filter_accepts(&filter,exps,1))
-            fq_mvpoly_add_term_fast(result,term->var_exp,term->par_exp,term->coeff);
+            dr_mpoly_add_term_fast(result, term->var_exp, term->par_exp, term->coeff);
     }
     mq_filter_clear(&filter);
     return 1;
 }
 
-int compute_fq_det_mq_projected(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
-                              slong size, const slong *rows,
-                              const slong *cols, slong count)
+int compute_fq_det_mq_projected(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
+                                slong size, const slong *rows, const slong *cols, slong count)
 {
     return compute_fq_det_mq_projected_rect(result, matrix, size, rows, count, cols, count);
 }
 
 // ============= Univariate Optimization Implementation =============
 
-int is_univariate_matrix(fq_mvpoly_t **matrix, slong size) {
+int is_univariate_matrix(unified_mpoly_struct **matrix, slong size)
+{
     if (size == 0) return 0;
     slong nvars = matrix[0][0].nvars;
     slong npars = matrix[0][0].npars;
     return (nvars == 1 && npars == 0);
 }
 
-void compute_fq_det_univariate_optimized(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size) {
+void compute_fq_det_univariate_optimized(unified_mpoly_struct *result,
+                                         unified_mpoly_struct **matrix, slong size)
+{
     if (size <= 0) {
-        fq_mvpoly_init(result, matrix[0][0].nvars, matrix[0][0].npars, matrix[0][0].ctx);
+        dr_mpoly_init(result, matrix[0][0].nvars, matrix[0][0].npars, matrix[0][0].ctx);
         return;
     }
     
     DET_PRINT("Using univariate polynomial matrix optimization for %ldx%ld matrix\n", size, size);
     
     const fq_nmod_ctx_struct *ctx = matrix[0][0].ctx;
-    fq_mvpoly_init(result, 1, 0, ctx);
-    
+    dr_mpoly_init(result, 1, 0, ctx);
+
     timing_info_t start = start_timing();
     
     fq_nmod_poly_mat_t poly_mat;
@@ -2379,9 +2311,11 @@ void compute_fq_det_univariate_optimized(fq_mvpoly_t *result, fq_mvpoly_t **matr
         for (slong j = 0; j < size; j++) {
             fq_nmod_poly_struct *entry = fq_nmod_poly_mat_entry(poly_mat, i, j);
             fq_nmod_poly_zero(entry, ctx);
-            
-            for (slong k = 0; k < matrix[i][j].nterms; k++) {
-                fq_monomial_t *term = &matrix[i][j].terms[k];
+
+            for (slong k = 0; k < dr_mpoly_length(&(matrix[i][j])); k++) {
+                DR_MPOLY_TERM(term_13, &(matrix[i][j]), k);
+
+                dr_mpoly_term_view *term = &term_13;
                 slong degree = 0;
                 if (term->var_exp && matrix[i][j].nvars > 0) {
                     degree = term->var_exp[0];
@@ -2409,7 +2343,7 @@ void compute_fq_det_univariate_optimized(fq_mvpoly_t *result, fq_mvpoly_t **matr
             if (!fq_nmod_is_zero(coeff, ctx)) {
                 slong *var_exp = (slong*) flint_calloc(1, sizeof(slong));
                 var_exp[0] = d;
-                fq_mvpoly_add_term(result, var_exp, NULL, coeff);
+                dr_mpoly_add_term(result, var_exp, NULL, coeff);
                 flint_free(var_exp);
             }
             
@@ -2419,131 +2353,6 @@ void compute_fq_det_univariate_optimized(fq_mvpoly_t *result, fq_mvpoly_t **matr
     
     fq_nmod_poly_clear(det_poly, ctx);
     fq_nmod_poly_mat_clear(poly_mat, ctx);
-}
-
-// ============= Conversion Functions Implementation =============
-
-void fq_mvpoly_to_fq_nmod_mpoly(fq_nmod_mpoly_t mpoly, const fq_mvpoly_t *poly, 
-                               fq_nmod_mpoly_ctx_t mpoly_ctx) {
-    fq_nmod_mpoly_zero(mpoly, mpoly_ctx);
-    
-    if (poly->nterms == 0) return;
-    
-    slong total_vars = poly->nvars + poly->npars;
-    
-    // Pre-allocate space for better performance
-    fq_nmod_mpoly_fit_length(mpoly, poly->nterms, mpoly_ctx);
-    
-    for (slong i = 0; i < poly->nterms; i++) {
-        ulong *exps = (ulong*) flint_calloc(total_vars, sizeof(ulong));
-        
-        if (poly->terms[i].var_exp && poly->nvars > 0) {
-            for (slong j = 0; j < poly->nvars; j++) {
-                exps[j] = (ulong)poly->terms[i].var_exp[j];
-            }
-        }
-        
-        if (poly->terms[i].par_exp && poly->npars > 0) {
-            for (slong j = 0; j < poly->npars; j++) {
-                exps[poly->nvars + j] = (ulong)poly->terms[i].par_exp[j];
-            }
-        }
-        
-        fq_nmod_mpoly_push_term_fq_nmod_ui(mpoly, poly->terms[i].coeff, exps, mpoly_ctx);
-        flint_free(exps);
-    }
-    
-    fq_nmod_mpoly_sort_terms(mpoly, mpoly_ctx);
-    fq_nmod_mpoly_combine_like_terms(mpoly, mpoly_ctx);
-}
-
-void fq_nmod_mpoly_to_fq_mvpoly(fq_mvpoly_t *poly, const fq_nmod_mpoly_t mpoly,
-                               slong nvars, slong npars, 
-                               fq_nmod_mpoly_ctx_t mpoly_ctx, const fq_nmod_ctx_t ctx) {
-    fq_mvpoly_init(poly, nvars, npars, ctx);
-    slong nterms = fq_nmod_mpoly_length(mpoly, mpoly_ctx);
-    if (nterms == 0) return;
-    
-    slong total_vars = fq_nmod_mpoly_ctx_nvars(mpoly_ctx);
-    
-    // Pre-allocate the terms array
-    if (poly->alloc < nterms) {
-        // First, clear any existing terms
-        for (slong i = 0; i < poly->nterms; i++) {
-            fq_nmod_clear(poly->terms[i].coeff, ctx);
-            if (poly->terms[i].var_exp) flint_free(poly->terms[i].var_exp);
-            if (poly->terms[i].par_exp) flint_free(poly->terms[i].par_exp);
-        }
-        
-        poly->alloc = nterms;
-        poly->terms = (fq_monomial_t*) flint_realloc(poly->terms, 
-                                                      poly->alloc * sizeof(fq_monomial_t));
-        
-        // Initialize all term structures
-        for (slong i = 0; i < poly->alloc; i++) {
-            // Zero out the structure first
-            memset(&poly->terms[i], 0, sizeof(fq_monomial_t));
-        }
-    }
-   
-    // Allocate a single exponent buffer for reading
-    ulong *exp_buffer = (ulong*) flint_malloc(total_vars * sizeof(ulong));
-    
-    // Process all terms - but allocate individually for compatibility
-    for (slong i = 0; i < nterms; i++) {
-        // Initialize coefficient
-        fq_nmod_init(poly->terms[i].coeff, ctx);
-        fq_nmod_mpoly_get_term_coeff_fq_nmod(poly->terms[i].coeff, mpoly, i, mpoly_ctx);
-        // Get exponents for this term
-        fq_nmod_mpoly_get_term_exp_ui(exp_buffer, mpoly, i, mpoly_ctx);
-       
-        // Allocate and set variable exponents
-        if (nvars > 0) {
-            poly->terms[i].var_exp = (slong*) flint_calloc(nvars, sizeof(slong));
-            for (slong j = 0; j < nvars && j < total_vars; j++) {
-                poly->terms[i].var_exp[j] = (slong)exp_buffer[j];
-            }
-        } else {
-            poly->terms[i].var_exp = NULL;
-        }
-        // Allocate and set parameter exponents
-        if (npars > 0 && total_vars > nvars) {
-            poly->terms[i].par_exp = (slong*) flint_calloc(npars, sizeof(slong));
-            for (slong j = 0; j < npars && (nvars + j) < total_vars; j++) {
-                poly->terms[i].par_exp[j] = (slong)exp_buffer[nvars + j];
-            }
-        } else {
-            poly->terms[i].par_exp = NULL;
-        }
-    }
-
-// Set the number of terms
-    poly->nterms = nterms;
-    if (g_field_equation_reduction) {
-        fq_mvpoly_reduce_field_equation(poly);
-    }
-    
-    // Cleanup
-    flint_free(exp_buffer);
-}
-
-void fq_matrix_mvpoly_to_mpoly(fq_nmod_mpoly_t **mpoly_matrix, 
-                              fq_mvpoly_t **mvpoly_matrix, 
-                              slong size, 
-                              fq_nmod_mpoly_ctx_t mpoly_ctx) {
-    DET_PRINT("Converting %ld x %ld matrix\n", size, size);
-    
-    timing_info_t start = start_timing();
-    
-    for (slong i = 0; i < size; i++) {
-        for (slong j = 0; j < size; j++) {
-            fq_nmod_mpoly_init(mpoly_matrix[i][j], mpoly_ctx);
-            fq_mvpoly_to_fq_nmod_mpoly(mpoly_matrix[i][j], &mvpoly_matrix[i][j], mpoly_ctx);
-        }
-    }
-    
-    timing_info_t elapsed = end_timing(start);
-    print_timing("Matrix conversion", elapsed);
 }
 
 // ============= Optimized Determinant Computation Implementation =============
@@ -2938,9 +2747,11 @@ void compute_fq_nmod_mpoly_det_parallel_optimized(fq_nmod_mpoly_t det_result,
     flint_free(partial_results);
 }
 
-void compute_fq_det_huang_interpolation(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size) {
+void compute_fq_det_huang_interpolation(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
+                                        slong size)
+{
     if (size <= 0) {
-        fq_mvpoly_init(result, matrix[0][0].nvars, matrix[0][0].npars, matrix[0][0].ctx);
+        dr_mpoly_init(result, matrix[0][0].nvars, matrix[0][0].npars, matrix[0][0].ctx);
         return;
     }
     
@@ -2976,9 +2787,9 @@ void compute_fq_det_huang_interpolation(fq_mvpoly_t *result, fq_mvpoly_t **matri
         for (slong j = 0; j < size; j++) {
             nmod_mpoly_t temp;
             nmod_mpoly_init(temp, nmod_ctx);
-            
-            // Convert fq_mvpoly to nmod_mpoly
-            fq_mvpoly_to_nmod_mpoly(temp, &matrix[i][j], nmod_ctx);
+
+            // Convert dr_mpoly to nmod_mpoly
+            dr_mpoly_to_nmod_mpoly(temp, &matrix[i][j], nmod_ctx);
             poly_mat_entry_set(&huang_mat, i, j, temp, nmod_ctx);
             
             nmod_mpoly_clear(temp, nmod_ctx);
@@ -2993,10 +2804,10 @@ void compute_fq_det_huang_interpolation(fq_mvpoly_t *result, fq_mvpoly_t **matri
     ComputePolyMatrixDet(det_nmod, &huang_mat, nvars + npars, p, nmod_ctx);
     timing_info_t huang_elapsed = end_timing(huang_start);
     print_timing("sparse interpolation", huang_elapsed);
-    
-    // Convert result back to fq_mvpoly
-    nmod_mpoly_to_fq_mvpoly(result, det_nmod, nvars, npars, nmod_ctx, ctx);
-    
+
+    // Convert result back to dr_mpoly
+    dr_mpoly_take_nmod(result, det_nmod, nvars, npars, nmod_ctx, ctx);
+
     DET_PRINT("Final result: %ld terms\n", result->nterms);
     
     // Cleanup
@@ -3009,12 +2820,12 @@ void compute_fq_det_huang_interpolation(fq_mvpoly_t *result, fq_mvpoly_t **matri
 }
 
 /* Main function extracted from the #else branch */
-static void compute_fq_det_unified_interface_impl(fq_mvpoly_t *result,
-                                                  fq_mvpoly_t **matrix,
-                                                  slong size,
-                                                  int method) {
+static void compute_fq_det_unified_interface_impl(unified_mpoly_struct *result,
+                                                  unified_mpoly_struct **matrix, slong size,
+                                                  int method)
+{
     if (size <= 0) {
-        fq_mvpoly_init(result, matrix[0][0].nvars, matrix[0][0].npars, matrix[0][0].ctx);
+        dr_mpoly_init(result, matrix[0][0].nvars, matrix[0][0].npars, matrix[0][0].ctx);
         return;
     }
 
@@ -3032,7 +2843,7 @@ static void compute_fq_det_unified_interface_impl(fq_mvpoly_t *result,
               (method == DET_METHOD_BALANCED_SPLIT) ? " via experimental balanced split" : "",
               max_threads);
 
-    fq_mvpoly_init(result, nvars, npars, ctx);
+    dr_mpoly_init(result, nvars, npars, ctx);
 
     // Check for univariate optimization
     if (is_univariate_matrix(matrix, size) && size >= UNIVARIATE_THRESHOLD) {
@@ -3054,402 +2865,46 @@ static void compute_fq_det_unified_interface_impl(fq_mvpoly_t *result,
         return;
     }
 
-    // ===== USE UNIFIED INTERFACE =====
-    DET_PRINT("Using unified multivariate polynomial interface\n");
-    
-    // DEBUG: Print original matrix
-    //debug_print_fq_mvpoly_matrix(matrix, size, "ORIGINAL");
-    // Step 1: Create field context wrapper
-    field_ctx_t field_ctx;
-    field_ctx_init(&field_ctx, ctx);  // Properly initialize the field context
-
-    // Verify the field type detection
-    mp_limb_t p = fq_nmod_ctx_modulus(ctx)->mod.n;
-    slong degree = fq_nmod_ctx_degree(ctx);
-    DET_PRINT("Field: p=%lu, degree=%ld, detected type=%d\n", p, degree, field_ctx.field_id);
-    
-    // Debug: print field context details
-    //printf("Field context details:\n");
-    //printf("  field_id: %d\n", field_ctx.field_id);
-    //printf("  modulus: ");
-    //fq_nmod_ctx_modulus_print_pretty(ctx, "t");
-    //printf("\n");
-    //printf("  degree: %ld\n", degree);
-    //printf("  characteristic: %lu\n", p);
-    // Step 2: Create unified multivariate context
-    unified_mpoly_ctx_t unified_ctx = unified_mpoly_ctx_init(total_vars, ORD_LEX, &field_ctx);
-    if (!unified_ctx) {
-        printf("ERROR: Failed to create unified context\n");
-        field_ctx_clear(&field_ctx);
-        return;
-    }
-    // Step 3: Allocate unified polynomial matrix
-    unified_mpoly_t **unified_matrix = (unified_mpoly_t**) malloc(size * sizeof(unified_mpoly_t*));
+    /* Borrow the native entries. The determinant kernels own their workspaces. */
+    unified_mpoly_ctx_t ring = matrix[0][0].ctx_ptr;
+    unified_mpoly_t **entries = flint_malloc(size * sizeof(*entries));
     for (slong i = 0; i < size; i++) {
-        unified_matrix[i] = (unified_mpoly_t*) malloc(size * sizeof(unified_mpoly_t));
+        entries[i] = flint_malloc(size * sizeof(**entries));
         for (slong j = 0; j < size; j++) {
-            unified_matrix[i][j] = unified_mpoly_init(unified_ctx);
-            if (!unified_matrix[i][j]) {
-                printf("ERROR: Failed to initialize unified polynomial at (%ld,%ld)\n", i, j);
-                for (slong ii = 0; ii <= i; ii++) {
-                    slong limit = (ii == i) ? j : size;
-                    for (slong jj = 0; jj < limit; jj++) {
-                        unified_mpoly_clear(unified_matrix[ii][jj]);
-                    }
-                    free(unified_matrix[ii]);
-                }
-                free(unified_matrix);
-                unified_mpoly_ctx_clear(unified_ctx);
-                field_ctx_clear(&field_ctx);
-                return;
-            }
+            dr_mpoly_normalize(&matrix[i][j]);
+            entries[i][j] = &matrix[i][j];
         }
     }
-    // Step 4: Convert fq_mvpoly matrix to unified_mpoly matrix - Fast batch version
-    timing_info_t convert_start = start_timing();
-    DET_PRINT("Converting %ldx%ld matrix to unified format\n", size, size);
-    
-    // Create mpoly context for intermediate conversion
-    fq_nmod_mpoly_ctx_t mpoly_ctx;
-    fq_nmod_mpoly_ctx_init(mpoly_ctx, total_vars, ORD_LEX, ctx);
-    
-    for (slong i = 0; i < size; i++) {
-        for (slong j = 0; j < size; j++) {
-            unified_mpoly_zero(unified_matrix[i][j]);
-            
-            fq_mvpoly_t *src_poly = &matrix[i][j];
-            
-            if (src_poly->nterms == 0) {
-                continue; // Skip empty polynomials
-            }
-            
-            // Method 1: Use push_term interface for batch processing
-            fq_nmod_mpoly_t temp_poly;
-            fq_nmod_mpoly_init(temp_poly, mpoly_ctx);
-            
-            // Push all terms at once
-            for (slong t = 0; t < src_poly->nterms; t++) {
-                if (fq_nmod_is_zero(src_poly->terms[t].coeff, ctx)) {
-                    continue;
-                }
-                
-                // Build combined exponent vector
-                ulong *exp = (ulong*) flint_calloc(total_vars, sizeof(ulong));
-                
-                // Copy variable exponents
-                if (src_poly->terms[t].var_exp && nvars > 0) {
-                    for (slong v = 0; v < nvars; v++) {
-                        exp[v] = (ulong)src_poly->terms[t].var_exp[v];
-                    }
-                }
-                
-                // Copy parameter exponents  
-                if (src_poly->terms[t].par_exp && npars > 0) {
-                    for (slong p = 0; p < npars; p++) {
-                        exp[nvars + p] = (ulong)src_poly->terms[t].par_exp[p];
-                    }
-                }
-                
-                // Push term directly - much faster than repeated add
-                fq_nmod_mpoly_push_term_fq_nmod_ui(temp_poly, src_poly->terms[t].coeff, exp, mpoly_ctx);
-                
-                flint_free(exp);
-            }
-            
-            // Sort and combine like terms once at the end
-            fq_nmod_mpoly_sort_terms(temp_poly, mpoly_ctx);
-            fq_nmod_mpoly_combine_like_terms(temp_poly, mpoly_ctx);
-            
-            // Convert from fq_nmod_mpoly to unified_mpoly
-            slong temp_length = fq_nmod_mpoly_length(temp_poly, mpoly_ctx);
-            
-            for (slong k = 0; k < temp_length; k++) {
-                // Get coefficient
-                fq_nmod_t coeff;
-                fq_nmod_init(coeff, ctx);
-                fq_nmod_mpoly_get_term_coeff_fq_nmod(coeff, temp_poly, k, mpoly_ctx);
-                
-                // Get exponent vector
-                ulong *exp = (ulong*) flint_calloc(total_vars, sizeof(ulong));
-                fq_nmod_mpoly_get_term_exp_ui(exp, temp_poly, k, mpoly_ctx);
-                
-                // Convert coefficient to field element
-                field_elem_u field_coeff;
-                void *ctx_ptr = (field_ctx.field_id == FIELD_ID_NMOD) ?
-                               (void*)&field_ctx.ctx.nmod_ctx :
-                               (field_ctx.field_id == FIELD_ID_FQ_ZECH) ?
-                               (void*)field_ctx.ctx.zech_ctx :
-                               (void*)field_ctx.ctx.fq_ctx;
-                field_init_elem(&field_coeff, field_ctx.field_id, ctx_ptr);
-                fq_nmod_to_field_elem(&field_coeff, coeff, &field_ctx);
-                
-                // Set in unified polynomial
-                unified_mpoly_set_coeff_ui(unified_matrix[i][j], &field_coeff, exp);
-                
-                // Cleanup
-                field_clear_elem(&field_coeff, field_ctx.field_id, ctx_ptr);
-                fq_nmod_clear(coeff, ctx);
-                flint_free(exp);
-            }
-            
-            fq_nmod_mpoly_clear(temp_poly, mpoly_ctx);
-        }
-    }
-    
-    fq_nmod_mpoly_ctx_clear(mpoly_ctx);
-    timing_info_t convert_elapsed = end_timing(convert_start);
-    // DEBUG: Print converted matrix
-    //debug_print_unified_matrix(unified_matrix, size, "CONVERTED");
-    // Step 5: Enable optimizations if applicable
-    /*
-    if (field_ctx.field_id == FIELD_ID_GF28) {
-        unified_mpoly_enable_optimizations(FIELD_ID_GF28, 1);
-        DET_PRINT("Enabled GF(2^8) optimizations\n");
-    } else if (field_ctx.field_id == FIELD_ID_GF2128) {
-        unified_mpoly_enable_optimizations(FIELD_ID_GF2128, 1);
-        DET_PRINT("Enabled GF(2^128) optimizations\n");
-    }
-    */
-    // Step 6: Compute determinant using unified interface
-    unified_mpoly_t det_unified = unified_mpoly_init(unified_ctx);
-    if (!det_unified) {
-        printf("ERROR: Failed to initialize determinant polynomial\n");
-        for (slong i = 0; i < size; i++) {
-            for (slong j = 0; j < size; j++) {
-                unified_mpoly_clear(unified_matrix[i][j]);
-            }
-            free(unified_matrix[i]);
-        }
-        free(unified_matrix);
-        unified_mpoly_ctx_clear(unified_ctx);
-        field_ctx_clear(&field_ctx);
-        return;
-    }
-
-    timing_info_t det_start = start_timing();
-    int use_parallel = (size >= PARALLEL_THRESHOLD && max_threads > 1);
-    compute_unified_mpoly_det_with_method(det_unified, unified_matrix, size, unified_ctx,
-                                          use_parallel, method);
-    timing_info_t det_elapsed = end_timing(det_start);
-    //print_timing("Determinant computation (unified)", det_elapsed);
-
-    DET_PRINT("Unified determinant has %ld terms\n", unified_mpoly_length(det_unified));
-    // Step 7: Convert result back to fq_mvpoly (with debugging)
-    timing_info_t result_start = start_timing();
-    fq_mvpoly_clear(result);  // Clear the initialization from the beginning
-    fq_mvpoly_init(result, nvars, npars, ctx);
-    
-   // printf("\n--- Converting result back to fq_mvpoly ---\n");
-    //printf("Field type for result conversion: %d\n", field_ctx.field_id);
-
-    // Convert based on field type
-    if (field_ctx.field_id == FIELD_ID_NMOD || is_prime_field(ctx)) {
-        //printf("Using prime field result conversion\n");
-        // For prime fields, convert from nmod_mpoly
-        nmod_mpoly_struct *nmod_poly = GET_NMOD_POLY(det_unified);
-        nmod_mpoly_ctx_struct *nmod_ctx = &(unified_ctx->ctx.nmod_ctx);
-
-        // Use the existing conversion function
-        slong nterms = nmod_mpoly_length(nmod_poly, nmod_ctx);
-        DET_PRINT("Converting nmod_mpoly with %ld terms\n", nterms);
-
-        // Pre-allocate the result polynomial to avoid reallocations
-        if (result->alloc < nterms) {
-            result->alloc = nterms + nterms/10; // Add 10% extra space
-            result->terms = (fq_monomial_t*) flint_realloc(result->terms, 
-                                                            result->alloc * sizeof(fq_monomial_t));
-        }
-
-        // Allocate a temporary exponent array once
-        ulong *exp_ui = (ulong*) flint_malloc(total_vars * sizeof(ulong));
-
-        // Batch convert all terms
-        result->nterms = 0;
-        for (slong i = 0; i < nterms; i++) {
-            // Get coefficient
-            mp_limb_t coeff_ui = nmod_mpoly_get_term_coeff_ui(nmod_poly, i, nmod_ctx);
-            //printf("Result term %ld: coeff_ui = %lu\n", i, coeff_ui);
-
-            // Get exponents
-            nmod_mpoly_get_term_exp_ui(exp_ui, nmod_poly, i, nmod_ctx);
-            /*
-            printf("  exponents: ");
-            for (slong k = 0; k < total_vars; k++) {
-                printf("%lu ", exp_ui[k]);
-            }
-            printf("\n");
-            */
-            // Directly set the term without using fq_mvpoly_add_term
-            fq_nmod_init(result->terms[result->nterms].coeff, ctx);
-            fq_nmod_set_ui(result->terms[result->nterms].coeff, coeff_ui, ctx);
-
-            // Split exponents
-            if (nvars > 0) {
-                result->terms[result->nterms].var_exp = (slong*) flint_calloc(nvars, sizeof(slong));
-                for (slong v = 0; v < nvars; v++) {
-                    result->terms[result->nterms].var_exp[v] = (slong)exp_ui[v];
-                }
-            } else {
-                result->terms[result->nterms].var_exp = NULL;
-            }
-
-            if (npars > 0) {
-                result->terms[result->nterms].par_exp = (slong*) flint_calloc(npars, sizeof(slong));
-                for (slong p = 0; p < npars; p++) {
-                    result->terms[result->nterms].par_exp[p] = (slong)exp_ui[nvars + p];
-                }
-            } else {
-                result->terms[result->nterms].par_exp = NULL;
-            }
-
-            result->nterms++;
-
-            // Progress indicator for large conversions
-            if (i > 0 && i % 10000 == 0) {
-                DET_PRINT("Converted %ld/%ld terms...\n", i, nterms);
-            }
-        }
-
-        flint_free(exp_ui);
-        DET_PRINT("Conversion complete: %ld terms\n", result->nterms);
-
-    } else if (field_ctx.field_id == FIELD_ID_FQ_ZECH) {
-        //printf("Using Zech field result conversion\n");
-        // For Zech logarithm fields, convert from fq_zech_mpoly
-        fq_zech_mpoly_struct *zech_poly = GET_ZECH_POLY(det_unified);
-        fq_zech_mpoly_ctx_struct *zech_ctx = &(unified_ctx->ctx.zech_ctx);
-
-        slong nterms = fq_zech_mpoly_length(zech_poly, zech_ctx);
-        DET_PRINT("Converting fq_zech_mpoly with %ld terms\n", nterms);
-
-        if (nterms > 0) {
-            // Pre-allocate the result polynomial
-            if (result->alloc < nterms) {
-                result->alloc = nterms + nterms/10; // Add 10% extra space
-                result->terms = (fq_monomial_t*) flint_realloc(result->terms, 
-                                                                result->alloc * sizeof(fq_monomial_t));
-            }
-
-            // Allocate temporary storage
-            ulong *exp_ui = (ulong*) flint_malloc(total_vars * sizeof(ulong));
-            fq_zech_t zech_coeff;
-            fq_zech_init(zech_coeff, field_ctx.ctx.zech_ctx);
-
-            // Convert each term
-            result->nterms = 0;
-            for (slong i = 0; i < nterms; i++) {
-                // Get coefficient from Zech representation
-                fq_zech_mpoly_get_term_coeff_fq_zech(zech_coeff, zech_poly, i, zech_ctx);
-
-                // Get exponents
-                fq_zech_mpoly_get_term_exp_ui(exp_ui, zech_poly, i, zech_ctx);
-
-                // Initialize result coefficient
-                fq_nmod_init(result->terms[result->nterms].coeff, ctx);
-
-                // Convert Zech coefficient to fq_nmod
-                fq_zech_get_fq_nmod(result->terms[result->nterms].coeff, zech_coeff, field_ctx.ctx.zech_ctx);
-
-                // Split exponents
-                if (nvars > 0) {
-                    result->terms[result->nterms].var_exp = (slong*) flint_calloc(nvars, sizeof(slong));
-                    for (slong v = 0; v < nvars; v++) {
-                        result->terms[result->nterms].var_exp[v] = (slong)exp_ui[v];
-                    }
-                } else {
-                    result->terms[result->nterms].var_exp = NULL;
-                }
-
-                if (npars > 0) {
-                    result->terms[result->nterms].par_exp = (slong*) flint_calloc(npars, sizeof(slong));
-                    for (slong p = 0; p < npars; p++) {
-                        result->terms[result->nterms].par_exp[p] = (slong)exp_ui[nvars + p];
-                    }
-                } else {
-                    result->terms[result->nterms].par_exp = NULL;
-                }
-
-                result->nterms++;
-
-                // Progress indicator for large conversions
-                if (i > 0 && i % 10000 == 0) {
-                    DET_PRINT("Converted %ld/%ld terms from Zech...\n", i, nterms);
-                }
-            }
-
-            // Cleanup
-            flint_free(exp_ui);
-            fq_zech_clear(zech_coeff, field_ctx.ctx.zech_ctx);
-            DET_PRINT("Zech conversion complete: %ld terms\n", result->nterms);
-        }
-
-    } else {
-        //printf("Using extension field result conversion\n");
-        // For extension fields, convert from fq_nmod_mpoly
-        fq_nmod_mpoly_struct *fq_poly = GET_FQ_POLY(det_unified);
-        fq_nmod_mpoly_ctx_struct *fq_ctx = &(unified_ctx->ctx.fq_ctx);
-
-        // Use the existing conversion function if available
-        slong nterms = fq_nmod_mpoly_length(fq_poly, fq_ctx);
-        DET_PRINT("Converting fq_nmod_mpoly with %ld terms\n", nterms);
-
-        if (nterms > 0) {
-            // Use existing conversion function
-            fq_mvpoly_clear(result);
-            fq_nmod_mpoly_to_fq_mvpoly(result, fq_poly, nvars, npars, fq_ctx, ctx);
-        }
-    }
-    
-    timing_info_t result_elapsed = end_timing(result_start);
-    //print_timing("Result conversion from unified format", result_elapsed);
-
-    DET_PRINT("Final result: %ld terms\n", result->nterms);
-
-    // DEBUG: Print final result
-    //debug_print_fq_mvpoly_matrix(&result, 1, "FINAL RESULT");
-    // Step 8: Cleanup
-/*
-    // Disable optimizations
-    if (field_ctx.field_id == FIELD_ID_GF28) {
-        unified_mpoly_enable_optimizations(FIELD_ID_GF28, 0);
-    } else if (field_ctx.field_id == FIELD_ID_GF2128) {
-        unified_mpoly_enable_optimizations(FIELD_ID_GF2128, 0);
-    }
-*/
-    // Free unified matrix
-    for (slong i = 0; i < size; i++) {
-        for (slong j = 0; j < size; j++) {
-            unified_mpoly_clear(unified_matrix[i][j]);
-        }
-        free(unified_matrix[i]);
-    }
-    free(unified_matrix);
-
-    // Clear unified polynomial and context
-    unified_mpoly_clear(det_unified);
-    unified_mpoly_ctx_clear(unified_ctx);
-    field_ctx_clear(&field_ctx);
-    
-    timing_info_t total_elapsed = end_timing(total_start);
-    (void) total_elapsed;
+    compute_unified_mpoly_det_with_method(result, entries, size, ring,
+                                          size >= PARALLEL_THRESHOLD && max_threads > 1, method);
+    for (slong i = 0; i < size; i++)
+        flint_free(entries[i]);
+    flint_free(entries);
 }
 
-void compute_fq_det_unified_interface(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size) {
+void compute_fq_det_unified_interface(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
+                                      slong size)
+{
     compute_fq_det_unified_interface_impl(result, matrix, size, 0);
 }
 
-void compute_fq_det_bareiss(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size) {
+void compute_fq_det_bareiss(unified_mpoly_struct *result, unified_mpoly_struct **matrix, slong size)
+{
     compute_fq_det_unified_interface_impl(result, matrix, size, 4);
 }
 
-void compute_fq_det_balanced_split_experimental(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size) {
+void compute_fq_det_balanced_split_experimental(unified_mpoly_struct *result,
+                                                unified_mpoly_struct **matrix, slong size)
+{
     compute_fq_det_unified_interface_impl(result, matrix, size, 6);
 }
 // ============= Main Interface with Algorithm Selection Implementation =============
 
-void compute_fq_det_recursive_flint(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size) {
+void compute_fq_det_recursive_flint(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
+                                    slong size)
+{
     if (size <= 0) {
-        fq_mvpoly_init(result, matrix[0][0].nvars, matrix[0][0].npars, matrix[0][0].ctx);
+        dr_mpoly_init(result, matrix[0][0].nvars, matrix[0][0].npars, matrix[0][0].ctx);
         return;
     }
     
@@ -3506,7 +2961,9 @@ void compute_fq_det_recursive_flint(fq_mvpoly_t *result, fq_mvpoly_t **matrix, s
 }
 
 // Compatibility interface
-void compute_fq_det_recursive(fq_mvpoly_t *result, fq_mvpoly_t **matrix, slong size) {
+void compute_fq_det_recursive(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
+                              slong size)
+{
     compute_fq_det_recursive_flint(result, matrix, size);
 }
 

@@ -3,20 +3,22 @@
 #include "dixon_mq_filter_test.c"
 #undef main
 
-static void same_polynomial(const fq_mvpoly_t *a,const fq_mvpoly_t *b)
+static void same_polynomial(const unified_mpoly_struct *a, const unified_mpoly_struct *b)
 {
     nmod_mpoly_ctx_t ctx; nmod_mpoly_ctx_init(ctx,a->nvars+a->npars,ORD_LEX,fq_nmod_ctx_prime(a->ctx));
     nmod_mpoly_t x,y; nmod_mpoly_init(x,ctx); nmod_mpoly_init(y,ctx);
-    fq_mvpoly_to_nmod_mpoly(x,a,ctx); fq_mvpoly_to_nmod_mpoly(y,b,ctx);
+    dr_mpoly_to_nmod_mpoly(x, a, ctx);
+    dr_mpoly_to_nmod_mpoly(y, b, ctx);
     assert(nmod_mpoly_equal(x,y,ctx));
     nmod_mpoly_clear(x,ctx); nmod_mpoly_clear(y,ctx); nmod_mpoly_ctx_clear(ctx);
 }
 
-static void same_matrix(fq_mq_compact *compact,fq_mvpoly_t *legacy,slong n,int reorder)
+static void same_matrix(fq_mq_compact *compact, unified_mpoly_struct *legacy, slong n, int reorder)
 {
     setenv("DRSOLVE_PREDICT_REORDER",reorder ? "1" : "0",1);
-    fq_mvpoly_t **unused=NULL, owned;
-    fq_mvpoly_init(&owned,legacy->nvars,1,legacy->ctx); fq_mvpoly_copy(&owned,legacy);
+    unified_mpoly_struct **unused = NULL, owned = {0};
+    dr_mpoly_init(&owned, legacy->nvars, 1, legacy->ctx);
+    dr_mpoly_copy(&owned, legacy);
     nmod_poly_mat_t expected,actual;
     slong size,content,cs,cc;
     long degrees[8]; for(slong i=0;i<=n;i++) degrees[i]=2;
@@ -35,7 +37,9 @@ static void same_matrix(fq_mq_compact *compact,fq_mvpoly_t *legacy,slong n,int r
         assert(!memcmp(a.cd,b.cd,size*sizeof(slong)));
     }
     dixon_mq_step4_profile_clear(&a); dixon_mq_step4_profile_clear(&b);
-    nmod_poly_mat_clear(expected); nmod_poly_mat_clear(actual); fq_mvpoly_clear(&owned);
+    nmod_poly_mat_clear(expected);
+    nmod_poly_mat_clear(actual);
+    dr_mpoly_clear(&owned);
     unsetenv("DRSOLVE_PREDICT_REORDER");
 }
 
@@ -48,9 +52,10 @@ int main(void)
     for(int threads=1;threads<=4;threads+=3) for(int pi=0;pi<3;pi++) for(slong n=2;n<=5;n++) {
         omp_set_num_threads(threads);
         fq_nmod_ctx_t ctx; fq_nmod_ctx_init_ui(ctx,primes[pi],1,"a");
-        fq_mvpoly_t *polys=random_mq(n,ctx,rng),**matrix,**m,old,placeholder;
-        build_fq_cancellation_matrix_mvpoly(&matrix,polys,n,1);
-        perform_fq_matrix_row_operations_mvpoly(&m,&matrix,n,1);
+        unified_mpoly_struct *polys = random_mq(n, ctx, rng), **matrix, **m, old = {0},
+                             placeholder = {0};
+        build_fq_cancellation_matrix(&matrix, polys, n, 1);
+        perform_fq_matrix_row_operations(&m, &matrix, n, 1);
         /* Rectangular output and its fallback materialization are exact. */
         slong rows[15]={0},cols[15]={0}; rows[n]=2; rows[2*n+1]=1;
         fq_mq_compact compact={0};
@@ -58,7 +63,9 @@ int main(void)
         assert(compute_fq_det_mq_compact(&compact,m,n+1,rows,3,cols,1));
         fq_mq_compact_materialize(&placeholder,&compact,ctx);
         same_polynomial(&old,&placeholder);
-        fq_mvpoly_clear(&old); fq_mvpoly_clear(&placeholder); fq_mq_compact_clear(&compact);
+        dr_mpoly_clear(&old);
+        dr_mpoly_clear(&placeholder);
+        fq_mq_compact_clear(&compact);
         assert(!compute_fq_det_mq_compact(&compact,m,n+1,rows,0,cols,1));
         assert(!compact.nvars && !compact.terms);
         int want=dixon_try_mq_projection(&old,m,polys,n,1,DET_METHOD_RECURSIVE);
@@ -66,12 +73,15 @@ int main(void)
         assert(want==got);
         if(got) {
             if(compact.nvars) {
-                assert(placeholder.nterms==0); /* No generic per-term objects. */
-                fq_mvpoly_t expanded; fq_mq_compact_materialize(&expanded,&compact,ctx);
-                same_polynomial(&old,&expanded); fq_mvpoly_clear(&expanded);
+                assert(dr_mpoly_length(&(placeholder)) == 0); /* No generic per-term objects. */
+                unified_mpoly_struct expanded = {0};
+                fq_mq_compact_materialize(&expanded, &compact, ctx);
+                same_polynomial(&old, &expanded);
+                dr_mpoly_clear(&expanded);
                 same_matrix(&compact,&old,n,threads==4); native++;
             } else { same_polynomial(&old,&placeholder); repaired++; }
-            fq_mvpoly_clear(&old); fq_mvpoly_clear(&placeholder);
+            dr_mpoly_clear(&old);
+            dr_mpoly_clear(&placeholder);
         } else { assert(!compact.nvars && !compact.terms); fallback++; }
         fq_mq_compact_clear(&compact);
         clear_input(polys,matrix,m,n); fq_nmod_ctx_clear(ctx);
@@ -79,14 +89,15 @@ int main(void)
     /* A structurally eligible, identically singular system must discard the
      * compact candidate and return a conventional full polynomial. */
     fq_nmod_ctx_t ctx; fq_nmod_ctx_init_ui(ctx,257,1,"a");
-    fq_mvpoly_t *polys=random_mq(3,ctx,rng),**matrix,**m,result;
-    fq_mvpoly_copy(polys+1,polys);
-    build_fq_cancellation_matrix_mvpoly(&matrix,polys,3,1);
-    perform_fq_matrix_row_operations_mvpoly(&m,&matrix,3,1);
+    unified_mpoly_struct *polys = random_mq(3, ctx, rng), **matrix, **m, result = {0};
+    dr_mpoly_copy(polys + 1, polys);
+    build_fq_cancellation_matrix(&matrix, polys, 3, 1);
+    perform_fq_matrix_row_operations(&m, &matrix, 3, 1);
     fq_mq_compact compact={0};
     assert(!dixon_compute_step1(&result,m,polys,3,1,DET_METHOD_RECURSIVE,&compact));
-    assert(!compact.nvars && !compact.terms && !result.nterms);
-    fq_mvpoly_clear(&result); fq_mq_compact_clear(&compact);
+    assert(!compact.nvars && !compact.terms && !dr_mpoly_length(&(result)));
+    dr_mpoly_clear(&result);
+    fq_mq_compact_clear(&compact);
     clear_input(polys,matrix,m,3); fq_nmod_ctx_clear(ctx);
     /* Positive row/column valuations, coefficient gaps and both reorder modes. */
     fq_nmod_ctx_init_ui(ctx,257,1,"a");
@@ -98,8 +109,10 @@ int main(void)
         p.offset[0]=0; p.offset[1]=2; p.offset[2]=4;
         p.terms[0]=(fq_mq_compact_term){0,5,1}; p.terms[1]=(fq_mq_compact_term){1,7,2};
         p.terms[2]=(fq_mq_compact_term){0,4,3}; p.terms[3]=(fq_mq_compact_term){1,5,4};
-        fq_mvpoly_t expanded; fq_mq_compact_materialize(&expanded,&p,ctx);
-        same_matrix(&p,&expanded,1,reorder); fq_mvpoly_clear(&expanded);
+        unified_mpoly_struct expanded = {0};
+        fq_mq_compact_materialize(&expanded, &p, ctx);
+        same_matrix(&p, &expanded, 1, reorder);
+        dr_mpoly_clear(&expanded);
     }
     fq_nmod_ctx_clear(ctx);
     assert(native>0 && fallback>0);

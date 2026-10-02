@@ -63,21 +63,23 @@ static void check_layer_certificate(void)
 {
     fq_nmod_ctx_t ctx;
     fq_nmod_ctx_init_ui(ctx, 101, 1, "a");
-    fq_mvpoly_t **m = flint_malloc(4 * sizeof(*m));
+    unified_mpoly_struct **m = flint_calloc(1, 4 * sizeof(*m));
     fq_nmod_t one;
     fq_nmod_init(one, ctx); fq_nmod_one(one, ctx);
     slong exp[6] = {0}, par = 0;
     for (slong row = 0; row < 4; row++) {
-        m[row] = flint_malloc(4 * sizeof(**m));
+        m[row] = flint_calloc(1, 4 * sizeof(**m));
         for (slong col = 0; col < 4; col++) {
-            fq_mvpoly_init(&m[row][col], 6, 1, ctx);
-            fq_mvpoly_add_term_fast(&m[row][col], exp, &par, one);
+            dr_mpoly_init(&m[row][col], 6, 1, ctx);
+            dr_mpoly_add_term_fast(&m[row][col], exp, &par, one);
             if (row == 0) continue;
             slong v = 3 - row;
             exp[v] = 1;
-            fq_mvpoly_add_term_fast(&m[row][col], exp, &par, one); exp[v] = 0;
+            dr_mpoly_add_term_fast(&m[row][col], exp, &par, one);
+            exp[v] = 0;
             exp[3 + v] = 1;
-            fq_mvpoly_add_term_fast(&m[row][col], exp, &par, one); exp[3 + v] = 0;
+            dr_mpoly_add_term_fast(&m[row][col], exp, &par, one);
+            exp[3 + v] = 0;
         }
     }
     /* Closure includes x0*x1, but not x0*x2. Exactly the last two rows are safe. */
@@ -105,7 +107,8 @@ static void check_layer_certificate(void)
     assert(mq_safe_axis_layers(&f, &f.rows, m, 4, 0) == 3);
     mq_filter_clear(&f);
     for (slong row = 0; row < 4; row++) {
-        for (slong col = 0; col < 4; col++) fq_mvpoly_clear(&m[row][col]);
+        for (slong col = 0; col < 4; col++)
+            dr_mpoly_clear(&m[row][col]);
         flint_free(m[row]);
     }
     flint_free(m); fq_nmod_clear(one, ctx); fq_nmod_ctx_clear(ctx);

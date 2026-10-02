@@ -4,16 +4,16 @@
 #include "dixon_mq_filter_test.c"
 #undef main
 
-static void compare_paths(const fq_mvpoly_t *poly, slong m, const long *degrees,
+static void compare_paths(const unified_mpoly_struct *poly, slong m, const long *degrees,
                           int profile, slong expected_content)
 {
-    fq_mvpoly_t **unused=NULL;
+    unified_mpoly_struct **unused = NULL;
     fq_nmod_poly_mat_t expected, actual;
     slong *r[2],*c[2],size[2],content[2];
     dixon_mq_step4_profile p[2]={{0},{0}};
     for(int method=0;method<2;method++) {
-        r[method]=flint_malloc(poly->nterms*sizeof(slong));
-        c[method]=flint_malloc(poly->nterms*sizeof(slong));
+        r[method] = flint_malloc(dr_mpoly_length(poly) * sizeof(slong));
+        c[method] = flint_malloc(dr_mpoly_length(poly) * sizeof(slong));
         dixon_step2_test_force_generic=!method;
         int before=dixon_step2_test_direct_calls;
         extract_fq_coefficient_matrix_from_dixon_impl(&unused,method?&actual:&expected,
@@ -37,16 +37,18 @@ static void compare_paths(const fq_mvpoly_t *poly, slong m, const long *degrees,
         assert(!memcmp(p[0].cd,p[1].cd,p[0].size*sizeof(slong)));
     }
     if(fq_nmod_ctx_degree(poly->ctx)==1) {
-        fq_mvpoly_t owned; fq_mvpoly_init(&owned,poly->nvars,poly->npars,poly->ctx);
-        fq_mvpoly_copy(&owned,poly);
+        unified_mpoly_struct owned = {0};
+        dr_mpoly_init(&owned, poly->nvars, poly->npars, poly->ctx);
+        dr_mpoly_copy(&owned, poly);
         nmod_poly_mat_t native;
-        slong *rn=flint_malloc(poly->nterms*sizeof(slong)),*cn=flint_malloc(poly->nterms*sizeof(slong));
+        slong *rn = flint_malloc(dr_mpoly_length(poly) * sizeof(slong)),
+              *cn = flint_malloc(dr_mpoly_length(poly) * sizeof(slong));
         slong ns,ncontent; dixon_mq_step4_profile np={0};
         dixon_step2_test_force_generic=0;
         extract_fq_coefficient_matrix_from_dixon_impl(&unused,NULL,rn,cn,&ns,&ncontent,
             &owned,m,1,NULL,NULL,NULL,degrees,m+1,1,profile?&np:NULL,&native,&owned);
-        assert(!owned.terms && !owned.nterms && !owned.alloc);
-        fq_mvpoly_clear(&owned); /* Consumed inputs remain safely clearable. */
+        assert(!owned.ring && !dr_mpoly_length(&owned));
+        dr_mpoly_clear(&owned); /* Consumed inputs remain safely clearable. */
         assert(ns==size[0] && ncontent==content[0]);
         assert(!memcmp(rn,r[0],ns*sizeof(slong)) && !memcmp(cn,c[0],ns*sizeof(slong)));
         for(slong i=0;i<ns;i++) for(slong j=0;j<ns;j++) {
@@ -86,20 +88,28 @@ static void compare_paths(const fq_mvpoly_t *poly, slong m, const long *degrees,
 static void synthetic(ulong prime, slong extension, slong repeats)
 {
     fq_nmod_ctx_t ctx; fq_nmod_ctx_init_ui(ctx,prime,extension,"a");
-    fq_mvpoly_t poly; fq_mvpoly_init(&poly,2,1,ctx);
+    unified_mpoly_struct poly = {0};
+    dr_mpoly_init(&poly, 2, 1, ctx);
     fq_nmod_t coeff; fq_nmod_init(coeff,ctx);
     fq_nmod_gen(coeff,ctx); if(fq_nmod_is_zero(coeff,ctx)) fq_nmod_one(coeff,ctx);
     slong powers[2][2]={{5,7},{4,5}};
     for(slong repeat=0;repeat<repeats;repeat++) {
         if(repeats>1) fq_nmod_set_ui(coeff,1+(repeat%(prime-1)),ctx);
         for(slong r=0;r<2;r++) for(slong c=0;c<2;c++) {
-            slong e[2]={r,c}; fq_mvpoly_add_term_fast(&poly,e,&powers[r][c],coeff);
+                slong e[2] = {r, c};
+                dr_mpoly_add_term_fast(&poly, e, &powers[r][c], coeff);
         }
     }
     /* Original parameter exponents must remain caller-owned and unchanged. */
     compare_paths(&poly,1,NULL,0,10);
-    for(slong r=0;r<2;r++) for(slong c=0;c<2;c++) assert(poly.terms[2*r+c].par_exp[0]==powers[r][c]);
-    fq_mvpoly_clear(&poly); fq_nmod_clear(coeff,ctx); fq_nmod_ctx_clear(ctx);
+    for (slong r = 0; r < 2; r++)
+        for (slong c = 0; c < 2; c++) {
+            DR_MPOLY_TERM(term_1, &(poly), 2 * r + c);
+            assert(term_1.par_exp[0] == powers[r][c]);
+        }
+    dr_mpoly_clear(&poly);
+    fq_nmod_clear(coeff, ctx);
+    fq_nmod_ctx_clear(ctx);
 }
 int main(void)
 {
@@ -112,13 +122,15 @@ int main(void)
             synthetic(257,1,1); synthetic(7,2,1);
             fq_nmod_ctx_t ctx; fq_nmod_ctx_init_ui(ctx,257,1,"a");
             for(slong m=3;m<=5;m++) {
-                fq_mvpoly_t *polys=random_mq(m,ctx,rng), **matrix, **a, projected;
-                build_fq_cancellation_matrix_mvpoly(&matrix,polys,m,1);
-                perform_fq_matrix_row_operations_mvpoly(&a,&matrix,m,1);
+                unified_mpoly_struct *polys = random_mq(m, ctx, rng), **matrix, **a,
+                                     projected = {0};
+                build_fq_cancellation_matrix(&matrix, polys, m, 1);
+                perform_fq_matrix_row_operations(&a, &matrix, m, 1);
                 assert(dixon_try_mq_projection(&projected,a,polys,m,1,DET_METHOD_RECURSIVE));
                 long degrees[6]; for(slong i=0;i<=m;i++) degrees[i]=2;
                 compare_paths(&projected,m,degrees,1,-1);
-                fq_mvpoly_clear(&projected); clear_input(polys,matrix,a,m);
+                dr_mpoly_clear(&projected);
+                clear_input(polys, matrix, a, m);
             }
             fq_nmod_ctx_clear(ctx);
         }

@@ -162,7 +162,7 @@ MATH_SOURCES = $(SRC_DIR)/dixon/dixon_complexity.c \
                $(SRC_DIR)/determinant/mq_pencil_det.c \
                $(SRC_DIR)/determinant/fq_sparse_interpolation.c \
                $(SRC_DIR)/determinant/unified_mpoly_det.c \
-               $(SRC_DIR)/field/fq_mvpoly.c \
+               $(SRC_DIR)/field/dr_mpoly.c \
                $(SRC_DIR)/field/fq_unified_interface.c \
                $(SRC_DIR)/field/gf2n_field.c \
                $(SRC_DIR)/field/gf2n_mpoly.c \
@@ -313,9 +313,10 @@ $(DIXON_SHARED_LIB): $(MATH_OBJECTS) $(PML_BUILD_PREREQS)
 # Build static drsolve library
 static-lib: $(DIXON_STATIC_LIB)
 
-$(DIXON_STATIC_LIB): $(MATH_OBJECTS)
+$(DIXON_STATIC_LIB): $(MATH_OBJECTS) Makefile
 	@echo "Building static drsolve library..."
-	ar rcs $@ $^
+	$(RM) $@
+	ar rcs $@ $(MATH_OBJECTS)
 	@echo "Static library built: $(DIXON_STATIC_LIB)"
 
 # ============================================================
@@ -486,7 +487,7 @@ $(BUILD_DIR)/det_minor_dp_test: $(DET_MINOR_TEST_SOURCES) $(DIXON_SHARED_LIB)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR) $(PML_BUILD_PREREQS)
 	@echo "Compiling $<..."
 	@mkdir -p $(dir $@)
-	$(CC) $(ALL_CFLAGS) -c -o $@ $<
+	$(CC) $(ALL_CFLAGS) -MMD -MP -c -o $@ $<
 
 # ============================================================
 # Clean
@@ -1127,3 +1128,12 @@ $(BUILD_DIR)/mq_compact_test: $(SRC_DIR)/test/mq_compact_test.c $(SRC_DIR)/test/
 .PHONY: test-mq-compact
 test-mq-compact: $(BUILD_DIR)/mq_compact_test
 	./$(BUILD_DIR)/mq_compact_test
+
+# Track local and FLINT-facing interface changes in incremental builds.
+-include $(MATH_OBJECTS:.o=.d)
+
+$(BUILD_DIR)/dr_mpoly_test: $(SRC_DIR)/test/dr_mpoly_test.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+.PHONY: test-native-mpoly
+test-native-mpoly: $(BUILD_DIR)/dr_mpoly_test
+	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/dr_mpoly_test

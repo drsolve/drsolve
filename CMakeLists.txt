@@ -614,7 +614,7 @@ set(MATH_SOURCES
   src/determinant/mq_pencil_det.c
   src/determinant/fq_sparse_interpolation.c
   src/determinant/unified_mpoly_det.c
-  src/field/fq_mvpoly.c
+  src/field/dr_mpoly.c
   src/field/fq_unified_interface.c
   src/field/gf2n_field.c
   src/field/gf2n_mpoly.c
@@ -890,6 +890,18 @@ endif()
 enable_testing()
 
 if(BUILD_TESTING)
+  add_executable(dr_mpoly_test src/test/dr_mpoly_test.c)
+  drsolve_target_common(dr_mpoly_test)
+  target_compile_options(dr_mpoly_test PRIVATE -UNDEBUG)
+  if(TARGET drsolve_static)
+    target_link_libraries(dr_mpoly_test PRIVATE drsolve_static)
+  elseif(TARGET drsolve_shared)
+    target_link_libraries(dr_mpoly_test PRIVATE drsolve_shared)
+  else()
+    target_sources(dr_mpoly_test PRIVATE ${MATH_SOURCES})
+  endif()
+  add_test(NAME drsolve_native_mpoly COMMAND dr_mpoly_test)
+
   # Observe actual backend scheduling; normal libraries omit the callbacks.
   set(DET_MINOR_TEST_BACKENDS
     src/determinant/unified_mpoly_det.c
@@ -973,7 +985,7 @@ add_test(NAME drsolve_rational_prime_parallel
   WORKING_DIRECTORY ${_test_wd}
 )
 set_tests_properties(drsolve_rational_prime_parallel PROPERTIES
-  PASS_REGULAR_EXPRESSION "36 - 132\\*z \\+ 193\\*z\\^2 - 144\\*z\\^3 \\+ 58\\*z\\^4 - 12\\*z\\^5 \\+ z\\^6"
+  PASS_REGULAR_EXPRESSION "z\\^6 - 12\\*z\\^5 \\+ 58\\*z\\^4 - 144\\*z\\^3 \\+ 193\\*z\\^2 - 132\\*z \\+ 36"
 )
 add_test(NAME drsolve_rational_compressed_negative_root
   COMMAND drsolve_exe "x+y+z, x*y+y*z+z*x, x*y*z+1" "x,y" 0

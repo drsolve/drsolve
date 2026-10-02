@@ -1,17 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* unified_mpoly_interface.h - Complete single-file implementation with Zech logarithm support */
 
-/*
- * NOTE: This implementation includes support for fq_zech_mpoly (Zech logarithm representation).
- * However, some fq_zech_mpoly functions may not be available in all FLINT versions:
- * - Direct coefficient access functions are not available, so we use workarounds
- * - evaluate_all function is implemented using sequential single-variable evaluation
- * - compose function is not implemented for fq_zech_mpoly
- * 
- * For maximum compatibility, consider using fq_nmod_mpoly instead of fq_zech_mpoly
- * unless the Zech logarithm optimization is specifically needed.
- */
-
 #ifndef UNIFIED_MPOLY_INTERFACE_H
 #define UNIFIED_MPOLY_INTERFACE_H
 
@@ -35,10 +24,9 @@
 #define GET_FQ_POLY(poly) (&(poly)->data.fq_poly)
 #define GET_ZECH_POLY(poly) (&(poly)->data.zech_poly)
 
-#define GET_NMOD_CTX(ctx) (&(ctx)->ctx.nmod_ctx)
-#define GET_FQ_CTX(ctx) (&(ctx)->ctx.fq_ctx)
-#define GET_ZECH_CTX(ctx) (&(ctx)->ctx.zech_ctx)
-
+#define GET_NMOD_CTX(ring) (&(ring)->ctx.nmod_ctx)
+#define GET_FQ_CTX(ring) (&(ring)->ctx.fq_ctx)
+#define GET_ZECH_CTX(ring) (&(ring)->ctx.zech_ctx)
 
 #define WARN_ONCE_N(n, fmt, ...) \
     do { \
@@ -93,6 +81,13 @@ typedef struct {
     
     /* Context pointer */
     unified_mpoly_ctx_t ctx_ptr;
+
+    /* Solver layout metadata; coefficients and exponents live only in data.
+       ring is NULL for callers that own their unified context explicitly. */
+    slong nvars, npars;
+    const fq_nmod_ctx_struct *ctx;
+    struct dr_mpoly_ring *ring;
+    int canonical;
 } unified_mpoly_struct;
 
 typedef unified_mpoly_struct *unified_mpoly_t;
@@ -100,14 +95,6 @@ typedef unified_mpoly_struct *unified_mpoly_t;
 /* ============================================================================
    HELPER MACROS WITH ZECH SUPPORT
    ============================================================================ */
-
-#define GET_NMOD_POLY(poly) (&(poly)->data.nmod_poly)
-#define GET_FQ_POLY(poly) (&(poly)->data.fq_poly)
-#define GET_ZECH_POLY(poly) (&(poly)->data.zech_poly)
-
-#define GET_NMOD_CTX(ctx) (&(ctx)->ctx.nmod_ctx)
-#define GET_FQ_CTX(ctx) (&(ctx)->ctx.fq_ctx)
-#define GET_ZECH_CTX(ctx) (&(ctx)->ctx.zech_ctx)
 
 /* ============================================================================
    FUNCTION DECLARATIONS

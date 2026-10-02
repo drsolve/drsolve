@@ -11,7 +11,7 @@
 #include "mq_pencil_det.h"
 
 typedef struct {
-    fq_mvpoly_t **matrix;
+    unified_mpoly_struct **matrix;
     slong n,size,sigma;
     slong *rx,*cx,*rd,*cd;
     int pencil,fail_at;
@@ -28,7 +28,8 @@ static int fetch_panel(nmod_poly_mat_t out,panel_source *s,const slong *rows,
     slong *rx=flint_malloc(nr*m*sizeof(slong)),*cx=flint_malloc(nc*m*sizeof(slong));
     for(slong i=0;i<nr;i++)memcpy(rx+i*m,s->rx+rows[i]*m,m*sizeof(slong));
     for(slong i=0;i<nc;i++)memcpy(cx+i*m,s->cx+cols[i]*m,m*sizeof(slong));
-    fq_mvpoly_t poly;mq_pencil_stats stats;
+    unified_mpoly_struct poly = {0};
+    mq_pencil_stats stats;
     int ok=s->pencil
         ? compute_fq_det_mq_pencil_projected(&poly,s->matrix,s->n,rx,nr,cx,nc,&stats)
         : compute_fq_det_mq_projected_rect(&poly,s->matrix,s->n,rx,nr,cx,nc);
@@ -39,8 +40,10 @@ static int fetch_panel(nmod_poly_mat_t out,panel_source *s,const slong *rows,
         for(slong i=0;i<nr;i++)dixon_intern_monom(&rm,&rn,&rc,&ri,&rh,rx+i*m,m);
         for(slong i=0;i<nc;i++)dixon_intern_monom(&cm,&cn,&cc,&ci,&ch,cx+i*m,m);
         nmod_poly_mat_zero(out);
-        for(slong t=0;t<poly.nterms;t++) {
-            fq_monomial_t *term=poly.terms+t;
+        for (slong t = 0; t < dr_mpoly_length(&(poly)); t++) {
+            DR_MPOLY_TERM(term_1, &(poly), t);
+
+            dr_mpoly_term_view *term = &term_1;
             slong i=lookup_monom_index(ri,rh,term->var_exp,m);
             slong j=lookup_monom_index(ci,ch,term->var_exp+m,m);
             assert(i>=0 && j>=0);
@@ -48,11 +51,11 @@ static int fetch_panel(nmod_poly_mat_t out,panel_source *s,const slong *rows,
             if(d>s->sigma-s->rd[rows[i]]-s->cd[cols[j]]){ok=0;break;}
             nmod_poly_set_coeff_ui(nmod_poly_mat_entry(out,i,j),d,nmod_poly_get_coeff_ui(term->coeff,0));
         }
-        s->terms+=poly.nterms;
+        s->terms += dr_mpoly_length(&(poly));
         for(slong i=0;i<nr;i++)for(slong j=0;j<nc;j++)
             s->slots+=FLINT_MAX(0,s->sigma-s->rd[rows[i]]-s->cd[cols[j]]+1);
         free_monom_index(ri,rh);free_monom_index(ci,ch);flint_free(rm);flint_free(cm);
-        fq_mvpoly_clear(&poly);
+        dr_mpoly_clear(&poly);
     }
     flint_free(rx);flint_free(cx);s->packing+=get_wall_time()-start;return ok;
 }
@@ -263,9 +266,9 @@ int main(int argc,char **argv)
     g_dixon_verbose_level=0;g_dixon_det_cache_limit=100000;
     flint_rand_t rng;flint_rand_init(rng);flint_rand_set_seed(rng,seed,941);
     fq_nmod_ctx_t fq;fq_nmod_ctx_init_ui(fq,prime,1,"a");
-    fq_mvpoly_t *polys=random_mq(n-1,fq,rng),**matrix,**a;
-    build_fq_cancellation_matrix_mvpoly(&matrix,polys,n-1,1);
-    perform_fq_matrix_row_operations_mvpoly(&a,&matrix,n-1,1);
+    unified_mpoly_struct *polys = random_mq(n - 1, fq, rng), **matrix, **a;
+    build_fq_cancellation_matrix(&matrix, polys, n - 1, 1);
+    perform_fq_matrix_row_operations(&a, &matrix, n - 1, 1);
     panel_source source={0};source.n=n;source.matrix=a;source.pencil=pencil;
     slong h;make_profile(&source,&h);slong size=source.size;
     nmod_poly_mat_t core,expected,B;

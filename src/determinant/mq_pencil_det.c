@@ -36,9 +36,9 @@ static void pencil_split(nmod_mpoly_struct *out,const nmod_mpoly_t in,
     for(slong d=0;d<3;d++)nmod_mpoly_sort_terms(out+d,ctx);
 }
 
-static int pencil_compute(fq_mvpoly_t *result,fq_mvpoly_t **matrix,
-                           slong n,mq_pencil_stats *stats,
-                           const slong *rows,slong nr,const slong *cols,slong nc)
+static int pencil_compute(unified_mpoly_struct *result, unified_mpoly_struct **matrix, slong n,
+                          mq_pencil_stats *stats, const slong *rows, slong nr, const slong *cols,
+                          slong nc)
 {
     mq_pencil_stats local={0};if(!stats)stats=&local;
     memset(stats,0,sizeof(*stats));stats->size=n;
@@ -53,18 +53,24 @@ static int pencil_compute(fq_mvpoly_t *result,fq_mvpoly_t **matrix,
         stats->reason="characteristic must exceed n-1 for the degree recurrence";return 0;
     }
     for(slong i=0;i<n;i++)for(slong j=0;j<n;j++) {
-        const fq_mvpoly_t *a=&matrix[i][j];
-        if(a->nvars!=nv || a->npars!=1)return 0;
-        for(slong k=0;k<a->nterms;k++) {
-            slong degree=a->terms[k].par_exp[0];
-            if(degree<0 || degree>(i?1:2))return 0;
-            for(slong v=0;v<nv;v++) {
-                slong e=a->terms[k].var_exp[v];
-                if(e<0 || e>(i?1:2))return 0;
-                degree+=e;
+            const unified_mpoly_struct *a = &matrix[i][j];
+            if (a->nvars != nv || a->npars != 1)
+                return 0;
+            for (slong k = 0; k < dr_mpoly_length(a); k++) {
+                DR_MPOLY_TERM(term_1, a, k);
+
+                slong degree = term_1.par_exp[0];
+                if (degree < 0 || degree > (i ? 1 : 2))
+                    return 0;
+                for (slong v = 0; v < nv; v++) {
+                    slong e = term_1.var_exp[v];
+                    if (e < 0 || e > (i ? 1 : 2))
+                        return 0;
+                    degree += e;
+                }
+                if (degree > (i ? 1 : 2))
+                    return 0;
             }
-            if(degree>(i?1:2))return 0;
-        }
     }
     /* Keep the existing conservative two-layer eligibility estimate even
      * though column scratch now replaces the second matrix.
@@ -78,10 +84,13 @@ static int pencil_compute(fq_mvpoly_t *result,fq_mvpoly_t **matrix,
     nmod_mat_init(C,m,n,prime);nmod_mat_init(P,m,m,prime);
     nmod_mat_init(Pi,m,m,prime);nmod_mat_init(T,n,n,prime);
     for(slong i=0;i<m;i++)for(slong j=0;j<n;j++) {
-        const fq_mvpoly_t *a=&matrix[i+1][j];
-        for(slong k=0;k<a->nterms;k++)if(a->terms[k].par_exp[0]==1)
-            nmod_mat_entry(C,i,j)=nmod_add(nmod_mat_entry(C,i,j),
-                nmod_poly_get_coeff_ui(a->terms[k].coeff,0),C->mod);
+            const unified_mpoly_struct *a = &matrix[i + 1][j];
+            for (slong k = 0; k < dr_mpoly_length(a); k++) {
+                DR_MPOLY_TERM(term_2, a, k);
+                if (term_2.par_exp[0] == 1)
+                    nmod_mat_entry(C, i, j) = nmod_add(
+                        nmod_mat_entry(C, i, j), nmod_poly_get_coeff_ui(term_2.coeff, 0), C->mod);
+            }
     }
     slong piv[32];int normalized=0;
     for(slong free_col=0;free_col<n && !normalized;free_col++) {
@@ -119,7 +128,9 @@ static int pencil_compute(fq_mvpoly_t *result,fq_mvpoly_t **matrix,
     nmod_mpoly_init(product,ctx);nmod_mpoly_init(power,ctx);
     nmod_mpoly_init(trace,ctx);
     nmod_mpoly_init(coefficient,ctx);nmod_mpoly_init(answer,ctx);
-    for(slong i=0;i<n;i++)for(slong j=0;j<n;j++)fq_mvpoly_to_nmod_mpoly(input+i*n+j,&matrix[i][j],ctx);
+    for (slong i = 0; i < n; i++)
+        for (slong j = 0; j < n; j++)
+            dr_mpoly_to_nmod_mpoly(input + i * n + j, &matrix[i][j], ctx);
     for(slong i=0;i<n;i++)for(slong j=0;j<n;j++)for(slong k=0;k<n;k++) {
         ulong c=nmod_mat_entry(T,k,j);if(!c)continue;
         nmod_mpoly_scalar_mul_ui(product,input+i*n+k,c,ctx);
@@ -240,7 +251,7 @@ static int pencil_compute(fq_mvpoly_t *result,fq_mvpoly_t **matrix,
         nmod_mpoly_push_term_ui_ui(answer,nmod_mul(buckets[d].coeffs[i],scale,ctx->mod),exp,ctx);
     }
     nmod_mpoly_sort_terms(answer,ctx);
-    nmod_mpoly_to_fq_mvpoly(result,answer,nv,1,ctx,fq);
+    dr_mpoly_take_nmod(result, answer, nv, 1, ctx, fq);
     stats->assembly+=pencil_seconds()-phase;
     pencil_clear(buckets,n+2,ctx);
     nmod_mpoly_clear(product,ctx);nmod_mpoly_clear(power,ctx);
@@ -250,13 +261,14 @@ static int pencil_compute(fq_mvpoly_t *result,fq_mvpoly_t **matrix,
     stats->total=pencil_seconds()-start;stats->reason=NULL;return 1;
 }
 
-int compute_fq_det_mq_pencil(fq_mvpoly_t *result,fq_mvpoly_t **matrix,
-                           slong n,mq_pencil_stats *stats)
+int compute_fq_det_mq_pencil(unified_mpoly_struct *result, unified_mpoly_struct **matrix, slong n,
+                             mq_pencil_stats *stats)
 {
     return pencil_compute(result,matrix,n,stats,NULL,0,NULL,0);
 }
-int compute_fq_det_mq_pencil_projected(fq_mvpoly_t *result,fq_mvpoly_t **matrix,
-    slong n,const slong *rows,slong nr,const slong *cols,slong nc,mq_pencil_stats *stats)
+int compute_fq_det_mq_pencil_projected(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
+                                       slong n, const slong *rows, slong nr, const slong *cols,
+                                       slong nc, mq_pencil_stats *stats)
 {
     if(!rows || !cols || nr<=0 || nc<=0) {
         if(stats){memset(stats,0,sizeof(*stats));stats->reason="empty projection targets";}

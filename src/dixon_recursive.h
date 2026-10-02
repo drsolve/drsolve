@@ -10,15 +10,14 @@
 #ifdef _OPENMP
 #include <omp.h>
 #endif
-#include "fq_mvpoly.h"
+#include "dr_mpoly.h"
 #include "dixon_flint.h"
 
-void fq_dixon_fast_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys,
-                             slong nvars, slong npars);
+void fq_dixon_fast_resultant(unified_mpoly_struct *result, unified_mpoly_struct *polys, slong nvars,
+                             slong npars);
 
-void fq_dixon_fast_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys,
-                                        slong nvars, slong npars,
-                                        char **var_names, char **par_names,
-                                        const char *gen_name);
+void fq_dixon_fast_resultant_with_names(unified_mpoly_struct *result, unified_mpoly_struct *polys,
+                                        slong nvars, slong npars, char **var_names,
+                                        char **par_names, const char *gen_name);
 
 #endif

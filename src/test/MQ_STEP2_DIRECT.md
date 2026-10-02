@@ -3,7 +3,7 @@
 The first section records the initial fq implementation. The native, consuming
 prime-field path described below supersedes it inside the resultant pipeline.
 
-Step 2 now bypasses the intermediate `fq_mvpoly_t ***full_matrix` when:
+Step 2 now bypasses the intermediate `unified_mpoly_struct ***full_matrix` when:
 
 * Step 1 has verified the projected target block;
 * there is one parameter;
@@ -27,7 +27,7 @@ and the labels/permutation parity passed to the existing MQ Schur Step 4
 preparation. Step 3 reuses Step 1's certificate, as before.
 
 The direct path allocates no generic coefficient matrix pointer grid, per-cell
-`fq_mvpoly_t` objects, per-term generic monomial arrays, or cloned per-term
+`unified_mpoly_struct` objects, per-term generic monomial arrays, or cloned per-term
 parameter exponent arrays. It retains term row/column maps and a row-grouping
 index, plus O(matrix order) auxiliary arrays per thread. The final matrix still
 uses `fq_nmod_poly_mat`, including for prime fields; no `nmod_poly_mat` conversion

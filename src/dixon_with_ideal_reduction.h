@@ -47,9 +47,9 @@ typedef struct {
 typedef struct {
     char *main_var_name;      /* Main variable name */
     slong main_var_degree;    /* Main variable degree */
-    fq_mvpoly_t lhs;         /* Left-hand side expression */
-    fq_mvpoly_t rhs;         /* Right-hand side expression */
-    fq_mvpoly_t standard;    /* Standard form: lhs - rhs */
+    unified_mpoly_struct lhs; /* Left-hand side expression */
+    unified_mpoly_struct rhs; /* Right-hand side expression */
+    unified_mpoly_struct standard; /* Standard form: lhs - rhs */
 } equation_info_t;
 
 /* Core triangular ideal functions */
@@ -103,12 +103,10 @@ void compute_fq_nmod_det_with_triangular_reduction(fq_nmod_mpoly_t det,
                                                   slong size,
                                                   const unified_triangular_ideal_t *ideal);
 
-void compute_det_with_reduction_from_mvpoly(fq_mvpoly_t *result,
-                                           fq_mvpoly_t **matrix,
-                                           slong size,
-                                           const unified_triangular_ideal_t *ideal,
-                                           char **current_var_names,
-                                           det_method_t method);
+void compute_det_with_reduction_from_mvpoly(unified_mpoly_struct *result,
+                                            unified_mpoly_struct **matrix, slong size,
+                                            const unified_triangular_ideal_t *ideal,
+                                            char **current_var_names, det_method_t method);
 
 /* Equation information functions */
 void equation_info_init(equation_info_t *eq, slong nvars, slong npars, const fq_nmod_ctx_t ctx);

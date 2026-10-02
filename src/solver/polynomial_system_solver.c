@@ -1170,9 +1170,9 @@ fq_nmod_t* solve_univariate_equation_all_roots(const char *poly_str, const char 
     state.generator_name = gen_name;
     
     // Parse polynomial
-    fq_mvpoly_t poly;
-    fq_mvpoly_init(&poly, 1, state.max_pars, ctx);
-    
+    unified_mpoly_struct poly = {0};
+    dr_mpoly_init(&poly, 1, state.max_pars, ctx);
+
     state.input = poly_str;
     state.pos = 0;
     state.len = strlen(poly_str);
@@ -1183,19 +1183,21 @@ fq_nmod_t* solve_univariate_equation_all_roots(const char *poly_str, const char 
     // Convert to univariate polynomial
     fq_nmod_poly_t univ_poly;
     fq_nmod_poly_init(univ_poly, ctx);
-    
-    // Convert fq_mvpoly to fq_nmod_poly (assuming only one variable)
-    for (slong i = 0; i < poly.nterms; i++) {
+
+    // Convert dr_mpoly to fq_nmod_poly (assuming only one variable)
+    for (slong i = 0; i < dr_mpoly_length(&(poly)); i++) {
+        DR_MPOLY_TERM(term_1, &(poly), i);
+
         slong degree = 0;
-        if (poly.terms[i].var_exp && poly.terms[i].var_exp[0] > 0) {
-            degree = poly.terms[i].var_exp[0];
+        if (term_1.var_exp && term_1.var_exp[0] > 0) {
+            degree = term_1.var_exp[0];
         }
-        
+
         // Check if there are parameter terms (final univariate polynomial shouldn't have any)
-        if (poly.terms[i].par_exp) {
+        if (term_1.par_exp) {
             int has_params = 0;
             for (slong j = 0; j < state.npars; j++) {
-                if (poly.terms[i].par_exp[j] > 0) {
+                if (term_1.par_exp[j] > 0) {
                     has_params = 1;
                     break;
                 }
@@ -1204,10 +1206,10 @@ fq_nmod_t* solve_univariate_equation_all_roots(const char *poly_str, const char 
                 solver_trace_stdout("Warning: univariate equation still contains parameters or generator\n");
             }
         }
-        
-        fq_nmod_poly_set_coeff(univ_poly, degree, poly.terms[i].coeff, ctx);
+
+        fq_nmod_poly_set_coeff(univ_poly, degree, term_1.coeff, ctx);
     }
-    
+
     // Find roots
     fq_nmod_roots_t roots;
     fq_nmod_roots_init(roots, ctx);
@@ -1229,8 +1231,8 @@ fq_nmod_t* solve_univariate_equation_all_roots(const char *poly_str, const char 
     // Cleanup
     fq_nmod_roots_clear(roots, ctx);
     fq_nmod_poly_clear(univ_poly, ctx);
-    fq_mvpoly_clear(&poly);
-    
+    dr_mpoly_clear(&poly);
+
     for (slong i = 0; i < state.npars; i++) {
         free(state.par_names[i]);
     }
@@ -1281,9 +1283,9 @@ char* substitute_variable_in_polynomial(const char *poly_str, const char *var_na
     state.generator_name = gen_name;
     
     // Parse polynomial
-    fq_mvpoly_t poly;
-    fq_mvpoly_init(&poly, state.nvars, state.max_pars, ctx);
-    
+    unified_mpoly_struct poly = {0};
+    dr_mpoly_init(&poly, state.nvars, state.max_pars, ctx);
+
     state.input = poly_str;
     state.pos = 0;
     state.len = strlen(poly_str);
@@ -1292,18 +1294,20 @@ char* substitute_variable_in_polynomial(const char *poly_str, const char *var_na
     parse_expression(&state, &poly);
     
     // Create result polynomial by substituting variable value
-    fq_mvpoly_t result_poly;
-    fq_mvpoly_init(&result_poly, out_nvars, state.npars, ctx);
-    
+    unified_mpoly_struct result_poly = {0};
+    dr_mpoly_init(&result_poly, out_nvars, state.npars, ctx);
+
     // Substitute variable for each term
-    for (slong i = 0; i < poly.nterms; i++) {
+    for (slong i = 0; i < dr_mpoly_length(&(poly)); i++) {
+        DR_MPOLY_TERM(term_2, &(poly), i);
+
         fq_nmod_t term_coeff;
         fq_nmod_init(term_coeff, ctx);
-        fq_nmod_set(term_coeff, poly.terms[i].coeff, ctx);
-        
+        fq_nmod_set(term_coeff, term_2.coeff, ctx);
+
         // If this term contains the variable to substitute
-        if (sub_var_idx >= 0 && poly.terms[i].var_exp && poly.terms[i].var_exp[sub_var_idx] > 0) {
-            slong power = poly.terms[i].var_exp[sub_var_idx];
+        if (sub_var_idx >= 0 && term_2.var_exp && term_2.var_exp[sub_var_idx] > 0) {
+            slong power = term_2.var_exp[sub_var_idx];
             fq_nmod_t var_power;
             fq_nmod_init(var_power, ctx);
             fq_nmod_pow_ui(var_power, value, power, ctx);
@@ -1317,23 +1321,23 @@ char* substitute_variable_in_polynomial(const char *poly_str, const char *var_na
             slong dst = 0;
             for (slong src = 0; src < state.nvars; src++) {
                 if (src == sub_var_idx) continue;
-                new_var_exp[dst++] = poly.terms[i].var_exp ? poly.terms[i].var_exp[src] : 0;
+                new_var_exp[dst++] = term_2.var_exp ? term_2.var_exp[src] : 0;
             }
         }
         
         // Add processed term to result, preserving the remaining variables and parameters.
-        fq_mvpoly_add_term(&result_poly, new_var_exp, poly.terms[i].par_exp, term_coeff);
+        dr_mpoly_add_term(&result_poly, new_var_exp, term_2.par_exp, term_coeff);
         if (new_var_exp) flint_free(new_var_exp);
         fq_nmod_clear(term_coeff, ctx);
     }
-    
+
     // Convert result to string
-    char *result_str = fq_mvpoly_to_string(&result_poly, out_var_names, gen_name);
-    
+    char *result_str = dr_mpoly_to_string(&result_poly, out_var_names, gen_name);
+
     // Cleanup
-    fq_mvpoly_clear(&poly);
-    fq_mvpoly_clear(&result_poly);
-    
+    dr_mpoly_clear(&poly);
+    dr_mpoly_clear(&result_poly);
+
     for (slong i = 0; i < state.npars; i++) {
         free(state.par_names[i]);
     }
@@ -1475,8 +1479,8 @@ static int evaluate_original_polynomial_at_solution(fq_nmod_t result,
 
     scan_identifiers_for_verification_parameters(&state, poly_str);
 
-    fq_mvpoly_t poly;
-    fq_mvpoly_init(&poly, state.nvars, state.npars, ctx);
+    unified_mpoly_struct poly = {0};
+    dr_mpoly_init(&poly, state.nvars, state.npars, ctx);
 
     state.input = poly_str;
     state.pos = 0;
@@ -1490,13 +1494,15 @@ static int evaluate_original_polynomial_at_solution(fq_nmod_t result,
 
     fq_nmod_zero(result, ctx);
 
-    for (slong term_idx = 0; term_idx < poly.nterms; term_idx++) {
+    for (slong term_idx = 0; term_idx < dr_mpoly_length(&(poly)); term_idx++) {
+        DR_MPOLY_TERM(term_3, &(poly), term_idx);
+
         fq_nmod_t term_value;
         fq_nmod_init(term_value, ctx);
-        fq_nmod_set(term_value, poly.terms[term_idx].coeff, ctx);
+        fq_nmod_set(term_value, term_3.coeff, ctx);
 
         for (slong var_idx = 0; var_idx < poly.nvars; var_idx++) {
-            slong exp = (poly.terms[term_idx].var_exp) ? poly.terms[term_idx].var_exp[var_idx] : 0;
+            slong exp = (term_3.var_exp) ? term_3.var_exp[var_idx] : 0;
             if (exp > 0) {
                 fq_nmod_t value_pow;
                 fq_nmod_init(value_pow, ctx);
@@ -1506,13 +1512,13 @@ static int evaluate_original_polynomial_at_solution(fq_nmod_t result,
             }
         }
 
-        if (poly.npars > 0 && poly.terms[term_idx].par_exp) {
+        if (poly.npars > 0 && term_3.par_exp) {
             for (slong par_idx = 0; par_idx < poly.npars; par_idx++) {
-                if (poly.terms[term_idx].par_exp[par_idx] != 0) {
+                if (term_3.par_exp[par_idx] != 0) {
                     solver_trace_stdout("    Verification FAILED: unsupported parameterized term in %s\n",
                                         poly_str);
                     fq_nmod_clear(term_value, ctx);
-                    fq_mvpoly_clear(&poly);
+                    dr_mpoly_clear(&poly);
                     for (slong i = 0; i < state.npars; i++) {
                         free(state.par_names[i]);
                     }
@@ -1533,7 +1539,7 @@ static int evaluate_original_polynomial_at_solution(fq_nmod_t result,
         fq_nmod_clear(term_value, ctx);
     }
 
-    fq_mvpoly_clear(&poly);
+    dr_mpoly_clear(&poly);
     for (slong i = 0; i < state.npars; i++) {
         free(state.par_names[i]);
     }

@@ -12,7 +12,7 @@
 
 #include "dixon_flint.h"
 #include "dixon_interface_flint.h"
-#include "fq_mvpoly.h"
+#include "dr_mpoly.h"
 #include "fq_unified_interface.h"
 #include "unified_mpoly_resultant.h"
 #include "dixon_with_ideal_reduction.h"
@@ -73,21 +73,17 @@ void enumerate_all_monomials(monomial_t **monomials, slong *count,
 void enumerate_homogeneous_monomials(monomial_t **monomials, slong *count,
                                      slong total_indeterminates, slong degree);
 
-void generate_random_polynomial(fq_mvpoly_t *poly, slong nvars, slong npars,
-                               slong max_degree, double density_ratio,
-                               const fq_nmod_ctx_t ctx, flint_rand_t state);
+void generate_random_polynomial(unified_mpoly_struct *poly, slong nvars, slong npars,
+                                slong max_degree, double density_ratio, const fq_nmod_ctx_t ctx,
+                                flint_rand_t state);
 
-void generate_polynomial_system(fq_mvpoly_t **polys, slong nvars, slong npolys, 
-                               slong npars, const slong *degrees,
-                               double density_ratio,
-                               const fq_nmod_ctx_t ctx, flint_rand_t state);
+void generate_polynomial_system(unified_mpoly_struct **polys, slong nvars, slong npolys,
+                                slong npars, const slong *degrees, double density_ratio,
+                                const fq_nmod_ctx_t ctx, flint_rand_t state);
 
-void generate_homogeneous_polynomial_system(fq_mvpoly_t **polys, slong nvars,
-                                            slong npolys, slong npars,
-                                            const slong *degrees,
-                                            double density_ratio,
-                                            const fq_nmod_ctx_t ctx,
-                                            flint_rand_t state);
+void generate_homogeneous_polynomial_system(unified_mpoly_struct **polys, slong nvars, slong npolys,
+                                            slong npars, const slong *degrees, double density_ratio,
+                                            const fq_nmod_ctx_t ctx, flint_rand_t state);
 
 // Test Functions
 void test_dixon_system(const char *test_name, slong nvars, slong npars,

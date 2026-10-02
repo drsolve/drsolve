@@ -7,10 +7,10 @@ void fq_mq_compact_clear(fq_mq_compact *p)
     memset(p,0,sizeof(*p));
 }
 
-void fq_mq_compact_materialize(fq_mvpoly_t *out, const fq_mq_compact *p,
-                              const fq_nmod_ctx_t ctx)
+void fq_mq_compact_materialize(unified_mpoly_struct *out, const fq_mq_compact *p,
+                               const fq_nmod_ctx_t ctx)
 {
-    fq_mvpoly_init(out,2*p->nvars,1,ctx);
+    dr_mpoly_init(out, 2 * p->nvars, 1, ctx);
     slong *exp=flint_malloc(2*p->nvars*sizeof(slong));
     fq_nmod_t coefficient; fq_nmod_init(coefficient,ctx);
     for(slong r=0;r<p->nrows;r++) {
@@ -19,7 +19,7 @@ void fq_mq_compact_materialize(fq_mvpoly_t *out, const fq_mq_compact *p,
             const fq_mq_compact_term *a=p->terms+t;
             memcpy(exp+p->nvars,p->cols+a->column*p->nvars,p->nvars*sizeof(slong));
             fq_nmod_set_ui(coefficient,a->coefficient,ctx);
-            fq_mvpoly_add_term_fast(out,exp,&a->degree,coefficient);
+            dr_mpoly_add_term_fast(out, exp, &a->degree, coefficient);
         }
     }
     fq_nmod_clear(coefficient,ctx); flint_free(exp);

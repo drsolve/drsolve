@@ -37,7 +37,7 @@
 #include <omp.h>
 #endif
 
-#include "fq_mvpoly.h"
+#include "dr_mpoly.h"
 #include "fq_mpoly_mat_det.h"
 #include "fq_unified_interface.h"
 #include "dixon_interface_flint.h"
@@ -113,29 +113,28 @@ void dixon_maybe_print_step_method_time(const char *step_label,
                                         double wall_elapsed);
 
 // Matrix operations
-void build_fq_cancellation_matrix_mvpoly(fq_mvpoly_t ***M, fq_mvpoly_t *polys, 
-                                        slong nvars, slong npars);
+void build_fq_cancellation_matrix(unified_mpoly_struct ***M, unified_mpoly_struct *polys,
+                                  slong nvars, slong npars);
 
-void perform_fq_matrix_row_operations_mvpoly(fq_mvpoly_t ***new_matrix, fq_mvpoly_t ***original_matrix,
-                                           slong nvars, slong npars);
+void perform_fq_matrix_row_operations(unified_mpoly_struct ***new_matrix,
+                                      unified_mpoly_struct ***original_matrix, slong nvars,
+                                      slong npars);
 
 // Degree bound computation
-slong compute_fq_dixon_resultant_degree_bound(fq_mvpoly_t *polys, slong npolys, 
-                                             slong nvars, slong npars);
+slong compute_fq_dixon_resultant_degree_bound(unified_mpoly_struct *polys, slong npolys,
+                                              slong nvars, slong npars);
 
 // Coefficient matrix determinant computation
-void compute_fq_coefficient_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **coeff_matrix,
-                                      slong size, slong npars, const fq_nmod_ctx_t ctx,
-                                      det_method_t method, slong res_deg_bound);
+void compute_fq_coefficient_matrix_det(unified_mpoly_struct *result,
+                                       unified_mpoly_struct **coeff_matrix, slong size, slong npars,
+                                       const fq_nmod_ctx_t ctx, det_method_t method,
+                                       slong res_deg_bound);
 
 // Maximal rank submatrix finding
-void find_fq_optimal_maximal_rank_submatrix(fq_mvpoly_t ***full_matrix, 
-                                           slong nrows, slong ncols,
-                                           slong **row_indices_out, 
-                                           slong **col_indices_out,
-                                           slong *num_rows, slong *num_cols,
-                                           slong npars,
-                                           slong ksy_constant_col);
+void find_fq_optimal_maximal_rank_submatrix(unified_mpoly_struct ***full_matrix, slong nrows,
+                                            slong ncols, slong **row_indices_out,
+                                            slong **col_indices_out, slong *num_rows,
+                                            slong *num_cols, slong npars, slong ksy_constant_col);
 
 // Monomial collection structures and functions
 typedef struct {
@@ -151,34 +150,29 @@ typedef struct hash_entry {
 
 // Optimized monomial collection with hash table
 // Lazy matrix entry allocation
-fq_mvpoly_t* get_matrix_entry_lazy(fq_mvpoly_t ***matrix, slong i, slong j,
-                                  slong npars, const fq_nmod_ctx_t ctx);
+unified_mpoly_struct *get_matrix_entry_lazy(unified_mpoly_struct ***matrix, slong i, slong j,
+                                            slong npars, const fq_nmod_ctx_t ctx);
 
 // Extract coefficient matrix from Dixon polynomial
-void extract_fq_coefficient_matrix_from_dixon(fq_mvpoly_t ***coeff_matrix,
-                                              fq_nmod_poly_mat_t *poly_matrix_out,
-                                              slong *row_indices, slong *col_indices,
-                                             slong *matrix_size,
-                                             slong *extracted_x_power,
-                                             const fq_mvpoly_t *dixon_poly,
-                                              slong nvars, slong npars,
-                                              char **var_names, char **par_names,
-                                              const char *gen_name,
-                                              const long *degrees, slong num_polys);
+void extract_fq_coefficient_matrix_from_dixon(
+    unified_mpoly_struct ***coeff_matrix, fq_nmod_poly_mat_t *poly_matrix_out, slong *row_indices,
+    slong *col_indices, slong *matrix_size, slong *extracted_x_power,
+    const unified_mpoly_struct *dixon_poly, slong nvars, slong npars, char **var_names,
+    char **par_names, const char *gen_name, const long *degrees, slong num_polys);
 
 // Compute determinant of cancellation matrix
-void compute_fq_cancel_matrix_det(fq_mvpoly_t *result, fq_mvpoly_t **modified_M_mvpoly,
-                                 slong nvars, slong npars, det_method_t method);
+void compute_fq_cancel_matrix_det(unified_mpoly_struct *result,
+                                  unified_mpoly_struct **modified_M_mvpoly, slong nvars,
+                                  slong npars, det_method_t method);
 
 slong dixon_matrix_size(slong nvars, slong degree, ulong prime, slong field_degree);
 
 // Main Dixon resultant computation function
-void fq_dixon_resultant(fq_mvpoly_t *result, fq_mvpoly_t *polys, 
-                       slong nvars, slong npars);
+void fq_dixon_resultant(unified_mpoly_struct *result, unified_mpoly_struct *polys, slong nvars,
+                        slong npars);
 
-void fq_dixon_resultant_with_names(fq_mvpoly_t *result, fq_mvpoly_t *polys, 
-                                  slong nvars, slong npars,
-                                  char **var_names, char **par_names, 
-                                  const char *gen_name);
+void fq_dixon_resultant_with_names(unified_mpoly_struct *result, unified_mpoly_struct *polys,
+                                   slong nvars, slong npars, char **var_names, char **par_names,
+                                   const char *gen_name);
 
 #endif

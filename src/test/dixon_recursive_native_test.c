@@ -5,7 +5,7 @@
 #include <assert.h>
 #include <flint/ulong_extras.h>
 
-static void random_terms(fq_mvpoly_t *p, slong *exp, slong pos, slong left,
+static void random_terms(unified_mpoly_struct *p, slong *exp, slong pos, slong left,
                          flint_rand_t rng, int sparse)
 {
     if (pos < p->nvars+p->npars) {
@@ -19,16 +19,18 @@ static void random_terms(fq_mvpoly_t *p, slong *exp, slong pos, slong left,
     ulong value=n_randint(rng,prime);
     if (sparse && n_randint(rng,3)) value=0;
     fq_nmod_t c; fq_nmod_init(c,p->ctx); fq_nmod_set_ui(c,value,p->ctx);
-    if (value) fq_mvpoly_add_term_fast(p,exp,exp+p->nvars,c);
+    if (value)
+        dr_mpoly_add_term_fast(p, exp, exp + p->nvars, c);
     fq_nmod_clear(c,p->ctx);
 }
 
-static int equal_poly(const fq_mvpoly_t *a, const fq_mvpoly_t *b)
+static int equal_poly(const unified_mpoly_struct *a, const unified_mpoly_struct *b)
 {
     nmod_mpoly_ctx_t ctx;
     nmod_mpoly_ctx_init(ctx,a->nvars+a->npars,ORD_LEX,fq_nmod_ctx_prime(a->ctx));
     nmod_mpoly_t x,y; nmod_mpoly_init(x,ctx); nmod_mpoly_init(y,ctx);
-    fq_mvpoly_to_nmod_mpoly(x,a,ctx); fq_mvpoly_to_nmod_mpoly(y,b,ctx);
+    dr_mpoly_to_nmod_mpoly(x, a, ctx);
+    dr_mpoly_to_nmod_mpoly(y, b, ctx);
     int same=nmod_mpoly_equal(x,y,ctx);
     nmod_mpoly_clear(y,ctx); nmod_mpoly_clear(x,ctx); nmod_mpoly_ctx_clear(ctx);
     return same;
@@ -38,16 +40,18 @@ static void check(ulong prime, slong degree, int sparse, slong npars)
 {
     fq_nmod_ctx_t ctx; fq_nmod_ctx_init_ui(ctx,prime,1,"a");
     flint_rand_t rng; flint_rand_init(rng); flint_rand_set_seed(rng,prime+degree,17+sparse);
-    fq_mvpoly_t p[3]; const fq_mvpoly_t *ptrs[3];
+    unified_mpoly_struct p[3] = {0};
+    const unified_mpoly_struct *ptrs[3];
     slong exp[4]={0}, degrees[2];
     for (slong i=0; i<3; i++) {
-        fq_mvpoly_init(p+i,2,npars,ctx); ptrs[i]=p+i;
+        dr_mpoly_init(p + i, 2, npars, ctx);
+        ptrs[i] = p + i;
         random_terms(p+i,exp,0,degree,rng,sparse);
         /* Keep both recursive degree bounds positive even for sparse F_2. */
         fq_nmod_t one; fq_nmod_init(one,ctx); fq_nmod_one(one,ctx);
         slong x[2]={degree,0}, y[2]={0,degree}, par[2]={0,0};
-        fq_mvpoly_add_term_fast(p+i,x,par,one);
-        fq_mvpoly_add_term_fast(p+i,y,par,one);
+        dr_mpoly_add_term_fast(p + i, x, par, one);
+        dr_mpoly_add_term_fast(p + i, y, par, one);
         fq_nmod_clear(one,ctx);
     }
     fast_dixon_compute_degree_bounds(degrees,ptrs,3,2);
@@ -62,30 +66,37 @@ static void check(ulong prime, slong degree, int sparse, slong npars)
         assert(equal_poly(native.entries+i,legacy.entries+i));
 
     /* Reconstruct the polynomial using the recursive matrix's raw labels. */
-    fq_mvpoly_t actual,expected,**cancel,**modified;
-    fq_mvpoly_init(&actual,4,npars,ctx);
+    unified_mpoly_struct actual = {0}, expected = {0}, **cancel, **modified;
+    dr_mpoly_init(&actual, 4, npars, ctx);
     for (slong r=0; r<native.rows; r++) for (slong c=0; c<native.cols; c++) {
         slong label[4]={r/(2*degrees[1]),r%(2*degrees[1]),c/degrees[1],c%degrees[1]};
-        const fq_mvpoly_t *entry=&FAST_DIXON_ENTRY(&native,r,c);
-        for (slong t=0; t<entry->nterms; t++)
-            fq_mvpoly_add_term_fast(&actual,label,entry->terms[t].par_exp,entry->terms[t].coeff);
+        const unified_mpoly_struct *entry = &FAST_DIXON_ENTRY(&native, r, c);
+        for (slong t = 0; t < dr_mpoly_length(entry); t++) {
+            DR_MPOLY_TERM(term_1, entry, t);
+            dr_mpoly_add_term_fast(&actual, label, term_1.par_exp, term_1.coeff);
+        }
     }
-    build_fq_cancellation_matrix_mvpoly(&cancel,p,2,npars);
-    perform_fq_matrix_row_operations_mvpoly(&modified,&cancel,2,npars);
+    build_fq_cancellation_matrix(&cancel, p, 2, npars);
+    perform_fq_matrix_row_operations(&modified, &cancel, 2, npars);
     compute_fq_cancel_matrix_det(&expected,modified,2,npars,DET_METHOD_RECURSIVE);
     /* Recursive convention can differ by the global Dixon determinant sign. */
     if (!equal_poly(&actual,&expected)) {
-        for (slong t=0; t<actual.nterms; t++) fq_nmod_neg(actual.terms[t].coeff,actual.terms[t].coeff,ctx);
+        dr_mpoly_neg(&actual, &actual);
         assert(equal_poly(&actual,&expected));
     }
     for (slong i=0; i<3; i++) {
-        for (slong j=0; j<3; j++) { fq_mvpoly_clear(&cancel[i][j]); fq_mvpoly_clear(&modified[i][j]); }
+        for (slong j = 0; j < 3; j++) {
+            dr_mpoly_clear(&cancel[i][j]);
+            dr_mpoly_clear(&modified[i][j]);
+        }
         flint_free(cancel[i]); flint_free(modified[i]);
     }
     flint_free(cancel); flint_free(modified);
-    fq_mvpoly_clear(&expected); fq_mvpoly_clear(&actual);
+    dr_mpoly_clear(&expected);
+    dr_mpoly_clear(&actual);
     fast_dixon_matrix_clear(&native); fast_dixon_matrix_clear(&legacy);
-    for (slong i=0; i<3; i++) fq_mvpoly_clear(p+i);
+    for (slong i = 0; i < 3; i++)
+        dr_mpoly_clear(p + i);
     flint_rand_clear(rng); fq_nmod_ctx_clear(ctx);
 }
 

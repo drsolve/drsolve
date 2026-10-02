@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Research-only Boolean support graph. No minor coefficients are computed.
  * Row unions deliberately relax column exclusivity and cancellation. */
-int mq_support_count(fq_mvpoly_t **matrix, slong n, const slong *rows,
-                     const slong *cols, slong targets)
+int mq_support_count(unified_mpoly_struct **matrix, slong n, const slong *rows, const slong *cols,
+                     slong targets)
 {
     mq_det_filter filter;
     if (!mq_filter_init(&filter, n-1, rows, targets, cols, targets)) return 0;
@@ -12,7 +12,7 @@ int mq_support_count(fq_mvpoly_t **matrix, slong n, const slong *rows,
     mq_filter_prepare_packed(&filter, ctx, n+1);
     nmod_mpoly_t **m = flint_malloc(n*sizeof(*m));
     for (slong i=0; i<n; i++) m[i] = flint_malloc(n*sizeof(**m));
-    fq_matrix_mvpoly_to_nmod_mpoly(m, matrix, n, ctx);
+    dr_mpoly_matrix_export_nmod(m, matrix, n, ctx);
     mq_shared_support *support = flint_calloc(n+1, sizeof(*support));
     mq_shared_support *shifts = flint_calloc(n+1, sizeof(*shifts));
     unsigned char **live = flint_calloc(n+1, sizeof(*live));

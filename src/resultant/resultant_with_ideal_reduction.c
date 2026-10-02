@@ -91,11 +91,11 @@ char* resultant_with_ideal_reduction(const char *poly1_string, const char *poly2
     
     // First pass: parse polynomials to discover all variables
     DEBUG_PRINT_R("First pass: discovering variables from polynomials\n");
-    
-    fq_mvpoly_t temp1, temp2;
-    fq_mvpoly_init(&temp1, 1, discovery_state.max_pars, ctx);
-    fq_mvpoly_init(&temp2, 1, discovery_state.max_pars, ctx);
-    
+
+    unified_mpoly_struct temp1 = {0}, temp2 = {0};
+    dr_mpoly_init(&temp1, 1, discovery_state.max_pars, ctx);
+    dr_mpoly_init(&temp2, 1, discovery_state.max_pars, ctx);
+
     // Parse first polynomial
     discovery_state.input = poly1_string;
     discovery_state.pos = 0;
@@ -113,10 +113,10 @@ char* resultant_with_ideal_reduction(const char *poly1_string, const char *poly2
     }
     next_token(&discovery_state);
     parse_expression(&discovery_state, &temp2);
-    
-    fq_mvpoly_clear(&temp1);
-    fq_mvpoly_clear(&temp2);
-    
+
+    dr_mpoly_clear(&temp1);
+    dr_mpoly_clear(&temp2);
+
     DEBUG_PRINT_R("Discovered parameters from polynomials:\n");
     for (slong i = 0; i < discovery_state.npars; i++) {
         DEBUG_PRINT_R("  param[%ld] = %s\n", i, discovery_state.par_names[i]);
@@ -218,10 +218,10 @@ char* resultant_with_ideal_reduction(const char *poly1_string, const char *poly2
     state.current.str = NULL;
     
     // Parse polynomials with correct context
-    fq_mvpoly_t poly1, poly2;
-    fq_mvpoly_init(&poly1, 1, state.npars, ctx);
-    fq_mvpoly_init(&poly2, 1, state.npars, ctx);
-    
+    unified_mpoly_struct poly1 = {0}, poly2 = {0};
+    dr_mpoly_init(&poly1, 1, state.npars, ctx);
+    dr_mpoly_init(&poly2, 1, state.npars, ctx);
+
     DEBUG_PRINT_R("Second pass: parsing polynomials with correct context\n");
     
     state.input = poly1_string;
@@ -258,7 +258,9 @@ char* resultant_with_ideal_reduction(const char *poly1_string, const char *poly2
     
     DEBUG_PRINT_R("Converting poly1 to unified format\n");
     // Convert poly1
-    for (slong i = 0; i < poly1.nterms; i++) {
+    for (slong i = 0; i < dr_mpoly_length(&(poly1)); i++) {
+        DR_MPOLY_TERM(term_1, &(poly1), i);
+
         field_elem_u coeff;
         ulong *exp = (ulong*) calloc(total_vars, sizeof(ulong));
         
@@ -268,28 +270,30 @@ char* resultant_with_ideal_reduction(const char *poly1_string, const char *poly2
                        (void*)field_ctx.ctx.zech_ctx :
                        (void*)field_ctx.ctx.fq_ctx;
         field_init_elem(&coeff, field_ctx.field_id, ctx_ptr);
-        fq_nmod_to_field_elem(&coeff, poly1.terms[i].coeff, &field_ctx);
-        
+        fq_nmod_to_field_elem(&coeff, term_1.coeff, &field_ctx);
+
         // Set elimination variable exponent
-        if (poly1.terms[i].var_exp) {
-            exp[0] = poly1.terms[i].var_exp[0];
+        if (term_1.var_exp) {
+            exp[0] = term_1.var_exp[0];
         }
-        
+
         // Set parameter exponents
-        if (poly1.terms[i].par_exp) {
+        if (term_1.par_exp) {
             for (slong j = 0; j < state.npars && j < poly1.npars; j++) {
-                exp[1 + j] = poly1.terms[i].par_exp[j];
+                exp[1 + j] = term_1.par_exp[j];
             }
         }
-        
+
         unified_mpoly_set_coeff_ui(A, &coeff, exp);
         field_clear_elem(&coeff, field_ctx.field_id, ctx_ptr);
         free(exp);
     }
-    
+
     DEBUG_PRINT_R("Converting poly2 to unified format\n");
     // Convert poly2
-    for (slong i = 0; i < poly2.nterms; i++) {
+    for (slong i = 0; i < dr_mpoly_length(&(poly2)); i++) {
+        DR_MPOLY_TERM(term_2, &(poly2), i);
+
         field_elem_u coeff;
         ulong *exp = (ulong*) calloc(total_vars, sizeof(ulong));
         
@@ -299,25 +303,25 @@ char* resultant_with_ideal_reduction(const char *poly1_string, const char *poly2
                        (void*)field_ctx.ctx.zech_ctx :
                        (void*)field_ctx.ctx.fq_ctx;
         field_init_elem(&coeff, field_ctx.field_id, ctx_ptr);
-        fq_nmod_to_field_elem(&coeff, poly2.terms[i].coeff, &field_ctx);
-        
+        fq_nmod_to_field_elem(&coeff, term_2.coeff, &field_ctx);
+
         // Set elimination variable exponent
-        if (poly2.terms[i].var_exp) {
-            exp[0] = poly2.terms[i].var_exp[0];
+        if (term_2.var_exp) {
+            exp[0] = term_2.var_exp[0];
         }
-        
+
         // Set parameter exponents
-        if (poly2.terms[i].par_exp) {
+        if (term_2.par_exp) {
             for (slong j = 0; j < state.npars && j < poly2.npars; j++) {
-                exp[1 + j] = poly2.terms[i].par_exp[j];
+                exp[1 + j] = term_2.par_exp[j];
             }
         }
-        
+
         unified_mpoly_set_coeff_ui(B, &coeff, exp);
         field_clear_elem(&coeff, field_ctx.field_id, ctx_ptr);
         free(exp);
     }
-    
+
     printf("\nStep 1: Compute resultant w.r.t. %s\n", elim_var);
     printf("  Poly1 has %ld terms\n", unified_mpoly_length(A));
     printf("  Poly2 has %ld terms\n", unified_mpoly_length(B));
@@ -352,21 +356,21 @@ char* resultant_with_ideal_reduction(const char *poly1_string, const char *poly2
         if (state.generator_name) free(state.generator_name);
         fq_nmod_clear(state.current.value, ctx);
         if (state.current.str) free(state.current.str);
-        fq_mvpoly_clear(&poly1);
-        fq_mvpoly_clear(&poly2);
-        
+        dr_mpoly_clear(&poly1);
+        dr_mpoly_clear(&poly2);
+
         return strdup("0");
     }
     
     printf("Resultant computation time: %.3f seconds\n", (double)(end - start) / CLOCKS_PER_SEC);
     printf("Resultant has %ld terms\n", unified_mpoly_length(R));
-    
-    // Convert result back to fq_mvpoly first to inspect it
-    fq_mvpoly_t debug_mvpoly;
-    fq_mvpoly_init(&debug_mvpoly, 0, state.npars, ctx);
-    
-    DEBUG_PRINT_R("Converting result to fq_mvpoly for inspection\n");
-    
+
+    // Convert result back to dr_mpoly first to inspect it
+    unified_mpoly_struct debug_mvpoly = {0};
+    dr_mpoly_init(&debug_mvpoly, 0, state.npars, ctx);
+
+    DEBUG_PRINT_R("Converting result to dr_mpoly for inspection\n");
+
     // Convert from unified format for debugging
     if (field_ctx.field_id == FIELD_ID_NMOD) {
         nmod_mpoly_struct *nmod_res = GET_NMOD_POLY(R);
@@ -388,9 +392,9 @@ char* resultant_with_ideal_reduction(const char *poly1_string, const char *poly2
                     par_exp[j] = exp[1 + j]; // Skip elimination variable at index 0
                 }
             }
-            
-            fq_mvpoly_add_term_fast(&debug_mvpoly, NULL, par_exp, coeff);
-            
+
+            dr_mpoly_add_term_fast(&debug_mvpoly, NULL, par_exp, coeff);
+
             fq_nmod_clear(coeff, ctx);
             free(exp);
             if (par_exp) free(par_exp);
@@ -414,9 +418,9 @@ char* resultant_with_ideal_reduction(const char *poly1_string, const char *poly2
                     par_exp[j] = exp[1 + j];
                 }
             }
-            
-            fq_mvpoly_add_term_fast(&debug_mvpoly, NULL, par_exp, coeff);
-            
+
+            dr_mpoly_add_term_fast(&debug_mvpoly, NULL, par_exp, coeff);
+
             fq_nmod_clear(coeff, ctx);
             free(exp);
             if (par_exp) free(par_exp);
@@ -425,7 +429,8 @@ char* resultant_with_ideal_reduction(const char *poly1_string, const char *poly2
     
     // Print the polynomial before reduction
     printf("\nBefore ideal reduction, resultant polynomial:\n");
-    char *before_reduction = fq_mvpoly_to_string(&debug_mvpoly, state.par_names, state.generator_name);
+    char *before_reduction =
+        dr_mpoly_to_string(&debug_mvpoly, state.par_names, state.generator_name);
     printf("  %s\n", before_reduction);
     free(before_reduction);
     
@@ -586,15 +591,15 @@ char* resultant_with_ideal_reduction(const char *poly1_string, const char *poly2
     } else {
         printf("\nStep 2: Skipping ideal reduction (no ideal provided)\n");
     }
-    
-    fq_mvpoly_clear(&debug_mvpoly);
-    
-    // Convert result back to fq_mvpoly
-    fq_mvpoly_t result_mvpoly;
-    fq_mvpoly_init(&result_mvpoly, 0, state.npars, ctx);
-    
-    DEBUG_PRINT_R("Converting result back to fq_mvpoly format\n");
-    
+
+    dr_mpoly_clear(&debug_mvpoly);
+
+    // Convert result back to dr_mpoly
+    unified_mpoly_struct result_mvpoly = {0};
+    dr_mpoly_init(&result_mvpoly, 0, state.npars, ctx);
+
+    DEBUG_PRINT_R("Converting result back to dr_mpoly format\n");
+
     // Convert from unified format based on field type
     if (field_ctx.field_id == FIELD_ID_NMOD) {
         nmod_mpoly_struct *nmod_res = GET_NMOD_POLY(R);
@@ -616,9 +621,9 @@ char* resultant_with_ideal_reduction(const char *poly1_string, const char *poly2
                     par_exp[j] = exp[1 + j]; // Skip elimination variable at index 0
                 }
             }
-            
-            fq_mvpoly_add_term_fast(&result_mvpoly, NULL, par_exp, coeff);
-            
+
+            dr_mpoly_add_term_fast(&result_mvpoly, NULL, par_exp, coeff);
+
             fq_nmod_clear(coeff, ctx);
             free(exp);
             if (par_exp) free(par_exp);
@@ -646,9 +651,9 @@ char* resultant_with_ideal_reduction(const char *poly1_string, const char *poly2
                     par_exp[j] = exp[1 + j];
                 }
             }
-            
-            fq_mvpoly_add_term_fast(&result_mvpoly, NULL, par_exp, coeff);
-            
+
+            dr_mpoly_add_term_fast(&result_mvpoly, NULL, par_exp, coeff);
+
             fq_nmod_clear(coeff, ctx);
             fq_zech_clear(zech_coeff, zech_ctx->fqctx);
             free(exp);
@@ -673,9 +678,9 @@ char* resultant_with_ideal_reduction(const char *poly1_string, const char *poly2
                     par_exp[j] = exp[1 + j];
                 }
             }
-            
-            fq_mvpoly_add_term_fast(&result_mvpoly, NULL, par_exp, coeff);
-            
+
+            dr_mpoly_add_term_fast(&result_mvpoly, NULL, par_exp, coeff);
+
             fq_nmod_clear(coeff, ctx);
             free(exp);
             if (par_exp) free(par_exp);
@@ -683,8 +688,8 @@ char* resultant_with_ideal_reduction(const char *poly1_string, const char *poly2
     }
     
     // Convert result to string
-    char *result = fq_mvpoly_to_string(&result_mvpoly, state.par_names, state.generator_name);
-    
+    char *result = dr_mpoly_to_string(&result_mvpoly, state.par_names, state.generator_name);
+
     // Print remaining variables
     printf("Remaining variables: ");
     if (state.npars == 0) {
@@ -703,10 +708,10 @@ char* resultant_with_ideal_reduction(const char *poly1_string, const char *poly2
     unified_mpoly_clear(R);
     unified_mpoly_ctx_clear(unified_ctx);
     field_ctx_clear(&field_ctx);
-    fq_mvpoly_clear(&poly1);
-    fq_mvpoly_clear(&poly2);
-    fq_mvpoly_clear(&result_mvpoly);
-    
+    dr_mpoly_clear(&poly1);
+    dr_mpoly_clear(&poly2);
+    dr_mpoly_clear(&result_mvpoly);
+
     for (slong i = 0; i < state.nvars; i++) {
         free(state.var_names[i]);
     }

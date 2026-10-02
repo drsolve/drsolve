@@ -49,8 +49,8 @@ static void simplex_enumerate(uint8_t *exps, uint8_t *e, slong *count,
     }
 }
 
-int compute_fq_det_mq_simplex(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
-                            slong n, mq_simplex_stats *stats)
+int compute_fq_det_mq_simplex(unified_mpoly_struct *result, unified_mpoly_struct **matrix, slong n,
+                              mq_simplex_stats *stats)
 {
     mq_simplex_stats local={0};
     if (!stats) stats=&local;
@@ -68,20 +68,27 @@ int compute_fq_det_mq_simplex(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
     }
     slong total_terms=0;
     for (slong i=0;i<n;i++) for (slong j=0;j<n;j++) {
-        const fq_mvpoly_t *p=&matrix[i][j];
-        if (p->nvars!=v-1 || p->npars!=1) return 0;
-        for (slong k=0;k<p->nterms;k++) {
-            slong degree=p->terms[k].par_exp[0];
-            if (degree<0 || degree>(i?1:2)) return 0;
-            for (slong l=0;l<v-1;l++) {
-                slong a=p->terms[k].var_exp[l];
-                if (a<0 || a>(i?1:2)) return 0;
-                degree+=a;
+            const unified_mpoly_struct *p = &matrix[i][j];
+            if (p->nvars != v - 1 || p->npars != 1)
+                return 0;
+            for (slong k = 0; k < dr_mpoly_length(p); k++) {
+                DR_MPOLY_TERM(term_1, p, k);
+
+                slong degree = term_1.par_exp[0];
+                if (degree < 0 || degree > (i ? 1 : 2))
+                    return 0;
+                for (slong l = 0; l < v - 1; l++) {
+                    slong a = term_1.var_exp[l];
+                    if (a < 0 || a > (i ? 1 : 2))
+                        return 0;
+                    degree += a;
+                }
+                if (degree > (i ? 1 : 2))
+                    return 0;
             }
-            if (degree>(i?1:2)) return 0;
-        }
-        if (p->nterms>WORD_MAX-total_terms) return 0;
-        total_terms+=p->nterms;
+            if (dr_mpoly_length(p) > WORD_MAX - total_terms)
+                return 0;
+            total_terms += dr_mpoly_length(p);
     }
     slong choose[MQ_SIMPLEX_BINOM][MQ_SIMPLEX_BINOM]={{0}};
     for (slong i=0;i<=v+d;i++) {
@@ -115,13 +122,15 @@ int compute_fq_det_mq_simplex(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
     slong pos=0;
     for (slong i=0;i<n;i++) for (slong j=0;j<n;j++) {
         offsets[i*n+j]=pos;
-        const fq_mvpoly_t *p=&matrix[i][j];
-        for (slong k=0;k<p->nterms;k++) {
+        const unified_mpoly_struct *p = &matrix[i][j];
+        for (slong k = 0; k < dr_mpoly_length(p); k++) {
+            DR_MPOLY_TERM(term_2, p, k);
+
             mq_eval_term *t=terms+pos++;
-            t->coeff=nmod_poly_get_coeff_ui(p->terms[k].coeff,0);
+            t->coeff = nmod_poly_get_coeff_ui(term_2.coeff, 0);
             t->x=t->y=-1;
             for (slong l=0;l<v;l++) {
-                slong power=l==v-1?p->terms[k].par_exp[0]:p->terms[k].var_exp[l];
+                slong power = l == v - 1 ? term_2.par_exp[0] : term_2.var_exp[l];
                 for (slong z=0;z<power;z++) {
                     if (t->x<0)t->x=(int)l;else t->y=(int)l;
                 }
@@ -219,13 +228,13 @@ int compute_fq_det_mq_simplex(fq_mvpoly_t *result, fq_mvpoly_t **matrix,
     }
     stats->interpolation=simplex_seconds()-phase;
     phase=simplex_seconds();
-    fq_mvpoly_init(result,v-1,1,fq);
+    dr_mpoly_init(result, v - 1, 1, fq);
     fq_nmod_t coefficient;fq_nmod_init(coefficient,fq);
     slong powers[MQ_SIMPLEX_VARS];
     for (slong i=N;i-- >0;)if(values[i]) {
         for(slong j=0;j<v;j++)powers[j]=exps[i*v+j];
         fq_nmod_set_ui(coefficient,values[i],fq);
-        fq_mvpoly_add_term_fast(result,powers,powers+v-1,coefficient);
+        dr_mpoly_add_term_fast(result, powers, powers + v - 1, coefficient);
     }
     fq_nmod_clear(coefficient,fq);
     free(values);free(exps);

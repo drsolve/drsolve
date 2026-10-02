@@ -12,7 +12,7 @@
 
 // Include the existing headers
 #include "dixon_flint.h"
-#include "fq_mvpoly.h"
+#include "dr_mpoly.h"
 #include "dixon_interface_flint.h"
 #include "dixon_complexity.h"
 
