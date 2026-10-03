@@ -176,6 +176,7 @@ MATH_SOURCES = $(SRC_DIR)/dixon/dixon_complexity.c \
                $(SRC_DIR)/solver/fq_nmod_roots.c \
                $(SRC_DIR)/solver/large_prime_system_solver.c \
                $(SRC_DIR)/solver/polynomial_system_solver.c \
+               $(SRC_DIR)/solver/quotient_solver.c \
                $(SRC_DIR)/solver/rational_system_solver.c
 # Object files (in build directory)
 MATH_OBJECTS = $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(MATH_SOURCES))
@@ -1052,6 +1053,22 @@ test-mq-pencil-cli:
 	python3 $(SRC_DIR)/test/mq_pencil_cli_test.py
 
 # Standalone experimental coefficient-panel core construction; no solver dispatch.
+$(BUILD_DIR)/dixon_closure_bench: $(SRC_DIR)/test/dixon_closure_bench.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-dixon-closure
+test-dixon-closure: $(BUILD_DIR)/dixon_closure_bench
+	python3 $(SRC_DIR)/test/dixon_closure_test.py
+
+$(BUILD_DIR)/dixon_over_native: $(SRC_DIR)/test/dixon_over_native.c $(SRC_DIR)/test/dixon_closure_bench.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-dixon-over
+test-dixon-over: $(BUILD_DIR)/dixon_over_native
+	DOT_SAGE=$${DOT_SAGE:-/tmp/drsolve-closure-sage} OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 sage -python $(SRC_DIR)/test/dixon_over_routes_test.py
+
 $(BUILD_DIR)/mq_direct_core_test: $(SRC_DIR)/test/mq_direct_core_test.c $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/determinant/mq_poly_mat_det.c $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_direct_core_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
@@ -1147,3 +1164,14 @@ $(BUILD_DIR)/pml_prime_step4_test: $(SRC_DIR)/test/pml_prime_step4_test.c $(DIXO
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 $(BUILD_DIR)/determinant/fq_poly_mat_det.o $(BUILD_DIR)/poly_mat_interpolation_test: $(SRC_DIR)/determinant/poly_mat_eval_batch.h
+
+# Production prime-field quotient backend and CLI regression.
+$(BUILD_DIR)/quotient_solver_driver: $(SRC_DIR)/test/quotient_solver_driver.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-quotient test-quotient-sage
+test-quotient: $(DIXON_TARGET)
+	python3 $(SRC_DIR)/test/quotient_cli_test.py
+
+test-quotient-sage: $(BUILD_DIR)/quotient_solver_driver
+	DOT_SAGE=$${DOT_SAGE:-/tmp/drsolve-closure-sage} OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 sage -python $(SRC_DIR)/test/quotient_solver_test.py

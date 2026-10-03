@@ -628,6 +628,7 @@ set(MATH_SOURCES
   src/solver/fq_nmod_roots.c
   src/solver/large_prime_system_solver.c
   src/solver/polynomial_system_solver.c
+  src/solver/quotient_solver.c
   src/solver/rational_system_solver.c
 )
 

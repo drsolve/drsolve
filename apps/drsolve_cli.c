@@ -2097,6 +2097,9 @@ static void save_solver_result_to_file(const char *filename,
 
     if (!sols) { fprintf(out_fp, "Solution structure is null\n"); fclose(out_fp); return; }
 
+    if (sols->elimination_summary) fprintf(out_fp, "Strategy: %s\n", sols->elimination_summary);
+    for (slong i = 0; i < sols->num_resultant_steps; i++)
+        fprintf(out_fp, "%s\n", sols->resultant_steps[i]);
     fprintf(out_fp, "\n=== Polynomial System Solutions ===\n");
     if (!sols->is_valid) {
         fprintf(out_fp, "Solving failed");
@@ -2955,6 +2958,10 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     /* ---- parse flags ---- */
     int    verbose_level = 1;
     int    solve_mode  = 0;
+    int execution_failed = 0;
+    polynomial_solver_method_t solver_method = POLYNOMIAL_SOLVER_AUTO;
+    int solver_method_explicit = 0, quotient_limits_given = 0;
+    slong quotient_degree = 12, quotient_memory = 512;
     int    solve_rational_only_mode = 0;
     int    comp_mode   = 0;
     int    rand_mode   = 0;   /* --random / -r */
@@ -3012,6 +3019,32 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         } else if (strcmp(argv[i], "--solve-verbose") == 0) {
             solve_mode = 1;
             verbose_level = 2;
+        } else if (strcmp(argv[i], "--quotient") == 0) {
+            solve_mode = 1;
+            solver_method = POLYNOMIAL_SOLVER_QUOTIENT;
+            solver_method_explicit = 1;
+        } else if (strcmp(argv[i], "--solver") == 0 && i + 1 < argc) {
+            const char *method = argv[++i];
+            if (!strcmp(method, "auto")) solver_method = POLYNOMIAL_SOLVER_AUTO;
+            else if (!strcmp(method, "dixon")) solver_method = POLYNOMIAL_SOLVER_DIXON;
+            else if (!strcmp(method, "quotient")) solver_method = POLYNOMIAL_SOLVER_QUOTIENT;
+            else { fprintf(stderr, "Error: --solver expects auto, dixon, or quotient.\n"); return 1; }
+            solver_method_explicit = 1;
+            solve_mode = 1;
+        } else if (strcmp(argv[i], "--solver") == 0) {
+            fprintf(stderr, "Error: --solver requires auto, dixon, or quotient.\n"); return 1;
+        } else if ((!strcmp(argv[i], "--quotient-max-degree") ||
+                    !strcmp(argv[i], "--quotient-memory")) && i + 1 < argc) {
+            slong value;
+            if (!parse_positive_slong_option(argv[i+1], &value)) {
+                fprintf(stderr, "Error: %s requires a positive integer.\n", argv[i]); return 1;
+            }
+            if (!strcmp(argv[i], "--quotient-max-degree")) quotient_degree = value;
+            else quotient_memory = value;
+            quotient_limits_given = 1;
+            i++;
+        } else if (!strcmp(argv[i], "--quotient-max-degree") || !strcmp(argv[i], "--quotient-memory")) {
+            fprintf(stderr, "Error: %s requires a positive integer.\n", argv[i]); return 1;
         } else if (strcmp(argv[i], "--solve-rational-only") == 0) {
             solve_mode = 1;
             solve_rational_only_mode = 1;
@@ -3451,6 +3484,23 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         }
         deg_str   = positional_args[0];
         field_str = positional_args[1];
+        /* An overdetermined random input is a full-system solve, not a
+         * square Dixon resultant. Preserve explicit resultant-only requests. */
+        if (!comp_mode) {
+            slong random_count = 0;
+            long *spec = parse_degree_list(deg_str, &random_count);
+            slong nv = random_vardeg ? random_count :
+                       (random_nvars_given ? random_nvars : random_count);
+            slong ne = random_vardeg && random_npolys_given ? random_npolys : random_count;
+            free(spec);
+            if (nv > 0 && ne > nv) {
+                if (resultant_only_mode) {
+                    fprintf(stderr, "Error: overdetermined random input requires solver mode; remove --resultant-only.\n");
+                    return 1;
+                }
+                solve_mode = 1;
+            }
+        }
 
         output_filename = choose_output_filename(cli_output_filename, NULL,
                                                  comp_mode ? "comp" : "solution", NULL);
@@ -3772,6 +3822,21 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         fprintf(stderr, "Error: --solve-rational-only is only supported for field_size=0.\n");
         goto cleanup_fail;
     }
+    if (solver_method == POLYNOMIAL_SOLVER_QUOTIENT &&
+        (rational_mode || large_prime_mode || power != 1)) {
+        fprintf(stderr, "Error: --quotient/--solver quotient currently supports machine-word prime fields only.\n");
+        goto cleanup_fail;
+    }
+    if ((solver_method_explicit || quotient_limits_given) &&
+        (!solve_mode || comp_mode || ideal_mode)) {
+        fprintf(stderr, "Error: quotient/solver options require polynomial system solver mode.\n");
+        goto cleanup_fail;
+    }
+    if (quotient_limits_given && (rational_mode || large_prime_mode || power != 1 ||
+                                 solver_method == POLYNOMIAL_SOLVER_DIXON)) {
+        fprintf(stderr, "Error: quotient limits require the prime-field auto or quotient solver.\n");
+        goto cleanup_fail;
+    }
     if (complex_mode && !rational_mode) {
         fprintf(stderr, "Error: --complex is only supported for field_size=0.\n");
         goto cleanup_fail;
@@ -3929,7 +3994,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             }
         }
 
-        if (nvars_rand < npolys_rand - 1) {
+        if (!solve_mode && nvars_rand < npolys_rand - 1) {
             if (!silent_mode)
                 fprintf(stderr, "Error: random mode requires -n/--nvars >= #equations-1 = %ld (got %ld).\n",
                         npolys_rand - 1, nvars_rand);
@@ -4392,6 +4457,8 @@ random_done:
         } else {
             polynomial_solver_set_realtime_progress(enable_solver_realtime_progress);
             polynomial_solver_set_internal_trace(solve_verbose_mode);
+            polynomial_solver_set_method(solver_method);
+            polynomial_solver_set_quotient_limits(quotient_degree, quotient_memory);
 
             if (suppress_solver_stdout) {
                 redirect_fd_to_devnull(STDOUT_FILENO, &orig_stdout);
@@ -4400,7 +4467,27 @@ random_done:
                 redirect_fd_to_devnull(STDERR_FILENO, &orig_stderr);
             }
 
-            solutions = solve_polynomial_system_string(effective_polys_str, ctx);
+            if (rand_generated && allvars_str && !specialize_vars_arg &&
+                (solver_method == POLYNOMIAL_SOLVER_QUOTIENT ||
+                 (solver_method == POLYNOMIAL_SOLVER_AUTO && power == 1 &&
+                  count_comma_separated_items(effective_polys_str) >
+                  count_comma_separated_items(allvars_str)))) {
+                /* Keep declared random variables even if sparsity removes
+                 * them from every polynomial. Otherwise a positive-dimensional
+                 * system could be mistaken for a smaller zero-dimensional one. */
+                slong nv = 0, ne = 0;
+                char **names = split_string(allvars_str, &nv);
+                char **parts = split_string(effective_polys_str, &ne);
+                variable_info_t *vars = calloc(nv, sizeof(*vars));
+                for (slong j = 0; j < nv; j++) {
+                    vars[j].name = names[j]; vars[j].index = j;
+                }
+                solutions = solve_polynomial_system_array_with_vars(parts, ne, vars, nv, ctx);
+                free(vars); free_split_strings(names, nv); free_split_strings(parts, ne);
+            } else {
+                solutions = solve_polynomial_system_string(effective_polys_str, ctx);
+            }
+            execution_failed = !solutions || !solutions->is_valid;
 
             if (suppress_solver_stdout) {
                 restore_fd(STDOUT_FILENO, orig_stdout);
@@ -4686,7 +4773,7 @@ cleanup_success:
     dixon_set_suppress_root_reporting(0);
     dixon_set_approximate_root_mode(0, 128);
     flint_cleanup_master();
-    return 0;
+    return execution_failed ? 1 : 0;
 
 cleanup_fail:
     cleanup_unified_workspace();

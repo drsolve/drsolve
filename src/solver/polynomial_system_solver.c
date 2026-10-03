@@ -1,9 +1,22 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "polynomial_system_solver.h"
+#include "quotient_solver.h"
 
 static int solver_realtime_progress_enabled = 0;
 static int solver_internal_trace_enabled = 0;
 static const slong solver_candidate_print_limit = 10;
+static polynomial_solver_method_t solver_method = POLYNOMIAL_SOLVER_AUTO;
+static slong quotient_max_degree = 12, quotient_memory_mb = 512;
+
+void polynomial_solver_set_method(polynomial_solver_method_t method) {
+    solver_method = method;
+}
+
+void polynomial_solver_set_quotient_limits(slong max_degree, slong memory_mb) {
+    quotient_max_degree = max_degree;
+    quotient_memory_mb = memory_mb;
+}
+
 
 void polynomial_solver_set_realtime_progress(int enabled) {
     solver_realtime_progress_enabled = enabled;
@@ -2361,6 +2374,24 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
     return backtrack_success;
 }
 
+static int solve_selected(char **polys, slong count, variable_info_t *vars,
+                          slong n, polynomial_solutions_t *sols)
+{
+    int use_quotient = solver_method == POLYNOMIAL_SOLVER_QUOTIENT ||
+        (solver_method == POLYNOMIAL_SOLVER_AUTO && n > 0 && count > n &&
+         fq_nmod_ctx_degree(sols->ctx) == 1);
+    if (use_quotient) {
+        solver_progress("Solver: quotient algebra (%ld equations, %ld variables)", count, n);
+        int ok = solve_by_quotient_closure(polys, count, vars, n, sols,
+                                          quotient_max_degree, quotient_memory_mb);
+        if (ok) solver_progress("%s", sols->elimination_summary);
+        else solver_progress("%s", sols->error_message);
+        return ok;
+    }
+    solver_progress("Solver: Dixon elimination (%ld equations, %ld variables)", count, n);
+    return solve_by_elimination_enhanced(polys, count, vars, n, sols);
+}
+
 // ============= MAIN SOLVER INTERFACES =============
 
 // ENHANCED: Main solver function with robust equation selection
@@ -2383,7 +2414,7 @@ polynomial_solutions_t* solve_polynomial_system_array_with_vars(char **poly_stri
     }
     
     // Execute enhanced step-by-step elimination solving
-    int success = solve_by_elimination_enhanced(poly_strings, num_polys, original_vars, num_original_vars, sols);
+    int success = solve_selected(poly_strings, num_polys, original_vars, num_original_vars, sols);
     
     if (success) {
         sols->is_valid = 1;
@@ -2433,7 +2464,7 @@ polynomial_solutions_t* solve_polynomial_system_array(char **poly_strings, slong
         sols->variable_names[i] = strdup(sorted_vars[i].name);
     }
 
-    if (num_polys > 0 && num_vars > num_polys) {
+    if (solver_method != POLYNOMIAL_SOLVER_QUOTIENT && num_polys > 0 && num_vars > num_polys) {
         solver_trace_stdout("Underdetermined system detected: %ld variables, %ld equations\n",
                             num_vars, num_polys);
         solver_trace_stdout("Trying fixed-variable fallback: fix last %ld variable(s), total value sum <= %d\n",
@@ -2463,7 +2494,7 @@ polynomial_solutions_t* solve_polynomial_system_array(char **poly_strings, slong
     }
 
     // Solve the system
-    int success = solve_by_elimination_enhanced(poly_strings, num_polys, sorted_vars, num_vars, sols);
+    int success = solve_selected(poly_strings, num_polys, sorted_vars, num_vars, sols);
     
     if (success) {
         sols->is_valid = 1;

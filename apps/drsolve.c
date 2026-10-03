@@ -47,6 +47,8 @@ static void print_short_usage(const char *prog_name)
     printf("OPTIONS:\n");
     printf("  -r \"[d1,d2,...,dn]\" random polynomial generation\n");
     printf("  -s  solving mode (auto-enables when no vars given)\n");
+    printf("  --quotient  Use certified quotient algebra over a machine-word prime field\n");
+    printf("  --solver auto|dixon|quotient  Auto selects quotient for overdetermined prime-field systems\n");
     printf("  -c, --comp, --complexity  complexity analysis mode\n");
     printf("EXAMPLES:\n");
     printf("  Dixon resultant elimination:\n");
@@ -113,6 +115,11 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    -> Writes all solutions to %s/solution_YYYYMMDD_HHMMSS.dr\n", DEFAULT_OUTPUT_DIR);
     printf("    -> `-s` / `--solve` is optional here; `--solve-rational-only` keeps only exact rational solutions\n");
     printf("    -> `--specialize-vars a=0,b=1` fixes variables before solving; in extension fields integers use the generator expansion (F_2^k: 2=t, 3=1+t, 4=t^2)\n");
+    printf("    -> Prime-field overdetermined systems automatically use certified quotient algebra\n");
+    printf("    -> Square systems keep Dixon by default; --quotient (or --solver quotient) opts in\n");
+    printf("    -> --solver auto|dixon|quotient selects the solver; quotient requires at least as many equations as variables\n");
+    printf("    -> --quotient-max-degree <D> (default 12) and --quotient-memory <MiB> (default 512) bound closure work\n");
+    printf("    -> Limits return an incomplete-solve error, not a claim that no solutions exist\n");
     printf("    -> `-v 2` matches the old debug / verbose solver output\n");
     printf("    -> `-v 3` also dumps small Step 1/2/3 matrices (<= 10 x 10)\n");
     printf("    -> In extension fields, 't' is the field generator; in Q and prime fields it is an ordinary variable\n");
@@ -202,7 +209,9 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    Example: %s -r \"[2]*4+[3]*2\" 257\n", prog_name);
     printf("    Example: %s -r -s \"[2]*3\" 257\n", prog_name);
     printf("    Example: %s -r --comp --omega 2.81 \"[2]*3\" 257\n", prog_name);
-    printf("    -> Add -n <num_vars> to set the total variable count (must satisfy num_vars >= #equations-1)\n");
+    printf("    -> Add -n <num_vars> to set the total variable count; fewer variables than equations auto-enables solver mode\n");
+    printf("    -> Example: %s -r -n 3 \"[2]*5\" 257 --seed 123\n", prog_name);
+    printf("    -> Resultant/complexity mode still requires num_vars >= #equations-1\n");
     printf("    -> Add --density <ratio> with 0 <= ratio <= 1 to choose the fraction of all monomials used (default: 0.5 over F2, otherwise 1)\n");
     printf("    -> Add --homogeneous (alias --hom) to use only monomials whose total degree equals the requested degree\n");
     printf("    -> Add --seed <num> to generate the same random system reproducibly across runs\n");
@@ -325,6 +334,10 @@ static int validate_cli_options(int argc, char *argv[])
         {"approx-roots", no_argument, NULL, OPT_FLAG},
         {"root-precision", required_argument, NULL, OPT_FLAG},
         {"solve", no_argument, NULL, 's'},
+        {"quotient", no_argument, NULL, OPT_FLAG},
+        {"solver", required_argument, NULL, OPT_FLAG},
+        {"quotient-max-degree", required_argument, NULL, OPT_FLAG},
+        {"quotient-memory", required_argument, NULL, OPT_FLAG},
         {"comp", no_argument, NULL, 'c'},
         {"complexity", no_argument, NULL, 'c'},
         {"rank-pred", no_argument, NULL, OPT_FLAG},
