@@ -92,3 +92,6 @@ dll/
 
 # Generated local test and benchmark data
 /src/test/data/
+
+# Local experimental scripts, benchmarks, notes and data
+/src/experiments/

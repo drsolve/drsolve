@@ -44,15 +44,6 @@ sudo make install                       # optional
 ```
 For more options, run `./configure --help` or `make help`.
 
-The generic finite-field pipeline stores polynomials in `unified_mpoly_struct`,
-using FLINT's native coefficient and packed-exponent arrays. `src/dr_mpoly.h`
-provides solver layout, ownership and term-access helpers; its field context
-must outlive the polynomials. Prime-field determinant, MQ and projected-matrix
-kernels use `nmod_mpoly`, `nmod_poly` and `nmod_poly_mat` directly. Extension-field
-arithmetic retains the unified backend and binary-field optimizations.
-Run `make test-native-mpoly` to check native arithmetic, aliasing, field reduction
-and backend conversions against FLINT.
-
 We also provide a Windows GUI, which can be built with CMake.
 ```bash
 cmake -B build-win -DCMAKE_TOOLCHAIN_FILE="$(pwd)/cmake/toolchain-mingw64.cmake"
@@ -83,36 +74,19 @@ Example:
 ```
 - Writes all solutions to `out/solution_YYYYMMDD_HHMMSS.dr`
 
-Over a machine-word prime field, solver mode automatically uses certified
-quotient-algebra closure when there are more equations than variables. Square
-systems keep the Dixon solver by default; use `--quotient` to opt in:
+Overdetermined systems over machine-word prime fields automatically use the
+quotient solver. Use `--quotient` to enable it for square systems:
 
 ```bash
+# Overdetermined system
 ./drsolve "x^2-1, y-x, x*y-1" 257
+# Square system with the quotient solver
 ./drsolve --quotient "x^2-1, y^2-1" 257
+# Select the Dixon solver
 ./drsolve --solver dixon "x^2-1, y-x, x*y-1" 257
+# Random system: 3 variables, 5 equations
 ./drsolve -r -n 3 "[2]*5" 257 --seed 123
 ```
-
-`--solver auto|dixon|quotient` selects the full-system solver. The quotient
-backend constructs and certifies the complete finite-dimensional quotient,
-then returns all points over the input prime field, without duplicate listings
-for multiplicities. It handles repeated roots and coincident coordinate
-projections. The saved elimination polynomial is a multiplication operator's
-minimal polynomial; it retains the multiplicities required by the elimination
-ideal. Extension fields, rationals and primes beyond a machine word retain
-their existing solvers; explicitly requesting quotient closure there is an
-error. Explicit resultant/elimination mode continues to compute a resultant.
-
-Quotient closure requires at least as many equations as variables, and a
-zero-dimensional ideal (or inconsistency). Equation count alone does not
-guarantee this. The defaults are `--quotient-max-degree 12` and
-`--quotient-memory 512` (MiB, conservative matrix workspace estimate, excluding
-input storage and allocator overhead). Reaching a limit returns a nonzero exit
-status and an **incomplete** result, not a claim of no solutions or positive
-dimension. Increase the limits or explicitly select `--solver dixon` to try
-the existing solver. Underdetermined systems do not automatically use quotient
-closure.
 
 ### FILE FORMAT
 #### File input/output
@@ -197,10 +171,7 @@ Generate random polynomial systems for testing and benchmarking.
 ./drsolve -r -c    "[d]*n"         field_size
 ```
 - Add `-n <num_vars>` to set the variable count
-- Fewer variables than equations automatically selects full-system solving;
-  prime-field systems use quotient closure. For `--vardeg`, `-m` controls the
-  equation count in the same way. Resultant/complexity mode retains its own
-  equation/elimination-variable requirements.
+- Fewer variables than equations automatically selects full-system solving
 - Add `--density <ratio>` with `0 <= ratio <= 1`
 - Add `--seed <num>` for reproducible random systems
 - Mixed degree specifications such as `"[2]*5+[3]*6"` are supported

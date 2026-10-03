@@ -447,10 +447,6 @@ test-dixon-recursive-native: $(BUILD_DIR)/dixon_recursive_native_test
 $(BUILD_DIR)/dixon_recursive_native_test: $(SRC_DIR)/test/dixon_recursive_native_test.c $(SRC_DIR)/dixon/dixon_recursive.c $(SRC_DIR)/dixon/dixon_native.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon_recursive_native_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
-.PHONY: test-dixon-bivariate-cli
-test-dixon-bivariate-cli: $(DIXON_TARGET)-lto
-	python3 $(SRC_DIR)/test/dixon_bivariate_cli_test.py
-
 .PHONY: test-poly-mat-interpolation
 test-poly-mat-interpolation: $(BUILD_DIR)/poly_mat_interpolation_test
 	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=4 ./$(BUILD_DIR)/poly_mat_interpolation_test
@@ -1008,39 +1004,10 @@ $(BUILD_DIR)/mq_poly_mat_det_test: $(SRC_DIR)/test/mq_poly_mat_det_test.c $(SRC_
 $(BUILD_DIR)/dixon_mq_step4_test: $(SRC_DIR)/test/dixon_mq_step4_test.c $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/mq_poly_mat_det.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon_mq_step4_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
-.PHONY: test-mq-step4-cli
-test-mq-step4-cli: drsolve-dynamic
-	python3 $(SRC_DIR)/test/dixon_mq_step4_cli_test.py
-
-# Small exact total-degree interpolation prototype; not a solver backend.
-$(BUILD_DIR)/mq_simplex_bench: $(SRC_DIR)/mq_simplex_det.h $(SRC_DIR)/test/mq_simplex_bench.c $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_simplex_bench.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
-
-.PHONY: test-mq-simplex test-mq-complexity-cli
-test-mq-simplex: $(BUILD_DIR)/mq_simplex_bench
-	OMP_NUM_THREADS=1 ./$(BUILD_DIR)/mq_simplex_bench 4 7
-	OMP_NUM_THREADS=1 ./$(BUILD_DIR)/mq_simplex_bench 5 65537
-	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/mq_simplex_bench 5 65537 4
-	OMP_NUM_THREADS=1 ./$(BUILD_DIR)/mq_simplex_bench 4 2
-
-test-mq-complexity-cli:
-	python3 $(SRC_DIR)/test/mq_complexity_cli_test.py
-
-# Reproducible experimental CLI builds; neither kernel is enabled in drsolve.
-$(BUILD_DIR)/mq-sum-direct-cli: $(CLI_SOURCES) $(MATH_SOURCES) $(SRC_DIR)/test/mq_sum_experiment.h $(PML_BUILD_PREREQS)
-	$(CC) $(ALL_CFLAGS) -DDRSOLVE_MQ_SUM_TEST=1 -o $@ $(CLI_SOURCES) $(MATH_SOURCES) $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS)
-
-$(BUILD_DIR)/mq-sum-products-cli: $(CLI_SOURCES) $(MATH_SOURCES) $(SRC_DIR)/test/mq_sum_experiment.h $(PML_BUILD_PREREQS)
-	$(CC) $(ALL_CFLAGS) -DDRSOLVE_MQ_SUM_TEST=2 -o $@ $(CLI_SOURCES) $(MATH_SOURCES) $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS)
-
-.PHONY: test-mq-simplex-cli
-test-mq-simplex-cli:
-	python3 $(SRC_DIR)/test/mq_simplex_cli_test.py
-
 $(BUILD_DIR)/mq_pencil_test: $(SRC_DIR)/test/mq_pencil_test.c $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/mq_pencil_det.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_pencil_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
-.PHONY: test-mq-pencil test-mq-pencil-cli
+.PHONY: test-mq-pencil
 test-mq-pencil: $(BUILD_DIR)/mq_pencil_test
 	./$(BUILD_DIR)/mq_pencil_test 2 2 1
 	./$(BUILD_DIR)/mq_pencil_test 4 3 1
@@ -1048,26 +1015,6 @@ test-mq-pencil: $(BUILD_DIR)/mq_pencil_test
 	./$(BUILD_DIR)/mq_pencil_test 4 65537 1
 	./$(BUILD_DIR)/mq_pencil_test 5 65537 4
 	./$(BUILD_DIR)/mq_pencil_test 6 101 4
-
-test-mq-pencil-cli:
-	python3 $(SRC_DIR)/test/mq_pencil_cli_test.py
-
-# Standalone experimental coefficient-panel core construction; no solver dispatch.
-$(BUILD_DIR)/dixon_closure_bench: $(SRC_DIR)/test/dixon_closure_bench.c
-	@mkdir -p $(BUILD_DIR)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
-
-.PHONY: test-dixon-closure
-test-dixon-closure: $(BUILD_DIR)/dixon_closure_bench
-	python3 $(SRC_DIR)/test/dixon_closure_test.py
-
-$(BUILD_DIR)/dixon_over_native: $(SRC_DIR)/test/dixon_over_native.c $(SRC_DIR)/test/dixon_closure_bench.c
-	@mkdir -p $(BUILD_DIR)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
-
-.PHONY: test-dixon-over
-test-dixon-over: $(BUILD_DIR)/dixon_over_native
-	DOT_SAGE=$${DOT_SAGE:-/tmp/drsolve-closure-sage} OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 sage -python $(SRC_DIR)/test/dixon_over_routes_test.py
 
 $(BUILD_DIR)/mq_direct_core_test: $(SRC_DIR)/test/mq_direct_core_test.c $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/determinant/mq_poly_mat_det.c $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_direct_core_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
@@ -1080,52 +1027,15 @@ test-mq-direct-core: $(BUILD_DIR)/mq_direct_core_test
 	./$(BUILD_DIR)/mq_direct_core_test 4 1 0 12345 3
 	./$(BUILD_DIR)/mq_direct_core_test 4 1 0 12345 2
 
-# Small research audit for input-derived homological cores (requires numpy).
-$(BUILD_DIR)/mq_homological_fixture: paper/rank/scripts/export_mq_core_input.c $(SRC_DIR)/test/mq_direct_core_test.c $(SRC_DIR)/test/dixon_mq_filter_test.c $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ paper/rank/scripts/export_mq_core_input.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
-
-.PHONY: test-mq-homological-core
-test-mq-homological-core: $(BUILD_DIR)/mq_homological_fixture
-	python3 paper/rank/scripts/check_mq_homological_core.py --n 3 4 --q 101 --seeds 12345 --output /tmp/mq-homological-core-smoke.json
-
-# Native arithmetic for larger homological-core research audits.
-$(BUILD_DIR)/mq_core_linear.so: paper/rank/scripts/mq_core_linear.c
-	$(CC) $(ALL_CFLAGS) -shared -o $@ $< $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
-
-test-mq-homological-core: $(BUILD_DIR)/mq_core_linear.so
-
-# Shared-support production header and opt-in profiling/ablation driver.
+# Shared-support production headers.
 $(BUILD_DIR)/determinant/fq_mpoly_mat_det.o: $(SRC_DIR)/determinant/mq_shared_layout.h $(SRC_DIR)/determinant/mq_rank_layout.h
-
-$(BUILD_DIR)/mq_layout_bench: $(SRC_DIR)/test/mq_layout_bench.c $(SRC_DIR)/test/mq_layout_experiment.h $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c $(SRC_DIR)/determinant/mq_shared_layout.h $(SRC_DIR)/determinant/mq_rank_layout.h $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -DDRSOLVE_MQ_LAYOUT_TEST -o $@ $(SRC_DIR)/test/mq_layout_bench.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
-
-.PHONY: test-mq-layout
-test-mq-layout: $(BUILD_DIR)/mq_layout_bench
-	./$(BUILD_DIR)/mq_layout_bench 7 1 12 1 0 0 1 132 65537
-	./$(BUILD_DIR)/mq_layout_bench 8 4 12 0 0 0 1 132 65537
-	./$(BUILD_DIR)/mq_layout_bench 5 1 3 1 1 0 1 12345 2
-	./$(BUILD_DIR)/mq_layout_bench 5 1 3 1 0 0 1 12345 18446744073709551557
-
-.PHONY: test-mq-shared-cli
-test-mq-shared-cli: drsolve-dynamic
-	python3 $(SRC_DIR)/test/mq_shared_cli_test.py
-
-# Boolean forward/backward MQ support analysis; no determinant evaluation.
-$(BUILD_DIR)/mq_support_count: $(SRC_DIR)/test/mq_support_count.c $(SRC_DIR)/test/mq_support_count.h $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c $(SRC_DIR)/determinant/mq_shared_layout.h $(SRC_DIR)/determinant/mq_rank_layout.h $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -DDRSOLVE_MQ_SUPPORT_TEST -o $@ $(SRC_DIR)/test/mq_support_count.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 $(BUILD_DIR)/mq_rank_kernel_test: $(SRC_DIR)/test/mq_rank_kernel_test.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c $(SRC_DIR)/determinant/mq_shared_layout.h $(SRC_DIR)/determinant/mq_rank_layout.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_rank_kernel_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-mq-rank
-test-mq-rank: $(BUILD_DIR)/mq_rank_kernel_test $(BUILD_DIR)/mq_layout_bench
+test-mq-rank: $(BUILD_DIR)/mq_rank_kernel_test
 	./$(BUILD_DIR)/mq_rank_kernel_test
-	python3 $(SRC_DIR)/test/mq_rank_bench.py audit --output /tmp/mq-rank-audit.json
-
-.PHONY: test-mq-rank-cli
-test-mq-rank-cli: drsolve-dynamic
-	python3 $(SRC_DIR)/test/mq_rank_cli_test.py
 
 # Verified MQ projection can construct the final univariate matrix directly.
 $(BUILD_DIR)/dixon/dixon_flint.o: $(SRC_DIR)/dixon/dixon_projected_matrix.h
@@ -1164,14 +1074,3 @@ $(BUILD_DIR)/pml_prime_step4_test: $(SRC_DIR)/test/pml_prime_step4_test.c $(DIXO
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 $(BUILD_DIR)/determinant/fq_poly_mat_det.o $(BUILD_DIR)/poly_mat_interpolation_test: $(SRC_DIR)/determinant/poly_mat_eval_batch.h
-
-# Production prime-field quotient backend and CLI regression.
-$(BUILD_DIR)/quotient_solver_driver: $(SRC_DIR)/test/quotient_solver_driver.c $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
-
-.PHONY: test-quotient test-quotient-sage
-test-quotient: $(DIXON_TARGET)
-	python3 $(SRC_DIR)/test/quotient_cli_test.py
-
-test-quotient-sage: $(BUILD_DIR)/quotient_solver_driver
-	DOT_SAGE=$${DOT_SAGE:-/tmp/drsolve-closure-sage} OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 sage -python $(SRC_DIR)/test/quotient_solver_test.py
