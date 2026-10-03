@@ -84,7 +84,7 @@ quotient solver. Use `--quotient` to enable it for square systems:
 ./drsolve --quotient "x^2-1, y^2-1" 257
 # Select the Dixon solver
 ./drsolve --solver dixon "x^2-1, y-x, x*y-1" 257
-# Random system: 3 variables, 5 equations
+# Random system with a guaranteed solution: 3 variables, 5 equations
 ./drsolve -r -n 3 "[2]*5" 257 --seed 123
 ```
 

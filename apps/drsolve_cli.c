@@ -1704,6 +1704,151 @@ fail:
     return 0;
 }
 
+/* Adjust only constants so an overdetermined random system has a common
+ * point in its input field. Use a separate seeded stream to leave the
+ * existing degree, support and coefficient sampling unchanged. */
+static int plant_random_system_solution(char **polys_str, const char *vars_str,
+                                        int rational, int large_prime,
+                                        const fmpz_t prime,
+                                        const fq_nmod_ctx_t field,
+                                        ulong seed, int homogeneous,
+                                        char **solution_out)
+{
+    slong m = 0, n = 0;
+    char **polys = split_string(*polys_str, &m);
+    char **names = split_string(vars_str, &n);
+    if (!polys || !names || n <= 0 || m <= n) {
+        free_split_strings(polys, m);
+        free_split_strings(names, n);
+        return 0;
+    }
+    char **adjusted = flint_calloc(m, sizeof(*adjusted));
+    char **values = flint_calloc(n, sizeof(*values));
+    flint_rand_t state;
+    flint_rand_init(state);
+    flint_rand_set_seed(state, seed, seed + 1);
+    int ok = 1;
+
+    if (rational) {
+        fmpq_mpoly_ctx_t ctx;
+        fmpq_mpoly_ctx_init(ctx, n, ORD_LEX);
+        fmpq_mpoly_t f;
+        fmpq_mpoly_init(f, ctx);
+        fmpq_t value;
+        fmpq_init(value);
+        fmpq *point = flint_malloc(n * sizeof(*point));
+        fmpq **args = flint_malloc(n * sizeof(*args));
+        for (slong j = 0; j < n; j++) {
+            args[j] = point + j;
+            fmpq_init(args[j]);
+            fmpq_set_si(args[j], homogeneous ? 0 : (slong) n_randint(state, 17) - 8, 1);
+            values[j] = fmpq_get_str(NULL, 10, args[j]);
+        }
+        for (slong i = 0; i < m; i++) {
+            if (fmpq_mpoly_set_str_pretty(f, polys[i], (const char **) names, ctx) ||
+                !fmpq_mpoly_evaluate_all_fmpq(value, f, args, ctx)) {
+                ok = 0;
+                break;
+            }
+            fmpq_mpoly_sub_fmpq(f, f, value, ctx);
+            adjusted[i] = fmpq_mpoly_get_str_pretty(f, (const char **) names, ctx);
+        }
+        for (slong j = 0; j < n; j++) fmpq_clear(args[j]);
+        flint_free(args);
+        flint_free(point);
+        fmpq_clear(value);
+        fmpq_mpoly_clear(f, ctx);
+        fmpq_mpoly_ctx_clear(ctx);
+    } else if (large_prime) {
+        fmpz_mod_mpoly_ctx_t ctx;
+        fmpz_mod_mpoly_ctx_init(ctx, n, ORD_LEX, prime);
+        fmpz_mod_mpoly_t f;
+        fmpz_mod_mpoly_init(f, ctx);
+        fmpz_t value;
+        fmpz_init(value);
+        fmpz *point = flint_malloc(n * sizeof(*point));
+        fmpz **args = flint_malloc(n * sizeof(*args));
+        for (slong j = 0; j < n; j++) {
+            args[j] = point + j;
+            fmpz_init(args[j]);
+            if (!homogeneous) fmpz_randm(args[j], state, prime);
+            values[j] = fmpz_get_str(NULL, 10, args[j]);
+        }
+        for (slong i = 0; i < m; i++) {
+            if (fmpz_mod_mpoly_set_str_pretty(f, polys[i], (const char **) names, ctx)) {
+                ok = 0;
+                break;
+            }
+            fmpz_mod_mpoly_evaluate_all_fmpz(value, f, args, ctx);
+            fmpz_mod_mpoly_sub_fmpz(f, f, value, ctx);
+            adjusted[i] = fmpz_mod_mpoly_get_str_pretty(f, (const char **) names, ctx);
+        }
+        for (slong j = 0; j < n; j++) fmpz_clear(args[j]);
+        flint_free(args);
+        flint_free(point);
+        fmpz_clear(value);
+        fmpz_mod_mpoly_clear(f, ctx);
+        fmpz_mod_mpoly_ctx_clear(ctx);
+    } else {
+        fq_nmod_mpoly_ctx_t ctx;
+        fq_nmod_mpoly_ctx_init(ctx, n, ORD_LEX, field);
+        fq_nmod_mpoly_t f;
+        fq_nmod_mpoly_init(f, ctx);
+        fq_nmod_t value;
+        fq_nmod_init(value, field);
+        fq_nmod_struct *point = flint_malloc(n * sizeof(*point));
+        fq_nmod_struct **args = flint_malloc(n * sizeof(*args));
+        for (slong j = 0; j < n; j++) {
+            args[j] = point + j;
+            fq_nmod_init(args[j], field);
+            if (!homogeneous) fq_nmod_rand(args[j], state, field);
+            values[j] = fq_nmod_get_str_pretty(args[j], field);
+        }
+        for (slong i = 0; i < m; i++) {
+            if (fq_nmod_mpoly_set_str_pretty(f, polys[i], (const char **) names, ctx)) {
+                ok = 0;
+                break;
+            }
+            fq_nmod_mpoly_evaluate_all_fq_nmod(value, f, args, ctx);
+            fq_nmod_mpoly_sub_fq_nmod(f, f, value, ctx);
+            adjusted[i] = fq_nmod_mpoly_get_str_pretty(f, (const char **) names, ctx);
+        }
+        for (slong j = 0; j < n; j++) fq_nmod_clear(args[j], field);
+        flint_free(args);
+        flint_free(point);
+        fq_nmod_clear(value, field);
+        fq_nmod_mpoly_clear(f, ctx);
+        fq_nmod_mpoly_ctx_clear(ctx);
+    }
+
+    char *result = NULL, *solution = NULL;
+    size_t capacity = 0, length = 0, sol_capacity = 0, sol_length = 0;
+    for (slong i = 0; ok && i < m; i++)
+        ok = adjusted[i] && (!i || append_text(&result, &capacity, &length, ", ")) &&
+             append_text(&result, &capacity, &length, adjusted[i]);
+    for (slong j = 0; ok && j < n; j++)
+        ok = values[j] && (!j || append_text(&solution, &sol_capacity, &sol_length, ", ")) &&
+             append_text(&solution, &sol_capacity, &sol_length, names[j]) &&
+             append_text(&solution, &sol_capacity, &sol_length, " = ") &&
+             append_text(&solution, &sol_capacity, &sol_length, values[j]);
+    if (ok) {
+        free(*polys_str);
+        *polys_str = result;
+        *solution_out = solution;
+    } else {
+        free(result);
+        free(solution);
+    }
+    for (slong i = 0; i < m; i++) flint_free(adjusted[i]);
+    for (slong j = 0; j < n; j++) flint_free(values[j]);
+    flint_free(adjusted);
+    flint_free(values);
+    flint_rand_clear(state);
+    free_split_strings(polys, m);
+    free_split_strings(names, n);
+    return ok;
+}
+
 /* =========================================================================
  * File reading helpers
  * ========================================================================= */
@@ -2581,7 +2726,8 @@ static FILE *save_result_to_file(const char *filename,
     return out_fp;
 }
 
-static void insert_random_seed_before_polynomials(const char *filename, ulong seed)
+static void insert_random_seed_before_polynomials(const char *filename, ulong seed,
+                                                  const char *solution)
 {
     FILE *fp = NULL;
     char *text = NULL;
@@ -2612,6 +2758,7 @@ static void insert_random_seed_before_polynomials(const char *filename, ulong se
     if (fp) {
         fwrite(text, 1, prefix_len, fp);
         fputs(seed_line, fp);
+        if (solution) fprintf(fp, "Planted solution: %s\n", solution);
         fwrite(text + prefix_len, 1, (size_t) size - prefix_len, fp);
         fclose(fp);
     }
@@ -3461,6 +3608,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int   rand_comp_direct = 0;
     char *deg_str       = NULL; /* degree list string when rand_mode */
     char *rand_comp_spec = NULL;
+    char *random_solution = NULL;
     char *input_filename  = NULL;
     char *output_filename = NULL;
     mp_limb_t prime = 0;
@@ -4114,7 +4262,17 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             rand_generated = 1;
         }
 random_done:
-        ;
+        if (!comp_mode &&
+            count_comma_separated_items(polys_str) > count_comma_separated_items(allvars_str)) {
+            if (!plant_random_system_solution(&polys_str, allvars_str,
+                                               rational_mode, large_prime_mode,
+                                               p_fmpz, ctx, random_seed,
+                                               random_homogeneous, &random_solution)) {
+                fprintf(stderr, "Error: could not plant a solution in the random system.\n");
+                goto cleanup_fail;
+            }
+            if (!silent_mode) printf("Planted solution: %s\n", random_solution);
+        }
     }
 
     if (rand_generated && !comp_mode && !solve_mode && !ideal_str &&
@@ -4734,7 +4892,7 @@ random_done:
 
     /* Keep the seed used to generate random input next to its polynomial data. */
     if (rand_mode && !comp_mode && random_seed_given && output_filename) {
-        insert_random_seed_before_polynomials(output_filename, random_seed);
+        insert_random_seed_before_polynomials(output_filename, random_seed, random_solution);
     }
 
 cleanup_success:
@@ -4764,6 +4922,7 @@ cleanup_success:
     free(specialized_polys_str);
     free(rand_comp_degrees);
     free(rand_comp_spec);
+    free(random_solution);
     if (input_filename)  free(input_filename);
     if (output_filename) free(output_filename);
     if (complex_solutions_initialized) {
@@ -4800,6 +4959,7 @@ cleanup_fail:
     free(specialized_polys_str);
     free(rand_comp_degrees);
     free(rand_comp_spec);
+    free(random_solution);
     if (input_filename)  free(input_filename);
     if (output_filename) free(output_filename);
     if (complex_solutions_initialized) {

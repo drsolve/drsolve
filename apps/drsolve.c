@@ -211,6 +211,7 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    Example: %s -r --comp --omega 2.81 \"[2]*3\" 257\n", prog_name);
     printf("    -> Add -n <num_vars> to set the total variable count; fewer variables than equations auto-enables solver mode\n");
     printf("    -> Example: %s -r -n 3 \"[2]*5\" 257 --seed 123\n", prog_name);
+    printf("    -> Overdetermined random systems include a guaranteed solution in the input field\n");
     printf("    -> Resultant/complexity mode still requires num_vars >= #equations-1\n");
     printf("    -> Add --density <ratio> with 0 <= ratio <= 1 to choose the fraction of all monomials used (default: 0.5 over F2, otherwise 1)\n");
     printf("    -> Add --homogeneous (alias --hom) to use only monomials whose total degree equals the requested degree\n");
