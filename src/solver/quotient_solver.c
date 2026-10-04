@@ -135,42 +135,112 @@ static void closure_clear(closure_t *cl)
     basis_clear(&cl->basis); nmod_mat_clear(cl->E); nmod_mat_clear(cl->processed); flint_free(cl->shift);
 }
 
+/* Retain the previous degree's relations and one variable multiple per
+ * distinct leading monomial. Multiplication preserves the monomial order,
+ * so these rows are already unit upper triangular in their pivot columns.
+ * Only solve for the free columns; a fresh dense LU would discard this
+ * structure. Every seed row still belongs to the original ideal. */
+static void closure_seed(closure_t *cl, const closure_t *prev)
+{
+    slong nc=cl->basis.count, pc=prev->basis.count, n=cl->basis.n;
+    slong offset=nc-pc, rank=0, nf=0;
+    slong *p=pivots(prev->E);
+    slong *source=flint_malloc(nc*sizeof(slong));
+    slong *variable=flint_malloc(nc*sizeof(slong));
+    slong *index=flint_malloc(nc*sizeof(slong));
+    slong *cols=flint_malloc(nc*sizeof(slong));
+    for (slong j=0;j<nc;j++) source[j]=-1;
+    for (slong i=0;i<prev->E->r;i++) {
+        slong j=p[i]+offset; source[j]=i; variable[j]=-1;
+    }
+    for (slong i=0;i<prev->E->r;i++) for (slong v=0;v<n;v++) {
+        slong j=cl->shift[(p[i]+offset)*n+v];
+        assert(j>=0);
+        if (source[j]<0) { source[j]=i; variable[j]=v; }
+    }
+    for (slong j=0;j<nc;j++) {
+        if (source[j]>=0) index[j]=rank++;
+        else { cols[nf]=j; index[j]=-(++nf); }
+    }
+    nmod_mat_t U,V;
+    matrix_init(U,rank,rank,cl->E->mod.n);
+    matrix_init(V,rank,nf,cl->E->mod.n);
+    for (slong j=0;j<nc;j++) if (source[j]>=0) {
+        slong row=index[j], src=source[j], v=variable[j];
+        for (slong k=p[src];k<pc;k++) {
+            ulong a=nmod_mat_entry(prev->E,src,k);
+            if (!a) continue;
+            slong dest=v<0?k+offset:cl->shift[(k+offset)*n+v];
+            assert(dest>=j);
+            if (index[dest]>=0) nmod_mat_entry(U,row,index[dest])=a;
+            else nmod_mat_entry(V,row,-index[dest]-1)=a;
+        }
+    }
+    nmod_mat_solve_triu(V,U,V,1);
+    cl->matmul_work+=(uint64_t)rank*rank*nf;
+    nmod_mat_clear(cl->E); matrix_init(cl->E,rank,nc,U->mod.n);
+    for (slong j=0;j<nc;j++) if (source[j]>=0) {
+        slong row=index[j]; nmod_mat_entry(cl->E,row,j)=1;
+        for (slong k=0;k<nf;k++) nmod_mat_entry(cl->E,row,cols[k])=nmod_mat_entry(V,row,k);
+    }
+    nmod_mat_clear(U); nmod_mat_clear(V);
+    flint_free(p); flint_free(source); flint_free(variable); flint_free(index); flint_free(cols);
+}
+
 static void insert_rows(closure_t *cl, const nmod_mat_t M)
 {
     slong nc=cl->basis.count, rank=cl->E->r; cl->submitted+=M->r;
+    if (!M->r || rank==nc) return;
     if (!rank) {
         nmod_mat_clear(cl->E); nmod_mat_init_set(cl->E,M); compact_rref(cl->E,cl); return;
     }
     slong *p=pivots(cl->E), *freecols=flint_malloc(nc*sizeof(slong)), nf=0, pi=0;
     for (slong j=0;j<nc;j++) { if (pi<rank && p[pi]==j) pi++; else freecols[nf++]=j; }
-    nmod_mat_t Mp,Ef,S,tmp;
-    select_matrix(Mp,M,NULL,M->r,p,rank);
+    nmod_mat_t Ef,S;
     select_matrix(Ef,cl->E,NULL,rank,freecols,nf);
-    select_matrix(S,M,NULL,M->r,freecols,nf);
-    matrix_init(tmp,M->r,nf,M->mod.n); nmod_mat_mul(tmp,Mp,Ef); nmod_mat_sub(S,S,tmp);
+    matrix_init(S,M->r,nf,M->mod.n);
+    /* Bound the pivot-column scratch space even for tall Macaulay batches. */
+    for (slong start=0;start<M->r;start+=256) {
+        slong rows=FLINT_MIN(256,M->r-start);
+        nmod_mat_t Mp,block;
+        matrix_init(Mp,rows,rank,M->mod.n);
+        for (slong i=0;i<rows;i++) for (slong j=0;j<rank;j++)
+            nmod_mat_entry(Mp,i,j)=nmod_mat_entry(M,start+i,p[j]);
+        nmod_mat_window_init(block,S,start,0,start+rows,nf);
+        nmod_mat_mul(block,Mp,Ef);
+        for (slong i=0;i<rows;i++) for (slong j=0;j<nf;j++)
+            nmod_mat_entry(block,i,j)=nmod_sub(nmod_mat_entry(M,start+i,freecols[j]),nmod_mat_entry(block,i,j),M->mod);
+        nmod_mat_window_clear(block); nmod_mat_clear(Mp);
+    }
     cl->matmul_work+=(uint64_t)M->r*rank*nf;
-    nmod_mat_clear(Mp); nmod_mat_clear(Ef); nmod_mat_clear(tmp); compact_rref(S,cl);
+    nmod_mat_clear(Ef); compact_rref(S,cl);
     if (S->r) {
         slong *np=pivots(S);
+        slong *rest=flint_malloc(nf*sizeof(slong)), *global=flint_malloc(nf*sizeof(slong)), nr=0;
+        pi=0;
+        for (slong j=0;j<nf;j++) {
+            if (pi<S->r && np[pi]==j) pi++;
+            else { rest[nr]=j; global[nr++]=freecols[j]; }
+        }
+        nmod_mat_t tail,En,product,updated,joined;
+        select_matrix(tail,S,NULL,S->r,rest,nr);
         for (slong i=0;i<S->r;i++) np[i]=freecols[np[i]];
-        nmod_mat_t lift,En,product,updated,joined;
-        matrix_init(lift,S->r,nc,M->mod.n);
-        for (slong i=0;i<S->r;i++) for (slong j=0;j<nf;j++)
-            nmod_mat_entry(lift,i,freecols[j])=nmod_mat_entry(S,i,j);
         select_matrix(En,cl->E,NULL,rank,np,S->r);
-        matrix_init(product,rank,nc,M->mod.n); nmod_mat_mul(product,En,lift);
-        matrix_init(updated,rank,nc,M->mod.n); nmod_mat_sub(updated,cl->E,product);
-        cl->matmul_work+=(uint64_t)rank*S->r*nc;
+        matrix_init(product,rank,nr,M->mod.n); nmod_mat_mul(product,En,tail);
+        select_matrix(updated,cl->E,NULL,rank,global,nr); nmod_mat_sub(updated,updated,product);
+        cl->matmul_work+=(uint64_t)rank*S->r*nr;
         matrix_init(joined,rank+S->r,nc,M->mod.n);
         slong old=0,add=0;
         for (slong i=0;i<joined->r;i++) {
             int use_old=old<rank && (add==S->r || p[old]<np[add]);
-            for (slong j=0;j<nc;j++) nmod_mat_entry(joined,i,j)=use_old?nmod_mat_entry(updated,old,j):nmod_mat_entry(lift,add,j);
+            nmod_mat_entry(joined,i,use_old?p[old]:np[add])=1;
+            for (slong j=0;j<nr;j++) nmod_mat_entry(joined,i,global[j])=use_old?nmod_mat_entry(updated,old,j):nmod_mat_entry(tail,add,j);
             if (use_old) old++; else add++;
         }
         nmod_mat_swap(cl->E,joined);
-        nmod_mat_clear(joined); nmod_mat_clear(lift); nmod_mat_clear(En);
+        nmod_mat_clear(joined); nmod_mat_clear(tail); nmod_mat_clear(En);
         nmod_mat_clear(product); nmod_mat_clear(updated); flint_free(np);
+        flint_free(rest); flint_free(global);
     }
     nmod_mat_clear(S); flint_free(p); flint_free(freecols);
 }
@@ -477,6 +547,8 @@ int solve_by_quotient_closure(char **polys, slong count,
     nmod_mpoly_struct *fs=flint_malloc(count*sizeof(*fs));
     slong *degrees=flint_malloc(count*sizeof(slong)),start_degree=1;
     slong initialized=0,used_degree=0,columns=0;
+    closure_t previous;
+    int have_previous=0;
     int success=0;
     const char *stop_reason="degree limit reached";
     quotient_result result={0}; nmod_poly_init(result.eliminant,ctx->mod.n);
@@ -501,6 +573,10 @@ int solve_by_quotient_closure(char **polys, slong count,
         }
         used_degree=d;
         closure_t cl; closure_init(&cl,n,d,ctx->mod.n);
+        if (have_previous) {
+            closure_seed(&cl,&previous);
+            closure_clear(&previous); have_previous=0;
+        }
         nmod_mat_t M; original_rows(M,fs,count,ctx,&cl.basis,1,d);
         insert_rows(&cl,M); nmod_mat_clear(M);
         quotient_close(&result,&cl,fs,count,ctx);
@@ -513,8 +589,8 @@ int solve_by_quotient_closure(char **polys, slong count,
             closure_run(&cl,empty,ctx); nmod_mat_clear(empty);
             if(cl.E->r>oldrank) quotient_close(&result,&cl,fs,count,ctx);
         }
-        closure_clear(&cl);
-        if(result.certified) break;
+        if(result.certified) { closure_clear(&cl); break; }
+        previous=cl; have_previous=1;
         if(d==WORD_MAX) { stop_reason="degree exceeds integer range"; break; }
     }
     if(!result.certified) {
@@ -549,6 +625,7 @@ int solve_by_quotient_closure(char **polys, slong count,
     snprintf(sols->resultant_steps[0],len,"Certified elimination polynomial in %s (minimal polynomial): %s",names[n-1],mu);
     sols->num_resultant_steps=sols->resultant_steps_cap=1; flint_free(mu);
  done:
+    if(have_previous) closure_clear(&previous);
     if(result.operators) {
         for(slong i=0;i<n;i++) nmod_mat_clear(result.operators+i);
         flint_free(result.operators);

@@ -1074,3 +1074,10 @@ $(BUILD_DIR)/pml_prime_step4_test: $(SRC_DIR)/test/pml_prime_step4_test.c $(DIXO
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 $(BUILD_DIR)/determinant/fq_poly_mat_det.o $(BUILD_DIR)/poly_mat_interpolation_test: $(SRC_DIR)/determinant/poly_mat_eval_batch.h
+
+$(BUILD_DIR)/quotient_solver_test: $(SRC_DIR)/test/quotient_solver_test.c $(SRC_DIR)/solver/quotient_solver.c $(SRC_DIR)/quotient_solver.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/quotient_solver_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-quotient
+test-quotient: $(BUILD_DIR)/quotient_solver_test
+	./$(BUILD_DIR)/quotient_solver_test
