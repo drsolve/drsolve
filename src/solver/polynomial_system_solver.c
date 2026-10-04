@@ -6,7 +6,7 @@ static int solver_realtime_progress_enabled = 0;
 static int solver_internal_trace_enabled = 0;
 static const slong solver_candidate_print_limit = 10;
 static polynomial_solver_method_t solver_method = POLYNOMIAL_SOLVER_AUTO;
-static slong quotient_max_degree = 12, quotient_memory_mb = 512;
+static slong quotient_max_degree = 0, quotient_memory_mb = 0;
 
 void polynomial_solver_set_method(polynomial_solver_method_t method) {
     solver_method = method;

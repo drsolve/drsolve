@@ -118,7 +118,7 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    -> Prime-field overdetermined systems automatically use certified quotient algebra\n");
     printf("    -> Square systems keep Dixon by default; --quotient (or --solver quotient) opts in\n");
     printf("    -> --solver auto|dixon|quotient selects the solver; quotient requires at least as many equations as variables\n");
-    printf("    -> --quotient-max-degree <D> (default 12) and --quotient-memory <MiB> (default 512) bound closure work\n");
+    printf("    -> No degree or memory budget by default; optional --quotient-max-degree <D> and --quotient-memory <MiB> (0 = unlimited)\n");
     printf("    -> Limits return an incomplete-solve error, not a claim that no solutions exist\n");
     printf("    -> `-v 2` matches the old debug / verbose solver output\n");
     printf("    -> `-v 3` also dumps small Step 1/2/3 matrices (<= 10 x 10)\n");

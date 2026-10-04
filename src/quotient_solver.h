@@ -8,6 +8,7 @@
  * On failure returns 0 and sets sols->error_message; it never reports a
  * degree/resource limit as absence of solutions or positive dimension.
  * On success returns every F_p-rational point, without multiplicity.
+ * A zero max_degree or memory_mb disables that optional limit.
  */
 int solve_by_quotient_closure(char **polys, slong count,
                             variable_info_t *vars, slong n,

@@ -443,13 +443,13 @@ static int degree_fits(slong n, slong degree, const slong *degrees,
                        slong m, slong memory_mb, slong *columns)
 {
     slong N=monomial_count_bounded(n,degree,WORD_MAX/(slong)sizeof(ulong));
-    if(!N) return 0;
+    if(!N) return -1;
     long double rows=0;
     for(slong i=0;i<m;i++) if(degrees[i]>=0)
         rows+=monomial_count_bounded(n,degree-degrees[i],N);
     long double cells=(30.0L+4.0L*n)*N*N+2.0L*rows*N;
-    if(cells>(long double)WORD_MAX/sizeof(ulong)) return 0;
-    if(cells*sizeof(ulong)>(long double)memory_mb*1024*1024) return 0;
+    if(cells>(long double)WORD_MAX/sizeof(ulong)) return -1;
+    if(memory_mb>0 && cells*sizeof(ulong)>(long double)memory_mb*1024*1024) return 0;
     *columns=N; return 1;
 }
 
@@ -458,8 +458,8 @@ int solve_by_quotient_closure(char **polys, slong count,
                             polynomial_solutions_t *sols,
                             slong max_degree, slong memory_mb)
 {
-    if(max_degree<1 || memory_mb<1) {
-        sols->error_message=strdup("Quotient degree and memory limits must be positive");
+    if(max_degree<0 || memory_mb<0) {
+        sols->error_message=strdup("Quotient limits must be non-negative (0 = unlimited)");
         return 0;
     }
     if(fq_nmod_ctx_degree(sols->ctx)!=1) {
@@ -477,7 +477,8 @@ int solve_by_quotient_closure(char **polys, slong count,
     nmod_mpoly_struct *fs=flint_malloc(count*sizeof(*fs));
     slong *degrees=flint_malloc(count*sizeof(slong)),start_degree=1;
     slong initialized=0,used_degree=0,columns=0;
-    int success=0,limited=0;
+    int success=0;
+    const char *stop_reason="degree limit reached";
     quotient_result result={0}; nmod_poly_init(result.eliminant,ctx->mod.n);
     for(slong i=0;i<count;i++) {
         nmod_mpoly_init(fs+i,ctx); initialized++;
@@ -492,8 +493,12 @@ int solve_by_quotient_closure(char **polys, slong count,
     for(slong i=0;i<count;i++) if(degrees[i]==0) {
         result.certified=1; result.dimension=0; nmod_poly_one(result.eliminant);
     }
-    for(slong d=start_degree;!result.certified && d<=max_degree;d++) {
-        if(!degree_fits(n,d,degrees,count,memory_mb,&columns)) { limited=1; break; }
+    for(slong d=start_degree;!result.certified && (!max_degree || d<=max_degree);d++) {
+        int fits=degree_fits(n,d,degrees,count,memory_mb,&columns);
+        if(fits!=1) {
+            stop_reason=fits<0 ? "matrix dimensions exceed addressable range" : "memory budget reached";
+            break;
+        }
         used_degree=d;
         closure_t cl; closure_init(&cl,n,d,ctx->mod.n);
         nmod_mat_t M; original_rows(M,fs,count,ctx,&cl.basis,1,d);
@@ -510,12 +515,13 @@ int solve_by_quotient_closure(char **polys, slong count,
         }
         closure_clear(&cl);
         if(result.certified) break;
+        if(d==WORD_MAX) { stop_reason="degree exceeds integer range"; break; }
     }
     if(!result.certified) {
         char error[384];
         snprintf(error,sizeof(error),
-            "Quotient closure incomplete: %s (degree limit %ld, memory budget %ld MiB, last attempted degree %ld). No conclusion about existence or dimension of solutions; increase --quotient-max-degree/--quotient-memory or use --solver dixon.",
-            limited ? "memory budget reached" : "degree limit reached",max_degree,memory_mb,used_degree);
+            "Quotient closure incomplete: %s (degree limit %ld, memory budget %ld MiB; 0 = unlimited; last attempted degree %ld). No conclusion about existence or dimension of solutions.",
+            stop_reason,max_degree,memory_mb,used_degree);
         sols->error_message=strdup(error); goto done;
     }
     if(result.dimension) {

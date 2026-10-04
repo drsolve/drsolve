@@ -3108,7 +3108,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int execution_failed = 0;
     polynomial_solver_method_t solver_method = POLYNOMIAL_SOLVER_AUTO;
     int solver_method_explicit = 0, quotient_limits_given = 0;
-    slong quotient_degree = 12, quotient_memory = 512;
+    slong quotient_degree = 0, quotient_memory = 0;
     int    solve_rational_only_mode = 0;
     int    comp_mode   = 0;
     int    rand_mode   = 0;   /* --random / -r */
@@ -3182,16 +3182,20 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             fprintf(stderr, "Error: --solver requires auto, dixon, or quotient.\n"); return 1;
         } else if ((!strcmp(argv[i], "--quotient-max-degree") ||
                     !strcmp(argv[i], "--quotient-memory")) && i + 1 < argc) {
-            slong value;
-            if (!parse_positive_slong_option(argv[i+1], &value)) {
-                fprintf(stderr, "Error: %s requires a positive integer.\n", argv[i]); return 1;
+            char *end = NULL;
+            errno = 0;
+            long parsed = strtol(argv[i+1], &end, 10);
+            if (errno == ERANGE || end == argv[i+1] || *end || parsed < 0 ||
+                (unsigned long) parsed > (ulong) WORD_MAX) {
+                fprintf(stderr, "Error: %s requires a non-negative integer (0 = unlimited).\n", argv[i]); return 1;
             }
+            slong value = (slong) parsed;
             if (!strcmp(argv[i], "--quotient-max-degree")) quotient_degree = value;
             else quotient_memory = value;
             quotient_limits_given = 1;
             i++;
         } else if (!strcmp(argv[i], "--quotient-max-degree") || !strcmp(argv[i], "--quotient-memory")) {
-            fprintf(stderr, "Error: %s requires a positive integer.\n", argv[i]); return 1;
+            fprintf(stderr, "Error: %s requires a non-negative integer (0 = unlimited).\n", argv[i]); return 1;
         } else if (strcmp(argv[i], "--solve-rational-only") == 0) {
             solve_mode = 1;
             solve_rational_only_mode = 1;
