@@ -5341,6 +5341,7 @@ static int dixon_mq_step4_try(fq_nmod_poly_t det, const fq_nmod_poly_mat_t matri
 #include "dixon_projected_matrix.h"
 #include "dixon_compact_matrix.h"
 #include "dixon_native.h"
+#include "dixon_pipeline.h"
 
 int dixon_bivariate_native_eligible(const unified_mpoly_struct *polys, slong nvars, slong npars)
 {
@@ -5397,6 +5398,305 @@ void dixon_bivariate_native_selected_det(unified_mpoly_struct *result,
     fq_nmod_poly_clear(det,ctx); nmod_poly_mat_clear(native);
 }
 
+/* Shared Step 3. Construction-specific storage stays with each producer. */
+static hash_entry_t **dixon_label_index(const monom_t *labels, slong count,
+                                       slong nvars, slong *hash_size)
+{
+    *hash_size = 16;
+    while (*hash_size < count * 2) *hash_size *= 2;
+    hash_entry_t **index = flint_calloc(*hash_size, sizeof(*index));
+    for (slong i = 0; i < count; i++) {
+        slong h = hash_monom_exponents(labels[i].exp, nvars) & (*hash_size - 1);
+        hash_entry_t *e = flint_malloc(sizeof(*e));
+        e->exp = labels[i].exp; e->idx = i; e->next = index[h]; index[h] = e;
+    }
+    return index;
+}
+
+/* Exact elimination records original row indices and pivot columns. Rank alone
+ * does not certify the leading principal block. Works over extension fields too. */
+static void dixon_select_scalar(unified_mpoly_struct ***matrix, slong nr, slong nc,
+    const fq_nmod_ctx_t ctx, slong **rows, slong **cols, slong *size)
+{
+    fq_nmod_mat_t a;
+    fq_nmod_mat_init(a, nr, nc, ctx);
+    slong *perm = flint_malloc(nr * sizeof(slong));
+    *rows = flint_malloc(FLINT_MIN(nr,nc) * sizeof(slong));
+    *cols = flint_malloc(FLINT_MIN(nr,nc) * sizeof(slong));
+    for (slong i=0; i<nr; i++) {
+        perm[i]=i;
+        for (slong j=0; j<nc; j++) if (matrix[i][j] && dr_mpoly_length(matrix[i][j])) {
+            DR_MPOLY_TERM(term, matrix[i][j], 0);
+            fq_nmod_set(fq_nmod_mat_entry(a,i,j),term.coeff,ctx);
+        }
+    }
+    fq_nmod_t inv, factor, tmp;
+    fq_nmod_init(inv,ctx); fq_nmod_init(factor,ctx); fq_nmod_init(tmp,ctx);
+    slong r=0;
+    for (slong c=0; c<nc && r<nr; c++) {
+        slong pivot=r;
+        while (pivot<nr && fq_nmod_is_zero(fq_nmod_mat_entry(a,pivot,c),ctx)) pivot++;
+        if (pivot==nr) continue;
+        if (pivot!=r) {
+            for (slong j=0; j<nc; j++) fq_nmod_swap(fq_nmod_mat_entry(a,r,j),fq_nmod_mat_entry(a,pivot,j),ctx);
+            slong t=perm[r]; perm[r]=perm[pivot]; perm[pivot]=t;
+        }
+        (*rows)[r]=perm[r]; (*cols)[r]=c;
+        fq_nmod_inv(inv,fq_nmod_mat_entry(a,r,c),ctx);
+        for (slong i=r+1; i<nr; i++) {
+            fq_nmod_mul(factor,fq_nmod_mat_entry(a,i,c),inv,ctx);
+            for (slong j=c; j<nc; j++) {
+                fq_nmod_mul(tmp,factor,fq_nmod_mat_entry(a,r,j),ctx);
+                fq_nmod_sub(fq_nmod_mat_entry(a,i,j),fq_nmod_mat_entry(a,i,j),tmp,ctx);
+            }
+        }
+        r++;
+    }
+    *size=r;
+    fq_nmod_clear(tmp,ctx); fq_nmod_clear(factor,ctx); fq_nmod_clear(inv,ctx);
+    flint_free(perm); fq_nmod_mat_clear(a,ctx);
+}
+
+void dixon_select_submatrix(unified_mpoly_struct ***full_matrix, slong nx_monoms, slong ndual_monoms,
+    const monom_t *x_monoms, const monom_t *dual_monoms, slong nvars, slong npars,
+    const long *degrees, slong num_polys, slong ksy_constant_col,
+    const fq_nmod_ctx_t ctx, slong **selected_rows, slong **selected_cols, slong *size)
+{
+    *selected_rows=NULL; *selected_cols=NULL; *size=0;
+    if (!nx_monoms || !ndual_monoms) return;
+    if (npars==0) {
+        dixon_select_scalar(full_matrix,nx_monoms,ndual_monoms,ctx,selected_rows,selected_cols,size);
+        return;
+    }
+    slong *row_idx_array=NULL, *col_idx_array=NULL, num_rows=0, num_cols=0;
+    const char *predict_env = getenv("DRSOLVE_PREDICT_MAXRANK");
+    int use_predicted_candidate = npars == 1 && ksy_constant_col < 0 &&
+        (predict_env == NULL || strcmp(predict_env, "0") != 0);
+    if (!use_predicted_candidate) {
+        find_fq_optimal_maximal_rank_submatrix(full_matrix, nx_monoms, ndual_monoms,
+            selected_rows, selected_cols, &num_rows, &num_cols, npars, ksy_constant_col);
+        *size = FLINT_MIN(num_rows, num_cols);
+        return;
+    }
+    slong x_hash_size, dual_hash_size;
+    hash_entry_t **x_index=dixon_label_index(x_monoms,nx_monoms,nvars,&x_hash_size);
+    hash_entry_t **dual_index=dixon_label_index(dual_monoms,ndual_monoms,nvars,&dual_hash_size);
+    slong sigma=0;
+    for (slong i=0; i<nx_monoms; i++) for (slong j=0; j<ndual_monoms; j++)
+        if (full_matrix[i][j] && dr_mpoly_length(full_matrix[i][j])) {
+            slong degree=0;
+            for (slong v=0; v<nvars; v++) degree+=x_monoms[i].exp[v]+dual_monoms[j].exp[v];
+            sigma=FLINT_MAX(sigma,degree);
+        }
+    {
+        dixon_debug_log("  Using rank-predicted scalar specialization (%ld parameter(s))...\n", npars);
+        fq_nmod_t *eval_params = NULL;
+        if (npars == 1) {
+            eval_params = (fq_nmod_t *) flint_malloc(sizeof(fq_nmod_t));
+            init_evaluation_parameters(eval_params, 1, ctx, 0);
+        }
+        /* The degree model proposes a minor, not a rank certificate. Verify
+         * its specialization, try Schur repair, then fall back to the general
+         * selector if it cannot be certified. */
+        clock_t prediction_cpu_start = clock();
+        double prediction_wall_start = get_wall_time();
+        fq_index_degree_pair *row_order =
+            (fq_index_degree_pair *) flint_malloc((size_t) nx_monoms * sizeof(*row_order));
+        fq_index_degree_pair *col_order =
+            (fq_index_degree_pair *) flint_malloc((size_t) ndual_monoms * sizeof(*col_order));
+        slong *row_counts = (slong *) flint_calloc((size_t) (sigma + 1), sizeof(slong));
+        slong *col_counts = (slong *) flint_calloc((size_t) (sigma + 1), sizeof(slong));
+        for (slong i = 0; i < nx_monoms; i++) {
+            slong d = 0;
+            for (slong v = 0; v < nvars; v++) d += x_monoms[i].exp[v];
+            row_order[i].index = i; row_order[i].degree = d;
+            if (d <= sigma) row_counts[d]++;
+        }
+        for (slong j = 0; j < ndual_monoms; j++) {
+            slong d = 0;
+            for (slong v = 0; v < nvars; v++) d += dual_monoms[j].exp[v];
+            col_order[j].index = j; col_order[j].degree = d;
+            if (d <= sigma) col_counts[d]++;
+        }
+        qsort(row_order, (size_t) nx_monoms, sizeof(*row_order), compare_fq_degrees);
+        qsort(col_order, (size_t) ndual_monoms, sizeof(*col_order), compare_fq_degrees);
+        slong predicted = 0;
+        for (slong q = 0; q <= sigma; q++) {
+            slong p = sigma - q;
+            if (p <= sigma) predicted += FLINT_MIN(row_counts[p], col_counts[q]);
+        }
+        slong min_size = FLINT_MIN(nx_monoms, ndual_monoms);
+        slong *model_H = NULL;
+        slong model_h_len = 0;
+        if (degrees != NULL && num_polys == nvars + 1) {
+            slong *model_R = NULL;
+            slong model_r_len = 0, model_sigma = 0, model_rank = 0;
+            if (dixon_rank_profile_from_degrees(&model_R, &model_r_len,
+                                                &model_H, &model_h_len,
+                                                &model_sigma, &model_rank,
+                                                degrees, num_polys, nvars)) {
+                predicted = model_rank;
+                sigma = model_sigma;
+                dixon_debug_log("  Rank model: sigma=%ld, e0=%ld, predicted rank=%ld\n",
+                                sigma, model_h_len, predicted);
+            }
+            flint_free(model_R);
+        }
+        predicted = FLINT_MIN(predicted, min_size);
+        slong rank = 0;
+        slong predicted_size = 0;
+        long dmin = LONG_MAX;
+        for (slong i = 0; i < num_polys; i++) if (degrees && degrees[i] < dmin) dmin = degrees[i];
+        int candidate_ok =
+            use_predicted_candidate && model_H != NULL && predicted > 0 && predicted < min_size &&
+            dixon_build_predicted_mirror_indices(
+                &row_idx_array, &col_idx_array, &predicted_size,
+                x_monoms, nx_monoms, dual_monoms, ndual_monoms,
+                x_index, x_hash_size, dual_index, dual_hash_size,
+                nvars, model_H, model_h_len, sigma, (slong) dmin, predicted);
+        if (use_predicted_candidate) {
+            if (g_dixon_verbose_level >= 3)
+                dixon_info_log("  Step 3 predicted rank: %ld\n", predicted);
+            dixon_maybe_print_step_detail_time("Step 3 rank prediction",
+                                               prediction_cpu_start,
+                                               prediction_wall_start);
+        }
+        int candidate_constructed = candidate_ok;
+        int schur_repaired = 0;
+        clock_t verification_cpu_start = clock();
+        double verification_wall_start = get_wall_time();
+        if (candidate_ok) {
+            if (fq_nmod_ctx_degree(ctx) == 1) {
+                if (g_dixon_verbose_level >= 3)
+                    dixon_info_log("  Step 3 candidate verification backend: nmod_mat_lu\n");
+                nmod_mat_t candidate;
+                slong *perm = (slong *)
+                    flint_malloc((size_t) predicted * sizeof(slong));
+                nmod_mat_init(candidate, predicted, predicted,
+                              fq_nmod_ctx_prime(ctx));
+                for (slong i = 0; i < predicted; i++) perm[i] = i;
+#ifdef _OPENMP
+                #pragma omp parallel
+                {
+                    fq_nmod_t value;
+                    fq_nmod_init(value, ctx);
+                    #pragma omp for schedule(static)
+                    for (slong i = 0; i < predicted; i++) {
+                        for (slong j = 0; j < predicted; j++) {
+                            unified_mpoly_struct *entry =
+                                full_matrix[row_idx_array[i]][col_idx_array[j]];
+                            if (entry != NULL && dr_mpoly_length(entry) > 0) {
+                                evaluate_dr_mpoly_at_params(value, entry, eval_params);
+                                nmod_mat_entry(candidate, i, j) =
+                                    nmod_poly_get_coeff_ui(value, 0);
+                            } else {
+                                nmod_mat_entry(candidate, i, j) = 0;
+                            }
+                        }
+                    }
+                    fq_nmod_clear(value, ctx);
+                }
+#else
+                fq_nmod_t value;
+                fq_nmod_init(value, ctx);
+                for (slong i = 0; i < predicted; i++) {
+                    for (slong j = 0; j < predicted; j++) {
+                        unified_mpoly_struct *entry =
+                            full_matrix[row_idx_array[i]][col_idx_array[j]];
+                        if (entry != NULL && dr_mpoly_length(entry) > 0) {
+                            evaluate_dr_mpoly_at_params(value, entry, eval_params);
+                            nmod_mat_entry(candidate, i, j) =
+                                nmod_poly_get_coeff_ui(value, 0);
+                        } else {
+                            nmod_mat_entry(candidate, i, j) = 0;
+                        }
+                    }
+                }
+                fq_nmod_clear(value, ctx);
+#endif
+                rank = nmod_mat_lu(perm, candidate, 0);
+                if (rank < predicted && rank > 0 &&
+                    dixon_repair_predicted_minor(full_matrix, nx_monoms, ndual_monoms,
+                        row_idx_array, col_idx_array, predicted, candidate, perm, rank,
+                        row_order, col_order, sigma, eval_params, ctx)) {
+                    num_rows = num_cols = predicted;
+                    schur_repaired = 1;
+                    dixon_debug_log("  Schur repair succeeded: base rank=%ld, added=%ld\n",
+                                    rank, predicted - rank);
+                }
+                nmod_mat_clear(candidate);
+                flint_free(perm);
+            } else {
+                if (g_dixon_verbose_level >= 3)
+                    dixon_info_log("  Step 3 candidate verification backend: fq_nmod_mat_rank\n");
+                rank = dixon_fq_candidate_rank(full_matrix, row_idx_array, col_idx_array,
+                                               predicted, npars, eval_params, ctx);
+            }
+            if (!schur_repaired) {
+                if (rank == predicted) num_rows = num_cols = predicted;
+                else candidate_ok = 0;
+            }
+        }
+        if (use_predicted_candidate) {
+            const char *verification_label = candidate_ok
+                ? "Step 3 predicted candidate verification (success)"
+                : candidate_constructed
+                    ? "Step 3 predicted candidate verification (rank mismatch)"
+                    : "Step 3 predicted candidate verification (not constructed)";
+            dixon_maybe_print_step_detail_time(verification_label,
+                                               verification_cpu_start,
+                                               verification_wall_start);
+        }
+        if (!candidate_ok) {
+            flint_free(row_idx_array); flint_free(col_idx_array);
+            row_idx_array = NULL; col_idx_array = NULL;
+        }
+        flint_free(model_H);
+        flint_free(row_order);
+        flint_free(col_order);
+        flint_free(row_counts);
+        flint_free(col_counts);
+        if (use_predicted_candidate && !candidate_ok) {
+            if (candidate_constructed) {
+                dixon_debug_log("  Predicted candidate failed: size=%ld x %ld, "
+                                "evaluated rank=%ld, deficiency=%ld; "
+                                "using degree-aware selector\n",
+                                predicted, predicted, rank, predicted - rank);
+            } else {
+                dixon_debug_log("  Predicted candidate failed: could not construct "
+                                "%ld x %ld candidate; using degree-aware selector\n",
+                                predicted, predicted);
+            }
+            if (eval_params) {
+                clear_evaluation_parameters(eval_params, 1, ctx);
+            }
+            find_fq_optimal_maximal_rank_submatrix(full_matrix, nx_monoms, ndual_monoms,
+                                                   &row_idx_array, &col_idx_array,
+                                                   &num_rows, &num_cols, npars, ksy_constant_col);
+            goto selected;
+        }
+        if (candidate_ok) {
+            dixon_debug_log("  Step 3 heuristic candidate accepted: %ld x %ld%s\n",
+                            predicted, predicted, schur_repaired ? " (Schur repair)" : "");
+            const char *reorder_env = getenv("DRSOLVE_PREDICT_REORDER");
+            if (reorder_env == NULL || strcmp(reorder_env, "0") != 0)
+                reorder_fq_selected_minor_by_degree(full_matrix,
+                                                    row_idx_array,
+                                                    col_idx_array,
+                                                    predicted, npars);
+            if (eval_params) {
+                clear_evaluation_parameters(eval_params, 1, ctx);
+            }
+            goto selected;
+        }
+    }
+
+selected:
+    free_monom_index(x_index,x_hash_size); free_monom_index(dual_index,dual_hash_size);
+    *selected_rows=row_idx_array; *selected_cols=col_idx_array;
+    *size=FLINT_MIN(num_rows,num_cols);
+}
+
 static void extract_fq_coefficient_matrix_from_dixon_impl(
     unified_mpoly_struct ***coeff_matrix, fq_nmod_poly_mat_t *poly_matrix_out, slong *row_indices,
     slong *col_indices, slong *matrix_size, slong *extracted_x_power,
@@ -5441,13 +5741,6 @@ static void extract_fq_coefficient_matrix_from_dixon_impl(
                     get_wall_time() - phase_start);
     phase_start = get_wall_time();
     
-    slong expected_rows = 1;
-    slong expected_cols = 1;
-    for (slong i = 0; i < nvars; i++) {
-        expected_rows *= d0[i];
-        expected_cols *= d1[i];
-    }
-
     monom_t *x_monoms = NULL;
     monom_t *dual_monoms = NULL;
     slong nx_monoms = 0, ndual_monoms = 0;
@@ -5586,296 +5879,10 @@ static void extract_fq_coefficient_matrix_from_dixon_impl(
         goto coefficient_matrix_selected;
     }
 
-    const char *predict_env = getenv("DRSOLVE_PREDICT_MAXRANK");
-    int use_predicted_candidate =
-        (npars == 1 && (predict_env == NULL || strcmp(predict_env, "0") != 0));
-    if (npars == 0 || use_predicted_candidate) {
-        dixon_debug_log("  Using rank-predicted scalar specialization (%ld parameter(s))...\n", npars);
-        fq_nmod_mat_t eval_mat;
-        int eval_mat_ready = 0;
-        fq_nmod_t *eval_params = NULL;
-        if (npars == 1) {
-            eval_params = (fq_nmod_t *) flint_malloc(sizeof(fq_nmod_t));
-            init_evaluation_parameters(eval_params, 1, dixon_poly->ctx, 0);
-        }
-        /* Keep the predicted npars=1 path candidate-only: the full scalar
-           matrix is needed only by the non-predicted fallback. */
-        if (!use_predicted_candidate) {
-            fq_nmod_mat_init(eval_mat, nx_monoms, ndual_monoms, dixon_poly->ctx);
-            eval_mat_ready = 1;
-            clock_t scalar_eval_cpu_start = clock();
-            double scalar_eval_wall_start = get_wall_time();
-#ifdef _OPENMP
-        #pragma omp parallel for schedule(static)
-#endif
-        for (slong i = 0; i < nx_monoms; i++) {
-            for (slong j = 0; j < ndual_monoms; j++) {
-                if (full_matrix[i][j] != NULL && dr_mpoly_length(full_matrix[i][j]) > 0) {
-                    DR_MPOLY_TERM(term_22, full_matrix[i][j], 0);
-                    if (npars == 1)
-                        evaluate_dr_mpoly_at_params(fq_nmod_mat_entry(eval_mat, i, j),
-                                                    full_matrix[i][j], eval_params);
-                    else
-                        fq_nmod_set(fq_nmod_mat_entry(eval_mat, i, j), term_22.coeff,
-                                    dixon_poly->ctx);
-                } else {
-                    fq_nmod_zero(fq_nmod_mat_entry(eval_mat, i, j), dixon_poly->ctx);
-                }
-            }
-        }
-            dixon_maybe_print_step_detail_time("Step 3 scalar matrix build",
-                                               scalar_eval_cpu_start,
-                                               scalar_eval_wall_start);
-        }
-        /* Heuristic rank candidate from the bihomogeneous support.  Rows are
-         * ordered by decreasing x-degree and columns by increasing dual-degree
-         * so that the candidate follows the Dixon anti-diagonal.  This is only
-         * a fast path: sampled one-row/one-column extensions must not increase
-         * rank, otherwise we fall back to the exact full-matrix rank. */
-        clock_t prediction_cpu_start = clock();
-        double prediction_wall_start = get_wall_time();
-        slong sigma = 0;
-        for (slong t = 0; t < dr_mpoly_length(dixon_poly); t++) {
-            DR_MPOLY_TERM(term_23, dixon_poly, t);
-
-            slong deg = 0;
-            if (term_23.var_exp) {
-                for (slong v = 0; v < 2 * nvars; v++)
-                    deg += term_23.var_exp[v];
-            }
-            if (deg > sigma) sigma = deg;
-        }
-        fq_index_degree_pair *row_order =
-            (fq_index_degree_pair *) flint_malloc((size_t) nx_monoms * sizeof(*row_order));
-        fq_index_degree_pair *col_order =
-            (fq_index_degree_pair *) flint_malloc((size_t) ndual_monoms * sizeof(*col_order));
-        slong *row_counts = (slong *) flint_calloc((size_t) (sigma + 1), sizeof(slong));
-        slong *col_counts = (slong *) flint_calloc((size_t) (sigma + 1), sizeof(slong));
-        for (slong i = 0; i < nx_monoms; i++) {
-            slong d = 0;
-            for (slong v = 0; v < nvars; v++) d += x_monoms[i].exp[v];
-            row_order[i].index = i; row_order[i].degree = d;
-            if (d <= sigma) row_counts[d]++;
-        }
-        for (slong j = 0; j < ndual_monoms; j++) {
-            slong d = 0;
-            for (slong v = 0; v < nvars; v++) d += dual_monoms[j].exp[v];
-            col_order[j].index = j; col_order[j].degree = d;
-            if (d <= sigma) col_counts[d]++;
-        }
-        qsort(row_order, (size_t) nx_monoms, sizeof(*row_order), compare_fq_degrees);
-        qsort(col_order, (size_t) ndual_monoms, sizeof(*col_order), compare_fq_degrees);
-        slong predicted = 0;
-        for (slong q = 0; q <= sigma; q++) {
-            slong p = sigma - q;
-            if (p <= sigma) predicted += FLINT_MIN(row_counts[p], col_counts[q]);
-        }
-        slong min_size = FLINT_MIN(nx_monoms, ndual_monoms);
-        slong *model_H = NULL;
-        slong model_h_len = 0;
-        if (degrees != NULL && num_polys == nvars + 1) {
-            slong *model_R = NULL;
-            slong model_r_len = 0, model_sigma = 0, model_rank = 0;
-            if (dixon_rank_profile_from_degrees(&model_R, &model_r_len,
-                                                &model_H, &model_h_len,
-                                                &model_sigma, &model_rank,
-                                                degrees, num_polys, nvars)) {
-                predicted = model_rank;
-                sigma = model_sigma;
-                dixon_debug_log("  Rank model: sigma=%ld, e0=%ld, predicted rank=%ld\n",
-                                sigma, model_h_len, predicted);
-            }
-            flint_free(model_R);
-        }
-        predicted = FLINT_MIN(predicted, min_size);
-        slong rank = 0;
-        slong predicted_size = 0;
-        long dmin = LONG_MAX;
-        for (slong i = 0; i < num_polys; i++) if (degrees && degrees[i] < dmin) dmin = degrees[i];
-        int candidate_ok =
-            use_predicted_candidate && model_H != NULL && predicted > 0 && predicted < min_size &&
-            dixon_build_predicted_mirror_indices(
-                &row_idx_array, &col_idx_array, &predicted_size,
-                x_monoms, nx_monoms, dual_monoms, ndual_monoms,
-                x_index, x_hash_size, dual_index, dual_hash_size,
-                nvars, model_H, model_h_len, sigma, (slong) dmin, predicted);
-        if (use_predicted_candidate) {
-            if (g_dixon_verbose_level >= 3)
-                dixon_info_log("  Step 3 predicted rank: %ld\n", predicted);
-            dixon_maybe_print_step_detail_time("Step 3 rank prediction",
-                                               prediction_cpu_start,
-                                               prediction_wall_start);
-        }
-        int candidate_constructed = candidate_ok;
-        int schur_repaired = 0;
-        clock_t verification_cpu_start = clock();
-        double verification_wall_start = get_wall_time();
-        if (candidate_ok) {
-            if (fq_nmod_ctx_degree(dixon_poly->ctx) == 1) {
-                if (g_dixon_verbose_level >= 3)
-                    dixon_info_log("  Step 3 candidate verification backend: nmod_mat_lu\n");
-                nmod_mat_t candidate;
-                slong *perm = (slong *)
-                    flint_malloc((size_t) predicted * sizeof(slong));
-                nmod_mat_init(candidate, predicted, predicted,
-                              fq_nmod_ctx_prime(dixon_poly->ctx));
-                for (slong i = 0; i < predicted; i++) perm[i] = i;
-#ifdef _OPENMP
-                #pragma omp parallel
-                {
-                    fq_nmod_t value;
-                    fq_nmod_init(value, dixon_poly->ctx);
-                    #pragma omp for schedule(static)
-                    for (slong i = 0; i < predicted; i++) {
-                        for (slong j = 0; j < predicted; j++) {
-                            unified_mpoly_struct *entry =
-                                full_matrix[row_idx_array[i]][col_idx_array[j]];
-                            if (entry != NULL && dr_mpoly_length(entry) > 0) {
-                                evaluate_dr_mpoly_at_params(value, entry, eval_params);
-                                nmod_mat_entry(candidate, i, j) =
-                                    nmod_poly_get_coeff_ui(value, 0);
-                            } else {
-                                nmod_mat_entry(candidate, i, j) = 0;
-                            }
-                        }
-                    }
-                    fq_nmod_clear(value, dixon_poly->ctx);
-                }
-#else
-                fq_nmod_t value;
-                fq_nmod_init(value, dixon_poly->ctx);
-                for (slong i = 0; i < predicted; i++) {
-                    for (slong j = 0; j < predicted; j++) {
-                        unified_mpoly_struct *entry =
-                            full_matrix[row_idx_array[i]][col_idx_array[j]];
-                        if (entry != NULL && dr_mpoly_length(entry) > 0) {
-                            evaluate_dr_mpoly_at_params(value, entry, eval_params);
-                            nmod_mat_entry(candidate, i, j) =
-                                nmod_poly_get_coeff_ui(value, 0);
-                        } else {
-                            nmod_mat_entry(candidate, i, j) = 0;
-                        }
-                    }
-                }
-                fq_nmod_clear(value, dixon_poly->ctx);
-#endif
-                rank = nmod_mat_lu(perm, candidate, 0);
-                if (rank < predicted && rank > 0 &&
-                    dixon_repair_predicted_minor(full_matrix, nx_monoms, ndual_monoms,
-                        row_idx_array, col_idx_array, predicted, candidate, perm, rank,
-                        row_order, col_order, sigma, eval_params, dixon_poly->ctx)) {
-                    num_rows = num_cols = predicted;
-                    schur_repaired = 1;
-                    dixon_debug_log("  Schur repair succeeded: base rank=%ld, added=%ld\n",
-                                    rank, predicted - rank);
-                }
-                nmod_mat_clear(candidate);
-                flint_free(perm);
-            } else {
-                if (g_dixon_verbose_level >= 3)
-                    dixon_info_log("  Step 3 candidate verification backend: fq_nmod_mat_rank\n");
-                rank = dixon_fq_candidate_rank(full_matrix, row_idx_array, col_idx_array,
-                                               predicted, npars, eval_params, dixon_poly->ctx);
-            }
-            if (!schur_repaired) {
-                if (rank == predicted) num_rows = num_cols = predicted;
-                else candidate_ok = 0;
-            }
-        }
-        if (use_predicted_candidate) {
-            const char *verification_label = candidate_ok
-                ? "Step 3 predicted candidate verification (success)"
-                : candidate_constructed
-                    ? "Step 3 predicted candidate verification (rank mismatch)"
-                    : "Step 3 predicted candidate verification (not constructed)";
-            dixon_maybe_print_step_detail_time(verification_label,
-                                               verification_cpu_start,
-                                               verification_wall_start);
-        }
-        if (!candidate_ok) {
-            flint_free(row_idx_array); flint_free(col_idx_array);
-            row_idx_array = NULL; col_idx_array = NULL;
-        }
-        flint_free(model_H);
-        flint_free(row_order);
-        flint_free(col_order);
-        flint_free(row_counts);
-        flint_free(col_counts);
-        if (use_predicted_candidate && !candidate_ok) {
-            if (candidate_constructed) {
-                dixon_debug_log("  Predicted candidate failed: size=%ld x %ld, "
-                                "evaluated rank=%ld, deficiency=%ld; "
-                                "using degree-aware selector\n",
-                                predicted, predicted, rank, predicted - rank);
-            } else {
-                dixon_debug_log("  Predicted candidate failed: could not construct "
-                                "%ld x %ld candidate; using degree-aware selector\n",
-                                predicted, predicted);
-            }
-            if (eval_mat_ready) fq_nmod_mat_clear(eval_mat, dixon_poly->ctx);
-            if (eval_params) {
-                clear_evaluation_parameters(eval_params, 1, dixon_poly->ctx);
-            }
-            find_fq_optimal_maximal_rank_submatrix(full_matrix, nx_monoms, ndual_monoms,
-                                                   &row_idx_array, &col_idx_array,
-                                                   &num_rows, &num_cols, npars, -1);
-            goto coefficient_matrix_selected;
-        }
-        if (candidate_ok) {
-            dixon_debug_log("  Step 3 heuristic candidate accepted: %ld x %ld%s\n",
-                            predicted, predicted, schur_repaired ? " (Schur repair)" : "");
-            const char *reorder_env = getenv("DRSOLVE_PREDICT_REORDER");
-            if (reorder_env == NULL || strcmp(reorder_env, "0") != 0)
-                reorder_fq_selected_minor_by_degree(full_matrix,
-                                                    row_idx_array,
-                                                    col_idx_array,
-                                                    predicted, npars);
-            if (eval_mat_ready) fq_nmod_mat_clear(eval_mat, dixon_poly->ctx);
-            if (eval_params) {
-                clear_evaluation_parameters(eval_params, 1, dixon_poly->ctx);
-            }
-            goto coefficient_matrix_selected;
-        }
-        rank = fq_nmod_mat_rank(eval_mat, dixon_poly->ctx);
-        slong actual_size = FLINT_MIN(rank, min_size);
-        
-        row_idx_array = (slong*) flint_malloc(actual_size * sizeof(slong));
-        col_idx_array = (slong*) flint_malloc(actual_size * sizeof(slong));
-        
-        for (slong i = 0; i < actual_size; i++) {
-            row_idx_array[i] = i;
-            col_idx_array[i] = i;
-        }
-        num_rows = actual_size;
-        num_cols = actual_size;
-        
-        if (eval_mat_ready) fq_nmod_mat_clear(eval_mat, dixon_poly->ctx);
-        if (eval_params) {
-            clear_evaluation_parameters(eval_params, 1, dixon_poly->ctx);
-        }
-    } else {
-        slong small_size = 1;
-        if (nx_monoms < small_size && ndual_monoms < small_size && 
-            expected_rows < small_size && expected_cols < small_size) {
-            dixon_debug_log("  Matrix is tiny; taking leading principal block directly...\n");
-            slong min_size = FLINT_MIN(nx_monoms, ndual_monoms);
-            row_idx_array = (slong*) flint_malloc(min_size * sizeof(slong));
-            col_idx_array = (slong*) flint_malloc(min_size * sizeof(slong));
-            
-            for (slong i = 0; i < min_size; i++) {
-                row_idx_array[i] = i;
-                col_idx_array[i] = i;
-            }
-            num_rows = min_size;
-            num_cols = min_size;
-        } else {
-            dixon_debug_log("  Selecting maximal-rank submatrix via specialization heuristics...\n");
-            find_fq_optimal_maximal_rank_submatrix(full_matrix, nx_monoms, ndual_monoms,
-                                                  &row_idx_array, &col_idx_array, 
-                                                  &num_rows, &num_cols,
-                                                  npars, -1);
-        }
-    }
+    dixon_select_submatrix(full_matrix, nx_monoms, ndual_monoms,
+        x_monoms, dual_monoms, nvars, npars, degrees, num_polys, -1,
+        dixon_poly->ctx, &row_idx_array, &col_idx_array, &num_rows);
+    num_cols = num_rows;
 
 coefficient_matrix_selected: ;
 
@@ -6289,7 +6296,7 @@ slong dixon_matrix_size(slong nvars, slong degree, ulong prime, slong field_degr
 }
 
 // ============ Main Dixon resultant function ============
-static long *dixon_polynomial_degrees(const unified_mpoly_struct *polys, slong npolys, slong nvars)
+long *dixon_polynomial_degrees(const unified_mpoly_struct *polys, slong npolys, slong nvars)
 {
     long *degrees = (long *) flint_calloc((size_t) npolys, sizeof(long));
     for (slong i = 0; i < npolys; i++) {
@@ -6304,6 +6311,76 @@ static long *dixon_polynomial_degrees(const unified_mpoly_struct *polys, slong n
         }
     }
     return degrees;
+}
+
+/* Shared Step 4 dispatch, including both construction-specific fast paths. */
+static void dixon_step4_resultant(unified_mpoly_struct *result,
+    unified_mpoly_struct **matrix, fq_nmod_poly_mat_struct *poly_matrix,
+    nmod_poly_mat_struct *prime_matrix, slong size, unified_mpoly_struct *polys,
+    slong nvars, slong npars, slong extracted_power, dixon_mq_step4_profile *mq_profile,
+    const dixon_recursive_det_options *recursive, char **par_names)
+{
+    dixon_info_log("\nStep 4: Compute resultant\n");
+    clock_t cpu_start=clock(); double wall_start=get_wall_time();
+    int univariate=poly_matrix || prime_matrix;
+    det_method_t method;
+    if (univariate) method=DET_METHOD_KRONECKER;
+#ifdef _OPENMP
+    else if (npars>1) method=DET_METHOD_INTERPOLATION;
+#endif
+    else method=size<9 ? DET_METHOD_RECURSIVE : DET_METHOD_KRONECKER;
+    if (dixon_global_method_step4!=-1) method=dixon_global_method_step4;
+    dixon_info_log("  Determinant method: %s\n",dixon_det_method_name(method));
+    if (univariate) {
+        fq_nmod_poly_t det;
+        fq_nmod_poly_init(det,polys[0].ctx);
+        if (g_dixon_mq_step4_schur && !mq_profile->size)
+            dixon_info_log("  MQ Step 4 Schur: no eligible complement profile; using original determinant backend\n");
+        if (prime_matrix) dixon_mq_native_det(det,prime_matrix,mq_profile,polys[0].ctx);
+        else if (!dixon_mq_step4_try(det,poly_matrix,mq_profile,polys[0].ctx))
+            fq_nmod_poly_mat_det_iter(det,poly_matrix,polys[0].ctx);
+        dr_mpoly_init(result,0,1,polys[0].ctx);
+        for (slong i=0; i<=fq_nmod_poly_degree(det,polys[0].ctx); i++)
+            if (!fq_nmod_is_zero(det->coeffs+i,polys[0].ctx)) {
+                slong power=i+extracted_power;
+                dr_mpoly_add_term_fast(result,NULL,&power,det->coeffs+i);
+            }
+        fq_nmod_poly_clear(det,polys[0].ctx);
+    } else {
+        /* The native complement certificate uses the original coefficients.
+         * Do not deflate that matrix before asking the native backend. */
+        int native=recursive && recursive->enabled && method==DET_METHOD_KRONECKER &&
+                   dixon_bivariate_native_eligible(polys,nvars,npars);
+        if (native) {
+            dixon_debug_log("  Using native bivariate Step 4 with checked complement compression...\n");
+            dixon_bivariate_native_selected_det(result,matrix,size,recursive->rows,
+                                                recursive->cols,recursive->y_degree,polys);
+        } else {
+            slong content=extract_fq_matrix_x_content(matrix,size,npars);
+            extracted_power+=content;
+            if (content>0) dixon_info_log("  Pre-determinant row/column x-content: x^%ld\n",content);
+            slong bound=compute_fq_dixon_resultant_degree_bound(polys,nvars+1,nvars,npars);
+            dixon_debug_log("  Degree bound: %ld\n",bound);
+            compute_fq_coefficient_matrix_det(result,matrix,size,npars,polys[0].ctx,method,bound);
+        }
+        dr_mpoly_multiply_by_x_power_inplace(result,extracted_power);
+        if (extracted_power>0) {
+            const char *name=par_names && par_names[0] ? par_names[0] : "x";
+            dixon_info_log("  Restored extracted %s-content: %s^%ld\n",name,name,extracted_power);
+        }
+    }
+    dixon_maybe_print_step_method_time("Step 4",method,
+        (double)(clock()-cpu_start)/CLOCKS_PER_SEC,get_wall_time()-wall_start);
+    dr_mpoly_make_monic(result);
+}
+
+void dixon_compute_dense_resultant(unified_mpoly_struct *result,
+    unified_mpoly_struct **matrix, slong size, unified_mpoly_struct *polys,
+    slong nvars, slong npars, slong extracted_power, char **par_names,
+    const dixon_recursive_det_options *recursive)
+{
+    dixon_step4_resultant(result,matrix,NULL,NULL,size,polys,nvars,npars,
+                         extracted_power,NULL,recursive,par_names);
 }
 
 void fq_dixon_resultant(unified_mpoly_struct *result, unified_mpoly_struct *polys, slong nvars,
@@ -6406,94 +6483,23 @@ void fq_dixon_resultant(unified_mpoly_struct *result, unified_mpoly_struct *poly
     flint_free(rank_degrees);
 
     if (matrix_size > 0 && use_poly_matrix) {
-        dixon_info_log("\nStep 4: Compute resultant\n");
-        det_method_t coeff_method = dixon_global_method_step4 != -1
-            ? dixon_global_method_step4 : DET_METHOD_KRONECKER;
-        clock_t step4_cpu_start = clock();
-        double step4_wall_start = get_wall_time();
-        dixon_info_log("  Determinant method: %s\n",
-                       dixon_det_method_name(coeff_method));
-        fq_nmod_poly_t det_poly;
-        fq_nmod_poly_init(det_poly, polys[0].ctx);
-        if (g_dixon_mq_step4_schur && !mq_profile.size)
-            dixon_info_log("  MQ Step 4 Schur: no eligible complement profile; using original determinant backend\n");
-        if (use_prime_matrix)
-            dixon_mq_native_det(det_poly, prime_matrix, &mq_profile, polys[0].ctx);
-        else if (!dixon_mq_step4_try(det_poly, poly_matrix, &mq_profile, polys[0].ctx))
-            fq_nmod_poly_mat_det_iter(det_poly, poly_matrix, polys[0].ctx);
+        dixon_step4_resultant(result,NULL,
+            use_prime_matrix ? NULL : poly_matrix, use_prime_matrix ? prime_matrix : NULL,
+            matrix_size,polys,nvars,npars,extracted_x_power,&mq_profile,NULL,NULL);
         dixon_mq_step4_profile_clear(&mq_profile);
-        dr_mpoly_init(result, 0, 1, polys[0].ctx);
-        for (slong i = 0; i <= fq_nmod_poly_degree(det_poly, polys[0].ctx); i++) {
-            fq_nmod_t coeff;
-            fq_nmod_init(coeff, polys[0].ctx);
-            fq_nmod_poly_get_coeff(coeff, det_poly, i, polys[0].ctx);
-            if (!fq_nmod_is_zero(coeff, polys[0].ctx)) {
-                slong par_exp[1] = {i + extracted_x_power};
-                dr_mpoly_add_term_fast(result, NULL, par_exp, coeff);
-            }
-            fq_nmod_clear(coeff, polys[0].ctx);
-        }
-        fq_nmod_poly_clear(det_poly, polys[0].ctx);
         if (use_prime_matrix) nmod_poly_mat_clear(prime_matrix);
-        else fq_nmod_poly_mat_clear(poly_matrix, polys[0].ctx);
-        dixon_maybe_print_step_method_time("Step 4", coeff_method,
-                                           (double) (clock() - step4_cpu_start) / CLOCKS_PER_SEC,
-                                           get_wall_time() - step4_wall_start);
+        else fq_nmod_poly_mat_clear(poly_matrix,polys[0].ctx);
         if (g_dixon_verbose_level >= 1 && dr_mpoly_length(result) < 100) {
             dr_mpoly_print(result, "  Final Resultant");
         } else {
             dixon_info_log("  Final resultant too large to display (%ld terms)\n",
                            dr_mpoly_length(result));
         }
-        dr_mpoly_make_monic(result);
         if (g_dixon_verbose_level >= 1)
             print_resultant_summary(result, NULL, 0);
     } else if (matrix_size > 0) {
-        slong postselection_x_power =
-            extract_fq_matrix_x_content(coeff_matrix, matrix_size, npars);
-        extracted_x_power += postselection_x_power;
-        if (postselection_x_power > 0) {
-            dixon_info_log("  Pre-determinant row/column x-content: x^%ld\n",
-                           postselection_x_power);
-        }
-        dixon_info_log("\nStep 4: Compute resultant\n");
-        clock_t step4_cpu_start = clock();
-        double step4_wall_start = get_wall_time();
-        
-        slong res_deg_bound = compute_fq_dixon_resultant_degree_bound(polys, nvars+1, nvars, npars);
-        dixon_debug_log("  Degree bound: %ld\n", res_deg_bound);
-        
-        ulong field_size = 1;
-        for (slong i = 0; i < fq_nmod_ctx_degree(polys[0].ctx); i++) {
-            field_size *= fq_nmod_ctx_prime(polys[0].ctx);
-        }
-        
-        det_method_t coeff_method; // DET_METHOD_RECURSIVE DET_METHOD_KRONECKER DET_METHOD_INTERPOLATION DET_METHOD_HUANG
-        #ifdef _OPENMP
-        if (npars > 1) {
-            coeff_method = DET_METHOD_INTERPOLATION;
-        } else 
-        #endif
-        if (matrix_size < 9) {
-            coeff_method = DET_METHOD_RECURSIVE;
-        } else {
-            coeff_method = DET_METHOD_KRONECKER;
-        }
-        //coeff_method = DET_METHOD_INTERPOLATION;
-        if (dixon_global_method_step4 != -1) {
-            coeff_method = dixon_global_method_step4;
-        }
-        dixon_info_log("  Determinant method: %s\n", dixon_det_method_name(coeff_method));
-        
-        compute_fq_coefficient_matrix_det(result, coeff_matrix, matrix_size,
-                                         npars, polys[0].ctx, coeff_method, res_deg_bound);
-        dr_mpoly_multiply_by_x_power_inplace(result, extracted_x_power);
-        if (extracted_x_power > 0)
-            dixon_info_log("  Restored extracted x-content: x^%ld\n", extracted_x_power);
-        dixon_maybe_print_step_method_time("Step 4",
-                                           coeff_method,
-                                           ((double)(clock() - step4_cpu_start) / CLOCKS_PER_SEC),
-                                           get_wall_time() - step4_wall_start);
+        dixon_compute_dense_resultant(result,coeff_matrix,matrix_size,polys,
+            nvars,npars,extracted_x_power,NULL,NULL);
 
         if (g_dixon_verbose_level >= 1 && dr_mpoly_length(result) < 100) {
             dr_mpoly_print(result, "  Final Resultant");
@@ -6502,7 +6508,6 @@ void fq_dixon_resultant(unified_mpoly_struct *result, unified_mpoly_struct *poly
                            dr_mpoly_length(result));
         }
 
-        dr_mpoly_make_monic(result);
         if (g_dixon_verbose_level >= 1) print_resultant_summary(result, NULL, 0);
         // Cleanup coefficient matrix
         for (slong i = 0; i < matrix_size; i++) {
@@ -6611,95 +6616,23 @@ void fq_dixon_resultant_with_names(unified_mpoly_struct *result, unified_mpoly_s
     flint_free(rank_degrees);
 
     if (matrix_size > 0 && use_poly_matrix) {
-        dixon_info_log("\nStep 4: Compute resultant\n");
-        det_method_t coeff_method = dixon_global_method_step4 != -1
-            ? dixon_global_method_step4 : DET_METHOD_KRONECKER;
-        clock_t step4_cpu_start = clock();
-        double step4_wall_start = get_wall_time();
-        dixon_info_log("  Determinant method: %s\n",
-                       dixon_det_method_name(coeff_method));
-        fq_nmod_poly_t det_poly;
-        fq_nmod_poly_init(det_poly, polys[0].ctx);
-        if (g_dixon_mq_step4_schur && !mq_profile.size)
-            dixon_info_log("  MQ Step 4 Schur: no eligible complement profile; using original determinant backend\n");
-        if (use_prime_matrix)
-            dixon_mq_native_det(det_poly, prime_matrix, &mq_profile, polys[0].ctx);
-        else if (!dixon_mq_step4_try(det_poly, poly_matrix, &mq_profile, polys[0].ctx))
-            fq_nmod_poly_mat_det_iter(det_poly, poly_matrix, polys[0].ctx);
+        dixon_step4_resultant(result,NULL,
+            use_prime_matrix ? NULL : poly_matrix, use_prime_matrix ? prime_matrix : NULL,
+            matrix_size,polys,nvars,npars,extracted_x_power,&mq_profile,NULL,par_names);
         dixon_mq_step4_profile_clear(&mq_profile);
-        dr_mpoly_init(result, 0, 1, polys[0].ctx);
-        for (slong i = 0; i <= fq_nmod_poly_degree(det_poly, polys[0].ctx); i++) {
-            fq_nmod_t coeff;
-            fq_nmod_init(coeff, polys[0].ctx);
-            fq_nmod_poly_get_coeff(coeff, det_poly, i, polys[0].ctx);
-            if (!fq_nmod_is_zero(coeff, polys[0].ctx)) {
-                slong par_exp[1] = {i + extracted_x_power};
-                dr_mpoly_add_term_fast(result, NULL, par_exp, coeff);
-            }
-            fq_nmod_clear(coeff, polys[0].ctx);
-        }
-        fq_nmod_poly_clear(det_poly, polys[0].ctx);
         if (use_prime_matrix) nmod_poly_mat_clear(prime_matrix);
-        else fq_nmod_poly_mat_clear(poly_matrix, polys[0].ctx);
-        dixon_maybe_print_step_method_time("Step 4", coeff_method,
-                                           (double) (clock() - step4_cpu_start) / CLOCKS_PER_SEC,
-                                           get_wall_time() - step4_wall_start);
+        else fq_nmod_poly_mat_clear(poly_matrix,polys[0].ctx);
         if (g_dixon_verbose_level >= 1 && dr_mpoly_length(result) < 100) {
             dr_mpoly_print_with_names(result, "  Final Resultant", NULL, par_names, gen_name, 0);
         } else {
             dixon_info_log("  Final resultant too large to display (%ld terms)\n",
                            dr_mpoly_length(result));
         }
-        dr_mpoly_make_monic(result);
         if (g_dixon_verbose_level >= 1)
             print_resultant_summary(result, par_names, npars);
     } else if (matrix_size > 0) {
-        slong postselection_x_power =
-            extract_fq_matrix_x_content(coeff_matrix, matrix_size, npars);
-        extracted_x_power += postselection_x_power;
-        if (postselection_x_power > 0) {
-            const char *content_var = (par_names && par_names[0]) ? par_names[0] : "x";
-            dixon_info_log("  Pre-determinant row/column %s-content: %s^%ld\n",
-                           content_var, content_var, postselection_x_power);
-        }
-        dixon_info_log("\nStep 4: Compute resultant\n");
-        clock_t step4_cpu_start = clock();
-        double step4_wall_start = get_wall_time();
-        
-        slong res_deg_bound = compute_fq_dixon_resultant_degree_bound(polys, nvars+1, nvars, npars);
-        dixon_debug_log("  Degree bound: %ld\n", res_deg_bound);
-        
-        det_method_t coeff_method;
-        #ifdef _OPENMP
-        if (npars > 1) {
-            coeff_method = DET_METHOD_INTERPOLATION;
-            if (matrix_size < 10) {
-                coeff_method = DET_METHOD_RECURSIVE;
-            }
-        } else 
-        #endif
-        if (matrix_size < 10) {
-            coeff_method = DET_METHOD_RECURSIVE;
-        } else {
-            coeff_method = DET_METHOD_KRONECKER;
-        }
-        if (dixon_global_method_step4 != -1) {
-            coeff_method = dixon_global_method_step4;
-        }
-        dixon_info_log("  Determinant method: %s\n", dixon_det_method_name(coeff_method));
-        
-        compute_fq_coefficient_matrix_det(result, coeff_matrix, matrix_size,
-                                         npars, polys[0].ctx, coeff_method, res_deg_bound);
-        dr_mpoly_multiply_by_x_power_inplace(result, extracted_x_power);
-        if (extracted_x_power > 0) {
-            const char *content_var = (par_names && par_names[0]) ? par_names[0] : "x";
-            dixon_info_log("  Restored extracted %s-content: %s^%ld\n",
-                           content_var, content_var, extracted_x_power);
-        }
-        dixon_maybe_print_step_method_time("Step 4",
-                                           coeff_method,
-                                           ((double)(clock() - step4_cpu_start) / CLOCKS_PER_SEC),
-                                           get_wall_time() - step4_wall_start);
+        dixon_compute_dense_resultant(result,coeff_matrix,matrix_size,polys,
+            nvars,npars,extracted_x_power,par_names,NULL);
 
         if (g_dixon_verbose_level >= 1 && dr_mpoly_length(result) < 100) {
             dr_mpoly_print_with_names(result, "  Final Resultant", NULL, par_names, gen_name, 0);
@@ -6707,7 +6640,6 @@ void fq_dixon_resultant_with_names(unified_mpoly_struct *result, unified_mpoly_s
             dixon_info_log("  Final resultant too large to display (%ld terms)\n",
                            dr_mpoly_length(result));
         }
-        dr_mpoly_make_monic(result);
         if (g_dixon_verbose_level >= 1) print_resultant_summary(result, par_names, npars);
         
         for (slong i = 0; i < matrix_size; i++) {

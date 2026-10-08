@@ -1109,3 +1109,10 @@ test-mq-fq: $(BUILD_DIR)/mq_fq_test
 
 $(BUILD_DIR)/mq_fq_test: $(SRC_DIR)/test/mq_fq_test.c $(SRC_DIR)/test/mq_gf2n_test.c $(SRC_DIR)/dixon/dixon_flint.c $(wildcard $(SRC_DIR)/dixon/dixon_fq*.h) $(SRC_DIR)/mq_fq_coeffs.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_fq_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-dixon-pipeline
+test-dixon-pipeline: $(BUILD_DIR)/dixon_pipeline_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=2 ./$(BUILD_DIR)/dixon_pipeline_test
+
+$(BUILD_DIR)/dixon_pipeline_test: $(SRC_DIR)/test/dixon_pipeline_test.c $(SRC_DIR)/test/dixon_recursive_native_test.c $(SRC_DIR)/dixon/dixon_recursive.c $(SRC_DIR)/dixon/dixon_pipeline.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon_pipeline_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)

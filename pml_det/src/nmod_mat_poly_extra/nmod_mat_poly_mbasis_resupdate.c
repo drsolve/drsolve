@@ -4,6 +4,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 #include "nmod_mat_poly.h"
 #include "nmod_mat_extra.h"
@@ -161,9 +164,28 @@ _resupdate_batched_kernel_update(nmod_mat_struct * coeffs,
     slong chunk = ((slong) 1 << 20) / (rank * ncols);
     if (chunk < 1)
         chunk = 1;
+#ifdef _OPENMP
+    const slong maxchunk = chunk;
+#endif
     if (chunk > nb)
         chunk = nb;
 
+#ifdef _OPENMP
+    int workers = 1;
+    if (!omp_in_parallel()) {
+        /* Coefficient blocks update disjoint matrices. Keep enough work in
+         * each product to amortize packing and OpenMP scheduling. */
+        double work = (double)nb * rank * nullity * ncols;
+        workers = (int)FLINT_MIN(omp_get_max_threads(), FLINT_MIN(nb,maxchunk));
+        while (workers > 1 && work / workers < 262144.0) workers--;
+        /* Split the existing scratch budget between workers. */
+        chunk = FLINT_MIN(maxchunk / workers, (nb + workers - 1) / workers);
+    }
+#endif
+    slong products = 0;
+#ifdef _OPENMP
+    #pragma omp parallel for num_threads(workers) if(workers > 1) schedule(static) reduction(+:products)
+#endif
     for (slong start = d_lo; start < d_hi; start += chunk)
     {
         const slong len = FLINT_MIN(chunk, d_hi - start);
@@ -179,8 +201,7 @@ _resupdate_batched_kernel_update(nmod_mat_struct * coeffs,
                               ncols);
 
         nmod_mat_mul(prod, nsbas, gath);
-        if (gemm_counter)
-            (*gemm_counter)++;
+        products++;
 
         for (slong dd = 0; dd < len; dd++)
             for (slong i = 0; i < nullity; i++)
@@ -193,6 +214,7 @@ _resupdate_batched_kernel_update(nmod_mat_struct * coeffs,
         nmod_mat_clear(prod);
         nmod_mat_clear(gath);
     }
+    if (gemm_counter) *gemm_counter += products;
 }
 
 void

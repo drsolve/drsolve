@@ -22,7 +22,7 @@
  */
 
 #include "dixon_recursive.h"
-#include "dixon_native.h"
+#include "dixon_pipeline.h"
 
 double get_wall_time(void);
 
@@ -582,24 +582,6 @@ static int fast_dixon_parallel_threads_for_level(slong pos,
     (void) num_f_blocks;
     return 0;
 #endif
-}
-
-static const char *fast_dixon_det_method_name(det_method_t method)
-{
-    switch (method) {
-        case DET_METHOD_RECURSIVE:
-            return "minor expansion";
-        case DET_METHOD_KRONECKER:
-            return "HNF";
-        case DET_METHOD_INTERPOLATION:
-            return "interpolation";
-        case DET_METHOD_HUANG:
-            return "sparse interpolation";
-        case DET_METHOD_KRONECKER_NMOD:
-            return "Bareiss";
-        default:
-            return "default";
-    }
 }
 
 static void fast_dixon_info_log(const char *fmt, ...)
@@ -1853,29 +1835,6 @@ static void fast_dixon_build_matrix(fast_dixon_matrix_t *out,
     fast_dixon_clear_split_coeffs(coeffs, npolys, current_degree);
 }
 
-static det_method_t choose_fast_dixon_det_method(slong matrix_size, slong npars)
-{
-    det_method_t coeff_method;
-
-#ifdef _OPENMP
-    if (npars > 1) {
-        coeff_method = DET_METHOD_INTERPOLATION;
-    } else
-#endif
-    if (matrix_size < 9) {
-        coeff_method = DET_METHOD_RECURSIVE;
-    } else {
-        coeff_method = DET_METHOD_KRONECKER;
-    }
-
-    if (dixon_global_method_step4 != -1) {
-        coeff_method = dixon_global_method_step4;
-    }
-    fast_dixon_info_log("  Determinant method: %s\n", fast_dixon_det_method_name(coeff_method));
-
-    return coeff_method;
-}
-
 static void clear_fast_dixon_coeff_matrix(unified_mpoly_struct **coeff_matrix, slong matrix_size)
 {
     if (coeff_matrix == NULL) {
@@ -2080,6 +2039,8 @@ static void fast_dixon_print_profile_report(const fast_dixon_matrix_t *full_matr
 static void fast_dixon_extract_square_submatrix(unified_mpoly_struct ***coeff_matrix_out,
                                                 slong *matrix_size_out,
                                                 fast_dixon_matrix_t *full_matrix, slong npars,
+                                                const unified_mpoly_struct *polys, slong nvars,
+                                                const slong *variable_degrees,
                                                 slong **selected_rows_out,
                                                 slong **selected_cols_out)
 {
@@ -2089,8 +2050,6 @@ static void fast_dixon_extract_square_submatrix(unified_mpoly_struct ***coeff_ma
     slong *trimmed_cols = NULL;
     slong *row_idx_array = NULL;
     slong *col_idx_array = NULL;
-    slong num_rows = 0;
-    slong num_cols = 0;
     slong submat_rank = 0;
     slong trimmed_nrows = 0;
     slong trimmed_ncols = 0;
@@ -2174,53 +2133,30 @@ static void fast_dixon_extract_square_submatrix(unified_mpoly_struct ***coeff_ma
     step3_wall_start = get_wall_time();
     rank_select_start = get_wall_time();
     fast_dixon_debug_log("  Select maximal-rank submatrix from trimmed support...\n");
-    if (npars == 0) {
-        fast_dixon_debug_log("  Using scalar specialization for rank selection...\n");
-        fq_nmod_mat_t eval_mat;
-        fq_nmod_mat_init(eval_mat, trimmed_nrows, trimmed_ncols, full_matrix->ctx);
-
-        for (slong i = 0; i < trimmed_nrows; i++) {
-            for (slong j = 0; j < trimmed_ncols; j++) {
-                unified_mpoly_struct *entry = trimmed_grid[i][j];
-                if (entry != NULL && dr_mpoly_length(entry) > 0) {
-                    DR_MPOLY_TERM(term_10, entry, 0);
-                    fq_nmod_set(fq_nmod_mat_entry(eval_mat, i, j), term_10.coeff, full_matrix->ctx);
-                } else {
-                    fq_nmod_zero(fq_nmod_mat_entry(eval_mat, i, j), full_matrix->ctx);
-                }
-            }
-        }
-
-        submat_rank = fq_nmod_mat_rank(eval_mat, full_matrix->ctx);
-        submat_rank = FLINT_MIN(submat_rank, FLINT_MIN(trimmed_nrows, trimmed_ncols));
-
-        if (submat_rank > 0) {
-            row_idx_array = (slong *) flint_malloc((size_t) submat_rank * sizeof(slong));
-            col_idx_array = (slong *) flint_malloc((size_t) submat_rank * sizeof(slong));
-            for (slong i = 0; i < submat_rank; i++) {
-                row_idx_array[i] = i;
-                col_idx_array[i] = i;
-            }
-        }
-
-        fq_nmod_mat_clear(eval_mat, full_matrix->ctx);
-        num_rows = submat_rank;
-        num_cols = submat_rank;
-    } else {
-        fast_dixon_debug_log("  Using polynomial specialization heuristics for rank selection...\n");
-        find_fq_optimal_maximal_rank_submatrix(trimmed_grid,
-                                               trimmed_nrows,
-                                               trimmed_ncols,
-                                               &row_idx_array,
-                                               &col_idx_array,
-                                               &num_rows,
-                                               &num_cols,
-                                               npars,
-                                               g_dixon_fast_use_ksy_precondition
-                                                   ? g_dixon_fast_ksy_constant_col
-                                                   : -1);
-        submat_rank = FLINT_MIN(num_rows, num_cols);
+    /* Rows use radices (v+1)*d_v, columns (nvars-v)*d_v.
+     * Preserve the raw-to-trimmed map for the native Step 4 certificate. */
+    monom_t *row_labels=flint_malloc(trimmed_nrows*sizeof(monom_t));
+    monom_t *col_labels=flint_malloc(trimmed_ncols*sizeof(monom_t));
+    slong *row_exp=flint_malloc(trimmed_nrows*nvars*sizeof(slong));
+    slong *col_exp=flint_malloc(trimmed_ncols*nvars*sizeof(slong));
+    slong *counts=flint_malloc(nvars*sizeof(slong));
+    for (slong v=0; v<nvars; v++) counts[v]=(v+1)*variable_degrees[v];
+    for (slong i=0; i<trimmed_nrows; i++) {
+        row_labels[i].exp=row_exp+i*nvars; row_labels[i].idx=i;
+        fast_dixon_decode_rectangular_index(trimmed_rows[i],counts,nvars,row_labels[i].exp);
     }
+    for (slong v=0; v<nvars; v++) counts[v]=(nvars-v)*variable_degrees[v];
+    for (slong j=0; j<trimmed_ncols; j++) {
+        col_labels[j].exp=col_exp+j*nvars; col_labels[j].idx=j;
+        fast_dixon_decode_rectangular_index(trimmed_cols[j],counts,nvars,col_labels[j].exp);
+    }
+    long *rank_degrees=dixon_polynomial_degrees(polys,nvars+1,nvars);
+    dixon_select_submatrix(trimmed_grid,trimmed_nrows,trimmed_ncols,
+        row_labels,col_labels,nvars,npars,rank_degrees,nvars+1,
+        g_dixon_fast_use_ksy_precondition ? g_dixon_fast_ksy_constant_col : -1,
+        full_matrix->ctx,&row_idx_array,&col_idx_array,&submat_rank);
+    flint_free(rank_degrees); flint_free(counts);
+    flint_free(row_exp); flint_free(col_exp); flint_free(row_labels); flint_free(col_labels);
     rank_select_elapsed = get_wall_time() - rank_select_start;
 
     if (submat_rank <= 0) {
@@ -2375,37 +2311,16 @@ static void fq_dixon_fast_resultant_common(unified_mpoly_struct *result,
     }
 
     fast_dixon_extract_square_submatrix(&coeff_matrix, &matrix_size, &full_matrix, npars,
+                                         polys, nvars, degrees,
                                          &selected_rows, &selected_cols);
 
     if (matrix_size > 0) {
-        det_method_t coeff_method;
-        slong res_deg_bound;
-        clock_t step4_cpu_start;
-        double step4_wall_start;
-
-        fast_dixon_info_log("\nStep 4: Compute resultant\n");
-        res_deg_bound = compute_fq_dixon_resultant_degree_bound(polys, nvars + 1, nvars, npars);
-        fast_dixon_debug_log("  Degree bound: %ld\n", res_deg_bound);
-        fast_dixon_debug_log("  Compute determinant from the recursive coefficient matrix...\n");
-        coeff_method = choose_fast_dixon_det_method(matrix_size, npars);
-        step4_cpu_start = clock();
-        step4_wall_start = get_wall_time();
-
-        if (coeff_method == DET_METHOD_KRONECKER &&
-            dixon_bivariate_native_eligible(polys,nvars,npars) &&
-            fast_dixon_use_native(npars,polys[0].ctx)) {
-            fast_dixon_debug_log("  Using native bivariate Step 4 with checked complement compression...\n");
-            dixon_bivariate_native_selected_det(result,coeff_matrix,matrix_size,
-                                                selected_rows,selected_cols,degrees[1],polys);
-        } else {
-            compute_fq_coefficient_matrix_det(result, coeff_matrix, matrix_size,
-                                              npars, polys[0].ctx, coeff_method, res_deg_bound);
-        }
-        dixon_maybe_print_step_method_time("Step 4",
-                                           coeff_method,
-                                           ((double) (clock() - step4_cpu_start) / CLOCKS_PER_SEC),
-                                           get_wall_time() - step4_wall_start);
-        dr_mpoly_make_monic(result);
+        dixon_recursive_det_options native = {
+            selected_rows, selected_cols, nvars>1 ? degrees[1] : 0,
+            fast_dixon_use_native(npars,polys[0].ctx)
+        };
+        dixon_compute_dense_resultant(result,coeff_matrix,matrix_size,polys,
+                                     nvars,npars,0,par_names,&native);
         if (g_dixon_verbose_level >= 1) print_resultant_summary(result, par_names, npars);
 
         if (g_dixon_verbose_level >= 1 && dr_mpoly_length(result) < 100) {

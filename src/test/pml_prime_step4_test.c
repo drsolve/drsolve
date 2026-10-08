@@ -1,9 +1,14 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include <assert.h>
 #include <stdlib.h>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 #include <flint/nmod_poly_mat.h>
 #include "../../pml_det/pml_det.h"
 #include "../../pml_det/src/nmod_poly_mat_multiply.h"
+#include "../../pml_det/src/nmod_mat_poly.h"
+#include "../../pml_det/src/nmod_poly_mat_utils.h"
 
 static void window_reference(nmod_poly_mat_t out, const nmod_poly_mat_t a,
                              const nmod_poly_mat_t b, slong start, slong count)
@@ -74,6 +79,65 @@ static void windows(flint_rand_t state)
     nmod_poly_mat_clear(b); nmod_poly_mat_clear(a);
 }
 
+/* Large enough to enter the parallel dispatch, with coefficient-level
+ * references and both direct and offset-window input/output aliasing. */
+static void parallel_windows(flint_rand_t state)
+{
+    const ulong primes[] = {257,65537,998244353,
+#if FLINT_BITS == 64
+        UWORD(18446744069414584321),
+#endif
+    };
+#ifdef _OPENMP
+    int saved = omp_get_max_threads();
+#endif
+    for (size_t p=0;p<sizeof(primes)/sizeof(*primes);p++) {
+        nmod_poly_mat_t a,b,c,ref,copy,window;
+        nmod_poly_mat_init(a,24,24,primes[p]);
+        nmod_poly_mat_init(b,24,24,primes[p]);
+        nmod_poly_mat_init(c,24,24,primes[p]);
+        nmod_poly_mat_init(ref,24,24,primes[p]);
+        nmod_poly_mat_init(copy,25,25,primes[p]);
+        nmod_poly_mat_window_init(window,copy,1,1,25,25);
+        nmod_poly_mat_randtest(a,state,65);
+        nmod_poly_mat_randtest(b,state,81);
+        window_reference(ref,a,b,17,73);
+        for (int threads=1;threads<=4;threads*=2) {
+#ifdef _OPENMP
+            omp_set_num_threads(threads);
+#endif
+            assert(drsolve_nmod_poly_mat_mul_window_ntt(c,a,b,17,73));
+            assert(nmod_poly_mat_equal(c,ref));
+            nmod_poly_mat_set(c,a);
+            assert(drsolve_nmod_poly_mat_mul_window_ntt(c,c,b,17,73));
+            assert(nmod_poly_mat_equal(c,ref));
+            nmod_poly_mat_set(window,b);
+            assert(drsolve_nmod_poly_mat_mul_window_ntt(window,a,window,17,73));
+            assert(nmod_poly_mat_equal(window,ref));
+        }
+#ifdef _OPENMP
+        /* Existing teams must not recursively create an NTT worker team. */
+        #pragma omp parallel num_threads(2)
+        {
+            #pragma omp single
+            {
+                assert(drsolve_nmod_poly_mat_mul_window_ntt(c,a,b,17,73));
+                assert(nmod_poly_mat_equal(c,ref));
+            }
+        }
+#endif
+        window_reference(ref,a,a,17,73);
+        assert(drsolve_nmod_poly_mat_mul_window_ntt(a,a,a,17,73));
+        assert(nmod_poly_mat_equal(a,ref));
+        nmod_poly_mat_window_clear(window); nmod_poly_mat_clear(copy);
+        nmod_poly_mat_clear(ref); nmod_poly_mat_clear(c);
+        nmod_poly_mat_clear(b); nmod_poly_mat_clear(a);
+    }
+#ifdef _OPENMP
+    omp_set_num_threads(saved);
+#endif
+}
+
 static void geometric_bounds(flint_rand_t state)
 {
     nmod_poly_mat_t a,b,c,ref;
@@ -90,6 +154,61 @@ static void geometric_bounds(flint_rand_t state)
     }
     nmod_poly_mat_clear(ref); nmod_poly_mat_clear(c);
     nmod_poly_mat_clear(b); nmod_poly_mat_clear(a);
+}
+
+/* Compare parallel coefficient-block updates with the serial basis, and
+ * independently check that the basis annihilates the input to the order. */
+static void parallel_mbasis(flint_rand_t state)
+{
+#ifdef _OPENMP
+    int saved = omp_get_max_threads();
+#endif
+    const ulong primes[] = {19,257,65537};
+    for (int run=0;run<6;run++) {
+        const slong m=80,n=40,order=16;
+        ulong prime=primes[run%3];
+        nmod_poly_mat_t input,ref,got,product;
+        nmod_mat_poly_t matp,app;
+        slong shifts[80],expected[80];
+        nmod_poly_mat_init(input,m,n,prime);
+        nmod_poly_mat_init(ref,m,m,prime);
+        nmod_poly_mat_init(got,m,m,prime);
+        nmod_poly_mat_init(product,m,n,prime);
+        nmod_poly_mat_randtest(input,state,order);
+        if (run>=3) {
+            for (slong j=0;j<n;j++) {
+                nmod_poly_zero(nmod_poly_mat_entry(input,0,j));
+                nmod_poly_set(nmod_poly_mat_entry(input,1,j),nmod_poly_mat_entry(input,2,j));
+            }
+        }
+        nmod_mat_poly_init(matp,m,n,prime);
+        nmod_mat_poly_set_trunc_from_poly_mat(matp,input,order);
+        nmod_mat_poly_init(app,m,m,prime);
+        for (int threads=1;threads<=4;threads*=2) {
+#ifdef _OPENMP
+            omp_set_num_threads(threads);
+#endif
+            for (slong i=0;i<m;i++) shifts[i]=run>=3 ? i%7-3 : 0;
+            nmod_mat_poly_mbasis_resupdate(app,shifts,matp,order);
+            nmod_poly_mat_set_from_mat_poly(got,app);
+            if (threads==1) {
+                nmod_poly_mat_set(ref,got);
+                for (slong i=0;i<m;i++) expected[i]=shifts[i];
+            } else {
+                assert(nmod_poly_mat_equal(got,ref));
+                for (slong i=0;i<m;i++) assert(expected[i]==shifts[i]);
+            }
+        }
+        nmod_poly_mat_mul_classical(product,got,input);
+        nmod_poly_mat_truncate(product,order);
+        assert(nmod_poly_mat_is_zero(product));
+        nmod_mat_poly_clear(app); nmod_mat_poly_clear(matp);
+        nmod_poly_mat_clear(product); nmod_poly_mat_clear(got);
+        nmod_poly_mat_clear(ref); nmod_poly_mat_clear(input);
+    }
+#ifdef _OPENMP
+    omp_set_num_threads(saved);
+#endif
 }
 
 static void determinants(flint_rand_t state)
@@ -127,8 +246,8 @@ static void determinants(flint_rand_t state)
 int main(void)
 {
     flint_rand_t state; flint_rand_init(state);
-    windows(state); geometric_bounds(state); determinants(state);
+    windows(state); parallel_windows(state); geometric_bounds(state); parallel_mbasis(state); determinants(state);
     flint_rand_clear(state);
-    puts("Prime Step 4: NTT windows/aliasing/fallback, geometric bounds, degree-order determinants PASS");
+    puts("Prime Step 4: NTT serial/parallel windows/aliasing/fallback, geometric bounds, parallel M-Basis, degree-order determinants PASS");
     return 0;
 }

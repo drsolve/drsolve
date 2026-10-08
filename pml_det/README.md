@@ -195,6 +195,23 @@ root availability, dimensions and workspace before writing the output. Transform
 field backend is changed. The existing geometric middle product now checks its
 input-degree assumptions before entering its reversal/interpolation code.
 
+With OpenMP enabled, NTT input transforms, pointwise matrix products, and
+output transforms share a worker team controlled by `--threads`. Each worker
+has private transform and matrix scratch. Small products stay serial, and
+calls inside an existing OpenMP team do not create another worker team. The
+worker count is also limited by transform length and the 256 MiB workspace
+budget, including per-worker scratch. Barriers finish all input reads before
+output writes, preserving in-place and shared-window multiplication. This
+parallelizes the products inside HNF/PMBasis; the dependent PMBasis recursion
+remains sequential.
+
+M-Basis kernel-row updates also distribute independent coefficient blocks
+across workers. Dispatch requires at least 262144 multiply-add terms per
+worker, keeps small updates serial, and avoids nested OpenMP teams. Workers
+share the existing gathered-pivot scratch budget instead of multiplying it
+by the thread count. Pivot-row shifts and the approximation-order loop remain
+sequential because later iterations depend on the updated residuals.
+
 For the LNZ determinant backend, matrices of 9--192 rows are stably sorted by
 increasing row degree before the first split, with the permutation sign restored
 and the input preserved. Already ordered matrices incur no copy. Sorting is a
@@ -214,9 +231,13 @@ Ablation switches (read by the bundled PML implementation):
 - `DRSOLVE_PML_DET_ROW_ORDER=legacy`: retain original row order.
 
 `make test-prime-step4` compares coefficient windows (including in-place and
-shared-storage outputs) against classical multiplication, tests unsupported
-transforms and geometric degree bounds, and compares complete determinants
-against FFLU over six prime fields, including singular and nonprimitive inputs.
+shared-storage outputs) against classical multiplication at one, two, and four
+threads, tests unsupported transforms and geometric degree bounds, and compares
+complete determinants against FFLU over six prime fields, including singular
+and nonprimitive inputs.
+M-Basis tests compare serial and parallel bases and shifted degrees, including
+rank-deficient inputs, and verify that the basis times the input vanishes
+modulo the requested power of the variable.
 The CMake/CTest equivalent is `drsolve_prime_step4` when bundled PML is enabled.
 For end-to-end result equality and alternating single-thread timing runs:
 

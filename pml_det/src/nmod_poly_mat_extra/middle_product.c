@@ -12,6 +12,9 @@
 
 #include <stdlib.h>
 #include <string.h>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 #include <flint/ulong_extras.h>
 #include <flint/nmod_mat.h>
 #include <flint/nmod_poly.h>
@@ -82,7 +85,6 @@ int drsolve_nmod_poly_mat_mul_window_ntt(nmod_poly_mat_t C,
     }
     ulong *roots = flint_malloc((size_t)len*sizeof(ulong));
     ulong *inverse = flint_malloc((size_t)len*sizeof(ulong));
-    ulong *tmp = flint_malloc((size_t)len*sizeof(ulong));
     ulong *av = flint_malloc(na*len*sizeof(ulong));
     ulong *bv = flint_malloc(nb*len*sizeof(ulong));
     ulong *cv = flint_malloc(nc*len*sizeof(ulong));
@@ -92,43 +94,77 @@ int drsolve_nmod_poly_mat_mul_window_ntt(nmod_poly_mat_t C,
         roots[i] = nmod_mul(roots[i-1],root,mod);
         inverse[i] = nmod_mul(inverse[i-1],invroot,mod);
     }
-    for (int which = 0; which < 2; which++) {
-        const nmod_poly_mat_struct *M = which ? B : A;
-        ulong *values = which ? bv : av;
-        size_t stride = which ? nb : na;
-        for (slong i = 0; i < M->r; i++) for (slong j = 0; j < M->c; j++) {
-            const nmod_poly_struct *f = nmod_poly_mat_entry(M,i,j);
-            slong used = FLINT_MIN(f->length,hi);
-            if (used) memcpy(tmp,f->coeffs,(size_t)used*sizeof(ulong));
-            memset(tmp+used,0,(size_t)(len-used)*sizeof(ulong));
-            drsolve_ntt(tmp,len,roots,mod);
-            for (slong t = 0; t < len; t++) values[(size_t)t*stride+(size_t)i*M->c+j] = tmp[t];
-        }
+    /* Bound per-worker scratch as well as the shared transforms. Small
+     * products and calls inside an existing team stay serial. */
+#ifdef _OPENMP
+    int workers = 1;
+    if (!omp_in_parallel()) {
+        /* Amortize team overhead with at least 32K coefficient slots
+         * per worker; pointwise products add more work on wide matrices. */
+        size_t jobs = (na+nb+nc)*(size_t)len / 32768;
+        size_t scratch = na+nb+nc+(size_t)len;
+        size_t available = limit-(na+nb+nc+2)*(size_t)len;
+        workers = (int) FLINT_MAX(1, FLINT_MIN((size_t)omp_get_max_threads(),
+            FLINT_MIN((size_t)len, FLINT_MIN(jobs, available/scratch))));
     }
-    nmod_mat_t am, bm, cm;
-    nmod_mat_init(am,m,k,mod.n); nmod_mat_init(bm,k,n,mod.n); nmod_mat_init(cm,m,n,mod.n);
-    for (slong t = 0; t < len; t++) {
-        for (slong i = 0; i < m; i++)
-            memcpy(nmod_mat_entry_ptr(am,i,0),av+(size_t)t*na+(size_t)i*k,(size_t)k*sizeof(ulong));
-        for (slong i = 0; i < k; i++)
-            memcpy(nmod_mat_entry_ptr(bm,i,0),bv+(size_t)t*nb+(size_t)i*n,(size_t)n*sizeof(ulong));
-        nmod_mat_mul(cm,am,bm);
-        for (slong i = 0; i < m; i++)
-            memcpy(cv+(size_t)t*nc+(size_t)i*n,nmod_mat_entry_ptr(cm,i,0),(size_t)n*sizeof(ulong));
-    }
-    nmod_mat_clear(cm); nmod_mat_clear(bm); nmod_mat_clear(am);
-    flint_free(bv); flint_free(av);
+#endif
     ulong scale = nmod_inv((ulong)len,mod);
     slong outlen = FLINT_MIN(count,plen-start);
-    for (slong i = 0; i < m; i++) for (slong j = 0; j < n; j++) {
-        for (slong t = 0; t < len; t++) tmp[t] = cv[(size_t)t*nc+(size_t)i*n+j];
-        drsolve_ntt(tmp,len,inverse,mod);
-        nmod_poly_struct *f = nmod_poly_mat_entry(C,i,j);
-        nmod_poly_fit_length(f,outlen);
-        for (slong t = 0; t < outlen; t++) f->coeffs[t] = nmod_mul(tmp[start+t],scale,mod);
-        f->length = outlen; _nmod_poly_normalise(f);
+#ifdef _OPENMP
+    #pragma omp parallel num_threads(workers) if(workers > 1)
+#endif
+    {
+        ulong *tmp = flint_malloc((size_t)len*sizeof(ulong));
+        nmod_mat_t am, bm, cm;
+        nmod_mat_init(am,m,k,mod.n);
+        nmod_mat_init(bm,k,n,mod.n);
+        nmod_mat_init(cm,m,n,mod.n);
+        for (int which = 0; which < 2; which++) {
+            const nmod_poly_mat_struct *M = which ? B : A;
+            ulong *values = which ? bv : av;
+            size_t stride = which ? nb : na;
+#ifdef _OPENMP
+            #pragma omp for schedule(static)
+#endif
+            for (slong entry = 0; entry < (slong)stride; entry++) {
+                const nmod_poly_struct *f = nmod_poly_mat_entry(M,entry/M->c,entry%M->c);
+                slong used = FLINT_MIN(f->length,hi);
+                if (used) memcpy(tmp,f->coeffs,(size_t)used*sizeof(ulong));
+                memset(tmp+used,0,(size_t)(len-used)*sizeof(ulong));
+                drsolve_ntt(tmp,len,roots,mod);
+                for (slong t = 0; t < len; t++) values[(size_t)t*stride+entry] = tmp[t];
+            }
+        }
+#ifdef _OPENMP
+        #pragma omp for schedule(static)
+#endif
+        for (slong t = 0; t < len; t++) {
+            for (slong i = 0; i < m; i++)
+                memcpy(nmod_mat_entry_ptr(am,i,0),av+(size_t)t*na+(size_t)i*k,(size_t)k*sizeof(ulong));
+            for (slong i = 0; i < k; i++)
+                memcpy(nmod_mat_entry_ptr(bm,i,0),bv+(size_t)t*nb+(size_t)i*n,(size_t)n*sizeof(ulong));
+            nmod_mat_mul(cm,am,bm);
+            for (slong i = 0; i < m; i++)
+                memcpy(cv+(size_t)t*nc+(size_t)i*n,nmod_mat_entry_ptr(cm,i,0),(size_t)n*sizeof(ulong));
+        }
+        /* The barriers above finish all input reads before any output is
+         * changed, including when C aliases A/B or a window of either. */
+#ifdef _OPENMP
+        #pragma omp for schedule(static)
+#endif
+        for (slong entry = 0; entry < (slong)nc; entry++) {
+            for (slong t = 0; t < len; t++) tmp[t] = cv[(size_t)t*nc+entry];
+            drsolve_ntt(tmp,len,inverse,mod);
+            nmod_poly_struct *f = nmod_poly_mat_entry(C,entry/n,entry%n);
+            nmod_poly_fit_length(f,outlen);
+            for (slong t = 0; t < outlen; t++) f->coeffs[t] = nmod_mul(tmp[start+t],scale,mod);
+            f->length = outlen; _nmod_poly_normalise(f);
+        }
+        nmod_mat_clear(cm); nmod_mat_clear(bm); nmod_mat_clear(am);
+        flint_free(tmp);
     }
-    flint_free(cv); flint_free(tmp); flint_free(inverse); flint_free(roots);
+    flint_free(bv); flint_free(av); flint_free(cv);
+    flint_free(inverse); flint_free(roots);
     return 1;
 }
 
