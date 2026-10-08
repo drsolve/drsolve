@@ -3,6 +3,18 @@
 #ifndef GF2N_MPOLY_SPARSE_H
 #define GF2N_MPOLY_SPARSE_H
 
+/* FLINT 3.6 has no mpoly_monomial_add_any_bits helper. Product planning
+   reserves a guard bit per exponent, so these additions cannot overflow
+   into the next packed field. Multi-limb exponents still require carry. */
+static inline void gf2n_monomial_add(ulong *out, const ulong *a,
+    const ulong *b, slong N, flint_bitcnt_t bits)
+{
+    if (bits <= FLINT_BITS)
+        mpoly_monomial_add(out, a, b, N);
+    else
+        mpoly_monomial_add_mp(out, a, b, N);
+}
+
 static flint_bitcnt_t gf2n_product_bits(const ulong *a, slong alen,
     flint_bitcnt_t abits, const ulong *b, slong blen, flint_bitcnt_t bbits,
     const mpoly_ctx_t ctx, ulong *array_size, ulong *main_size)
@@ -116,7 +128,7 @@ int FIELD##_mpoly_mul_sparse(FIELD##_mpoly_t res, \
     slong len = x->length; \
     for (slong i = 0; i < len; ++i) { \
         heap[i] = (gf2n_product_heap_entry){i, 0, keys + N*i}; \
-        mpoly_monomial_add_any_bits(heap[i].exp, xe + N*i, ye, N, bits); \
+        gf2n_monomial_add(heap[i].exp, xe + N*i, ye, N, bits); \
     } \
     for (slong i = len / 2; i-- > 0;) gf2n_heap_sift_down(heap, len, i, N, mask); \
     FIELD##_mpoly_t out; \
@@ -131,7 +143,7 @@ int FIELD##_mpoly_mul_sparse(FIELD##_mpoly_t res, \
             coeff = ADD(coeff, product); \
             if (++j < y->length) { \
                 heap[0].col = j; \
-                mpoly_monomial_add_any_bits(heap[0].exp, xe + N*i, ye + N*j, N, bits); \
+                gf2n_monomial_add(heap[0].exp, xe + N*i, ye + N*j, N, bits); \
             } else { heap[0] = heap[--len]; } \
             if (len) gf2n_heap_sift_down(heap, len, 0, N, mask); \
         } while (len && mpoly_monomial_equal(exp, heap[0].exp, N)); \
