@@ -597,6 +597,23 @@ list(APPEND _drsolve_deps ${_sys_libs})
 # ============================================================
 # Math source list  (shared between library and exe targets)
 # ============================================================
+# Included implementation fragments; shared by all math targets and kept
+# visible to CMake/IDE source lists without compiling them independently.
+set(MATH_INTERNAL_HEADERS
+  src/determinant/gf28_minor_dp.h
+  src/determinant/gf28_poly_mat_det.h
+  src/determinant/mq_fq_layout.h
+  src/determinant/mq_gf2n_layout.h
+  src/determinant/mq_gf2n_template.h
+  src/dixon/dixon_fq_projection.h
+  src/dixon/dixon_fq_schur.h
+  src/dixon/dixon_gf2n_projection.h
+  src/dixon/dixon_gf2n_schur.h
+  src/dixon/dixon_gf2n_schur_template.h
+  src/field/gf2n_mpoly_sparse.h
+  src/mq_fq_coeffs.h
+)
+
 set(MATH_SOURCES
   src/dixon/dixon_complexity.c
   src/dixon/dixon_recursive.c
@@ -630,6 +647,7 @@ set(MATH_SOURCES
   src/solver/polynomial_system_solver.c
   src/solver/quotient_solver.c
   src/solver/rational_system_solver.c
+  ${MATH_INTERNAL_HEADERS}
 )
 
 # Convenience function: apply standard settings to a drsolve target
