@@ -1081,3 +1081,31 @@ $(BUILD_DIR)/quotient_solver_test: $(SRC_DIR)/test/quotient_solver_test.c $(SRC_
 .PHONY: test-quotient
 test-quotient: $(BUILD_DIR)/quotient_solver_test
 	./$(BUILD_DIR)/quotient_solver_test
+
+$(BUILD_DIR)/gf2n_sparse_mpoly_test: $(SRC_DIR)/test/gf2n_sparse_mpoly_test.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+.PHONY: test-gf2n-sparse
+test-gf2n-sparse: $(BUILD_DIR)/gf2n_sparse_mpoly_test
+	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/gf2n_sparse_mpoly_test
+
+$(BUILD_DIR)/byte_poly_mat_det_test: $(SRC_DIR)/test/byte_poly_mat_det_test.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+.PHONY: test-byte-poly-det
+test-byte-poly-det: $(BUILD_DIR)/byte_poly_mat_det_test
+	./$(BUILD_DIR)/byte_poly_mat_det_test
+
+$(BUILD_DIR)/det_minor_dp_test: $(SRC_DIR)/determinant/gf28_minor_dp.h
+
+.PHONY: test-mq-gf2n
+test-mq-gf2n: $(BUILD_DIR)/mq_gf2n_test
+	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/mq_gf2n_test
+
+$(BUILD_DIR)/mq_gf2n_test: $(SRC_DIR)/test/mq_gf2n_test.c $(SRC_DIR)/dixon/dixon_flint.c $(wildcard $(SRC_DIR)/dixon/dixon_gf2n*.h) $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_gf2n_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-mq-fq
+test-mq-fq: $(BUILD_DIR)/mq_fq_test
+	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/mq_fq_test
+
+$(BUILD_DIR)/mq_fq_test: $(SRC_DIR)/test/mq_fq_test.c $(SRC_DIR)/test/mq_gf2n_test.c $(SRC_DIR)/dixon/dixon_flint.c $(wildcard $(SRC_DIR)/dixon/dixon_fq*.h) $(SRC_DIR)/mq_fq_coeffs.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_fq_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)

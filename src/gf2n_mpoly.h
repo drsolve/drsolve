@@ -258,6 +258,10 @@ void gf24_mpoly_set_coeff_ui_ui(gf24_mpoly_t poly, uint8_t c,
                                 const ulong *exp, const gf24_mpoly_ctx_t ctx);
 int gf24_mpoly_mul(gf24_mpoly_t res, const gf24_mpoly_t a, const gf24_mpoly_t b,
                    const gf24_mpoly_ctx_t ctx);
+/* Sparse heap multiplication; inputs must have canonical, sorted terms.
+ * Supports all FLINT monomial orders and multiword exponents; alias-safe. */
+int gf24_mpoly_mul_sparse(gf24_mpoly_t res, const gf24_mpoly_t a,
+                            const gf24_mpoly_t b, const gf24_mpoly_ctx_t ctx);
 int gf24_mpoly_mul_array(gf24_mpoly_t A, const gf24_mpoly_t B,
                          const gf24_mpoly_t C, const gf24_mpoly_ctx_t ctx);
 int gf24_mpoly_can_use_array_mul(const gf24_mpoly_t B, const gf24_mpoly_t C,
@@ -292,6 +296,10 @@ int gf28_mpoly_mul(gf28_mpoly_t res, const gf28_mpoly_t a, const gf28_mpoly_t b,
 int gf28_mpoly_mul_with_fqctx(gf28_mpoly_t res, const gf28_mpoly_t a,
                               const gf28_mpoly_t b, const gf28_mpoly_ctx_t ctx,
                               const fq_nmod_ctx_t fq_ctx);
+/* Sparse heap multiplication; inputs must have canonical, sorted terms.
+ * Supports all FLINT monomial orders and multiword exponents; alias-safe. */
+int gf28_mpoly_mul_sparse(gf28_mpoly_t res, const gf28_mpoly_t a,
+                            const gf28_mpoly_t b, const gf28_mpoly_ctx_t ctx);
 int gf28_mpoly_mul_array(gf28_mpoly_t A, const gf28_mpoly_t B,
                          const gf28_mpoly_t C, const gf28_mpoly_ctx_t ctx);
 int gf28_mpoly_can_use_array_mul(const gf28_mpoly_t B, const gf28_mpoly_t C,
@@ -334,6 +342,10 @@ void gf216_mpoly_set_coeff_ui_ui(gf216_mpoly_t poly, uint16_t c,
 
 int gf216_mpoly_mul(gf216_mpoly_t res, const gf216_mpoly_t a, const gf216_mpoly_t b, 
                     const gf216_mpoly_ctx_t ctx);
+/* Sparse heap multiplication; inputs must have canonical, sorted terms.
+ * Supports all FLINT monomial orders and multiword exponents; alias-safe. */
+int gf216_mpoly_mul_sparse(gf216_mpoly_t res, const gf216_mpoly_t a,
+                            const gf216_mpoly_t b, const gf216_mpoly_ctx_t ctx);
 int gf216_mpoly_mul_array(gf216_mpoly_t A, const gf216_mpoly_t B,
                           const gf216_mpoly_t C, const gf216_mpoly_ctx_t ctx);
 
@@ -371,6 +383,10 @@ void gf232_mpoly_set_coeff_ui_ui(gf232_mpoly_t poly, const gf232_t *c,
 
 int gf232_mpoly_mul(gf232_mpoly_t res, const gf232_mpoly_t a, const gf232_mpoly_t b, 
                     const gf232_mpoly_ctx_t ctx);
+/* Sparse heap multiplication; inputs must have canonical, sorted terms.
+ * Supports all FLINT monomial orders and multiword exponents; alias-safe. */
+int gf232_mpoly_mul_sparse(gf232_mpoly_t res, const gf232_mpoly_t a,
+                            const gf232_mpoly_t b, const gf232_mpoly_ctx_t ctx);
 int gf232_mpoly_mul_array(gf232_mpoly_t A, const gf232_mpoly_t B,
                           const gf232_mpoly_t C, const gf232_mpoly_ctx_t ctx);
 
@@ -408,6 +424,10 @@ void gf264_mpoly_set_coeff_ui_ui(gf264_mpoly_t poly, const gf264_t *c,
 
 int gf264_mpoly_mul(gf264_mpoly_t res, const gf264_mpoly_t a, const gf264_mpoly_t b, 
                     const gf264_mpoly_ctx_t ctx);
+/* Sparse heap multiplication; inputs must have canonical, sorted terms.
+ * Supports all FLINT monomial orders and multiword exponents; alias-safe. */
+int gf264_mpoly_mul_sparse(gf264_mpoly_t res, const gf264_mpoly_t a,
+                            const gf264_mpoly_t b, const gf264_mpoly_ctx_t ctx);
 int gf264_mpoly_mul_array(gf264_mpoly_t A, const gf264_mpoly_t B,
                           const gf264_mpoly_t C, const gf264_mpoly_ctx_t ctx);
 
@@ -445,6 +465,10 @@ void gf2128_mpoly_set_coeff_ui_ui(gf2128_mpoly_t poly, const gf2128_t *c,
 
 int gf2128_mpoly_mul(gf2128_mpoly_t res, const gf2128_mpoly_t a, const gf2128_mpoly_t b, 
                      const gf2128_mpoly_ctx_t ctx);
+/* Sparse heap multiplication; inputs must have canonical, sorted terms.
+ * Supports all FLINT monomial orders and multiword exponents; alias-safe. */
+int gf2128_mpoly_mul_sparse(gf2128_mpoly_t res, const gf2128_mpoly_t a,
+                            const gf2128_mpoly_t b, const gf2128_mpoly_ctx_t ctx);
 int gf2128_mpoly_mul_array(gf2128_mpoly_t A, const gf2128_mpoly_t B,
                            const gf2128_mpoly_t C, const gf2128_mpoly_ctx_t ctx);
 

@@ -10,7 +10,7 @@ Author: Haohai Suo (<haohai.suo@mail.sdu.edu.cn>)
 - Polynomial system solver
 - Finite fields:
   - Prime fields F_p (any size): Implemented with FLINT modular arithmetic, optionally accelerated by PML.
-  - Extension fields F_{p^k}: Further optimized for binary fields F_{2^n} with n in {8, 16, 32, 64, 128}.
+  - Extension fields F_{p^k}: Further optimized for binary fields F_{2^n} with n in {4, 8, 16, 32, 64, 128}.
 - Rational field ℚ: Rational reconstruction via multi-prime CRT. Set field_size = 0 to enable.
 - Complexity analysis — estimates Dixon matrix size, Bezout degree bound, and operation count before computing
 

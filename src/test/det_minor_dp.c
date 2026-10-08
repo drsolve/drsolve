@@ -254,6 +254,46 @@ static void check_field(ulong prime, slong degree, ulong zech_limit)
     fq_nmod_ctx_clear(fq);
 }
 
+/* Exercise native-byte merges across packing widths and monomial orders. */
+static void check_byte_packing(slong degree)
+{
+    fq_nmod_ctx_t fq;
+    fq_nmod_ctx_init_ui(fq, 2, degree, "a");
+    field_ctx_t field;
+    field_ctx_init(&field, fq);
+    flint_rand_t random;
+    flint_rand_init(random); flint_rand_set_seed(random, degree, 89);
+    ordering_t orders[] = {ORD_LEX, ORD_DEGLEX, ORD_DEGREVLEX};
+    for (int order = 0; order < 3; ++order) {
+        unified_mpoly_ctx_t ctx = unified_mpoly_ctx_init(3, orders[order], &field);
+        unified_mpoly_t **m = unified_mpoly_mat_init(4, 4, ctx);
+        unified_mpoly_t **copy = unified_mpoly_mat_init(4, 4, ctx);
+        unified_mpoly_t expected = unified_mpoly_init(ctx), actual = unified_mpoly_init(ctx);
+        for (int trial = 0; trial < 4; ++trial) {
+            for (slong i = 0; i < 4; ++i)
+                for (slong j = 0; j < 4; ++j) {
+                    fq_nmod_mpoly_randtest_bits(GET_FQ_POLY(m[i][j]), random, 2,
+                        (i+j) % 3 ? 3 : trial % 2 ? 80 : 15, GET_FQ_CTX(ctx));
+                    if (trial > 1 && i == 1) unified_mpoly_set(m[i][j], m[0][j]);
+                    unified_mpoly_set(copy[i][j], m[i][j]);
+                }
+            compute_unified_mpoly_det_recursive(expected, m, 4, ctx);
+            g_dixon_det_cache_limit = 1024;
+            for (int parallel = 0; parallel <= 1; ++parallel) {
+                compute_unified_mpoly_det(actual, m, 4, ctx, parallel);
+                require_equal(actual, expected, 4, 1024, parallel);
+                for (slong i = 0; i < 4; ++i)
+                    for (slong j = 0; j < 4; ++j)
+                        require_equal(m[i][j], copy[i][j], 4, 1024, parallel);
+            }
+        }
+        unified_mpoly_clear(expected); unified_mpoly_clear(actual);
+        unified_mpoly_mat_clear(m, 4, 4); unified_mpoly_mat_clear(copy, 4, 4);
+        unified_mpoly_ctx_clear(ctx);
+    }
+    flint_rand_clear(random); field_ctx_clear(&field); fq_nmod_ctx_clear(fq);
+}
+
 int main(void)
 {
     g_dixon_verbose_level = 0;
@@ -268,5 +308,9 @@ int main(void)
     check_field(2, 3, 1024);
     check_field(3, 2, 0);
     check_field(2, 1, 0);
+    check_field(2, 4, 0);
+    check_field(2, 8, 0);
+    check_byte_packing(4);
+    check_byte_packing(8);
     return 0;
 }

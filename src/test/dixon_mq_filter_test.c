@@ -68,14 +68,14 @@ static void check_rect(const unified_mpoly_struct *actual, const unified_mpoly_s
             in_targets(term->var_exp + n, cols, col_count, n))
             dr_mpoly_add_term_fast(&expected, term->var_exp, term->par_exp, term->coeff);
     }
-    nmod_mpoly_ctx_t ctx;
-    nmod_mpoly_ctx_init(ctx, 2 * n + 1, ORD_LEX, fq_nmod_ctx_modulus(full->ctx)->mod.n);
-    nmod_mpoly_t x, y;
-    nmod_mpoly_init(x, ctx); nmod_mpoly_init(y, ctx);
-    dr_mpoly_to_nmod_mpoly(x, actual, ctx);
-    dr_mpoly_to_nmod_mpoly(y, &expected, ctx);
-    assert(nmod_mpoly_equal(x, y, ctx));
-    nmod_mpoly_clear(x, ctx); nmod_mpoly_clear(y, ctx); nmod_mpoly_ctx_clear(ctx);
+    fq_nmod_mpoly_ctx_t ctx;
+    fq_nmod_mpoly_ctx_init(ctx, 2 * n + 1, ORD_LEX, full->ctx);
+    fq_nmod_mpoly_t x, y;
+    fq_nmod_mpoly_init(x, ctx); fq_nmod_mpoly_init(y, ctx);
+    dr_mpoly_to_fq_nmod_mpoly(x, actual, ctx);
+    dr_mpoly_to_fq_nmod_mpoly(y, &expected, ctx);
+    assert(fq_nmod_mpoly_equal(x, y, ctx));
+    fq_nmod_mpoly_clear(x, ctx); fq_nmod_mpoly_clear(y, ctx); fq_nmod_mpoly_ctx_clear(ctx);
     dr_mpoly_clear(&expected);
 }
 
@@ -430,13 +430,19 @@ static void check_fallback_and_gates(void)
     assert(!compute_fq_det_mq_projected(&result, a, n + 1, targets, targets, 1));
     fq_nmod_clear(c, ctx); clear_input(p, m, a, n);
     fq_nmod_ctx_clear(ctx);
-    /* Extension fields and multiple parameters keep their existing backend. */
+    /* Extension fields now support projection; compare the projected block
+     * coefficient by coefficient against an independently computed full D. */
     fq_nmod_ctx_init_ui(ctx, 3, 2, "a");
     p = random_mq(n, ctx, state);
     build_fq_cancellation_matrix(&m, p, n, 1);
     perform_fq_matrix_row_operations(&a, &m, n, 1);
-    assert(!dixon_try_mq_projection(&result, a, p, n, 1, DET_METHOD_RECURSIVE));
-    assert(!compute_fq_det_mq_projected(&result, a, n + 1, targets, targets, 1));
+    dixon_try_mq_projection(&result, a, p, n, 1, DET_METHOD_RECURSIVE);
+    dr_mpoly_clear(&result);
+    assert(compute_fq_det_mq_projected(&result, a, n + 1, targets, targets, 1));
+    compute_fq_cancel_matrix_det(&old, a, n, 1, DET_METHOD_RECURSIVE);
+    check_block(&result, &old, targets, targets, 1, n);
+    dr_mpoly_clear(&result); dr_mpoly_clear(&old);
+    /* Multiple/no parameters still retain the general backend. */
     assert(!dixon_try_mq_projection(&result, a, p, n, 2, DET_METHOD_RECURSIVE));
     assert(!dixon_try_mq_projection(&result, a, p, n, 0, DET_METHOD_RECURSIVE));
     clear_input(p, m, a, n); fq_nmod_ctx_clear(ctx); flint_rand_clear(state);

@@ -280,10 +280,12 @@ static size_t mq_shared_support_bound(size_t count, slong words)
 #define DRSOLVE_MQ_SHARED_WORKSPACE_BYTES SIZE_MAX
 #endif
 
-static int mq_shared_admit(nmod_mpoly_t **matrix, slong n,
+static int mq_shared_admit_coeffs(nmod_mpoly_t **matrix, slong n,
                            const nmod_mpoly_ctx_t ctx,
-                           ulong choose[FLINT_BITS][FLINT_BITS])
+                           ulong choose[FLINT_BITS][FLINT_BITS], size_t coefficient_bytes)
 {
+    /* At least a limb per slot also covers the parallel plan construction. */
+    coefficient_bytes = FLINT_MAX(coefficient_bytes, sizeof(ulong));
     const size_t budget = DRSOLVE_MQ_SHARED_WORKSPACE_BYTES;
     const size_t cap = FLINT_MIN(budget/sizeof(uint32_t), UINT32_MAX/4);
     slong nv = ctx->minfo->nvars;
@@ -327,8 +329,8 @@ static int mq_shared_admit(nmod_mpoly_t **matrix, slong n,
          * count is bounded by the existing DP entry limit, and the n/packing
          * checks restrict n <= 12 on the supported 64-bit layout. Check the
          * coefficient product explicitly before adding the small buffers. */
-        if (count > budget/sizeof(ulong)/current ||
-            previous_count > budget/sizeof(ulong)/previous) ok = 0;
+        if (count > budget/coefficient_bytes/current ||
+            previous_count > budget/coefficient_bytes/previous) ok = 0;
         if (ok) {
             /* The plan is built BEFORE current coefficients exist. Disjoint
              * shard capacities/hash tables plus concatenation use at most
@@ -338,14 +340,14 @@ static int mq_shared_admit(nmod_mpoly_t **matrix, slong n,
              * <=8 shards' small tables/capacity rounding and stack metadata.
              * Compact keys only decrease this native-packing estimate. */
             long double bytes = 65536.0L+((long double)count*current
-                +(long double)previous_count*previous+(long double)n*shifts.count)*sizeof(ulong)
+                +(long double)previous_count*previous+(long double)n*shifts.count)*coefficient_bytes
                 +(long double)shifts.count*previous*sizeof(uint32_t)
                 +mq_shared_support_bound(current, words)
                 +mq_shared_support_bound(previous, words)
                 +mq_shared_support_bytes(&shifts);
             /* Output packing allowance; FLINT sort scratch, input storage and
              * allocator overhead are not a process-RSS guarantee. */
-            if (k == n) bytes += (long double)current*(words+1)*sizeof(ulong);
+            if (k == n) bytes += (long double)current*(words*sizeof(ulong)+coefficient_bytes);
             if (bytes > budget) ok = 0;
         }
         mq_shared_support_clear(&shifts);
@@ -353,6 +355,13 @@ static int mq_shared_admit(nmod_mpoly_t **matrix, slong n,
     }
     mq_shared_support_clear(&packing);
     return ok;
+}
+
+/* Retain the independent limb-sized nmod policy. */
+static int mq_shared_admit(nmod_mpoly_t **matrix, slong n,
+    const nmod_mpoly_ctx_t ctx, ulong choose[FLINT_BITS][FLINT_BITS])
+{
+    return mq_shared_admit_coeffs(matrix, n, ctx, choose, sizeof(ulong));
 }
 
 static void mq_shared_pack(nmod_mpoly_t out, const ulong *coeffs,

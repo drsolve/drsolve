@@ -51,6 +51,31 @@ static void check_batches(flint_rand_t state, ulong prime)
     nmod_mat_clear(first); nmod_mat_clear(batch); nmod_mat_clear(reference); closure_clear(&cl);
 }
 
+static void check_projected_input(flint_rand_t state, ulong prime)
+{
+    nmod_mpoly_ctx_t ctx; nmod_mpoly_ctx_init(ctx,3,ORD_DEGLEX,prime);
+    nmod_mpoly_struct fs[5];
+    for (slong i=0;i<5;i++) nmod_mpoly_init(fs+i,ctx);
+    for (slong trial=0;trial<8;trial++) {
+        /* Include mixed degrees, a zero generator, and a constant generator. */
+        for (slong i=0;i<3;i++) nmod_mpoly_randtest_bound(fs+i,state,12,2,ctx);
+        nmod_mpoly_set_ui(fs+3,trial%2,ctx);
+        closure_t sparse,dense;
+        closure_init(&sparse,3,4,prime); closure_init(&dense,3,4,prime);
+        slong nc=sparse.basis.count, nr=trial==0?0:(trial==1?nc:nc/3);
+        nmod_mat_t initial,M;
+        matrix_init(initial,nr,nc,prime); nmod_mat_randtest(initial,state);
+        insert_rows(&sparse,initial); insert_rows(&dense,initial);
+        insert_original_rows(&sparse,fs,5,ctx);
+        original_rows(M,fs,5,ctx,&dense.basis,1,4); insert_rows(&dense,M);
+        assert(nmod_mat_equal(sparse.E,dense.E));
+        nmod_mat_clear(initial); nmod_mat_clear(M);
+        closure_clear(&sparse); closure_clear(&dense);
+    }
+    for (slong i=0;i<5;i++) nmod_mpoly_clear(fs+i,ctx);
+    nmod_mpoly_ctx_clear(ctx);
+}
+
 static void check_points(char **polys, slong m, slong n, ulong prime,
                          const char *dimension)
 {
@@ -117,7 +142,10 @@ int main(void)
         UWORD(4294967291)
 #endif
     };
-    for (slong p=0;p<6;p++) { check_seed(state,primes[p]); check_batches(state,primes[p]); }
+    for (slong p=0;p<6;p++) {
+        check_seed(state,primes[p]); check_batches(state,primes[p]);
+        check_projected_input(state,primes[p]);
+    }
     char *nilpotent[]={"x^2","y^2","x*y"};
     char *fibers[]={"x^2-x","y^2-y","x*y*(x-1)"};
     char *extension[]={"x^2+1","y-x","y^2+1"};

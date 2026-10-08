@@ -328,12 +328,12 @@ void unified_mpoly_neg(unified_mpoly_t poly1, const unified_mpoly_t poly2) {
    ============================================================================ */
 
 /* Global flags to enable/disable optimizations */
-static int use_gf24_array_mul = 1;
-static int use_gf28_array_mul = 1;
-static int use_gf216_array_mul = 1;
-static int use_gf232_array_mul = 1;
-static int use_gf264_array_mul = 1;
-static int use_gf2128_array_mul = 1;
+static int use_gf24_native_mul = 1;
+static int use_gf28_native_mul = 1;
+static int use_gf216_native_mul = 1;
+static int use_gf232_native_mul = 1;
+static int use_gf264_native_mul = 1;
+static int use_gf2128_native_mul = 1;
 static int use_zech_mul = 1;  /* Enable Zech multiplication by default */
 
 static inline ulong reduce_exp_field_ui(ulong e, ulong q) {
@@ -431,28 +431,28 @@ static void unified_mpoly_reduce_field_equation_inplace(unified_mpoly_t poly) {
 void unified_mpoly_enable_optimizations(field_id_t field_id, int enable) {
     switch (field_id) {
         case FIELD_ID_GF24:
-            use_gf24_array_mul = enable;
-            printf("GF(2^4) array multiplication: %s\n", enable ? "enabled" : "disabled");
+            use_gf24_native_mul = enable;
+            printf("GF(2^4) native multiplication (array/sparse): %s\n", enable ? "enabled" : "disabled");
             break;
         case FIELD_ID_GF28:
-            use_gf28_array_mul = enable;
-            printf("GF(2^8) array multiplication: %s\n", enable ? "enabled" : "disabled");
+            use_gf28_native_mul = enable;
+            printf("GF(2^8) native multiplication (array/sparse): %s\n", enable ? "enabled" : "disabled");
             break;
         case FIELD_ID_GF216:
-            use_gf216_array_mul = enable;
-            printf("GF(2^16) array multiplication: %s\n", enable ? "enabled" : "disabled");
+            use_gf216_native_mul = enable;
+            printf("GF(2^16) native multiplication (array/sparse): %s\n", enable ? "enabled" : "disabled");
             break;
         case FIELD_ID_GF232:
-            use_gf232_array_mul = enable;
-            printf("GF(2^32) array multiplication: %s\n", enable ? "enabled" : "disabled");
+            use_gf232_native_mul = enable;
+            printf("GF(2^32) native multiplication (array/sparse): %s\n", enable ? "enabled" : "disabled");
             break;
         case FIELD_ID_GF264:
-            use_gf264_array_mul = enable;
-            printf("GF(2^64) array multiplication: %s\n", enable ? "enabled" : "disabled");
+            use_gf264_native_mul = enable;
+            printf("GF(2^64) native multiplication (array/sparse): %s\n", enable ? "enabled" : "disabled");
             break;
         case FIELD_ID_GF2128:
-            use_gf2128_array_mul = enable;
-            printf("GF(2^128) array multiplication: %s\n", enable ? "enabled" : "disabled");
+            use_gf2128_native_mul = enable;
+            printf("GF(2^128) native multiplication (array/sparse): %s\n", enable ? "enabled" : "disabled");
             break;
         case FIELD_ID_FQ_ZECH:
             use_zech_mul = enable;
@@ -486,20 +486,9 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
             }
 
         case FIELD_ID_GF24:
-            if (use_gf24_array_mul) {
-                slong len2 = fq_nmod_mpoly_length(GET_FQ_POLY(poly2), GET_FQ_CTX(ctx));
-                slong len3 = fq_nmod_mpoly_length(GET_FQ_POLY(poly3), GET_FQ_CTX(ctx));
-                if (len2 > 0 && len3 > 0 && len2 <= WORD_MAX / len3 &&
-                    len2 * len3 < 1024) {
-                    fq_nmod_mpoly_mul(GET_FQ_POLY(poly1), GET_FQ_POLY(poly2),
-                                      GET_FQ_POLY(poly3), GET_FQ_CTX(ctx));
-                    if (g_field_equation_reduction) unified_mpoly_reduce_field_equation_inplace(poly1);
-                    return 1;
-                }
-
+            if (use_gf24_native_mul) {
                 gf24_mpoly_t A, B, C;
                 gf24_mpoly_ctx_t native_ctx;
-                int use_native_try = 0;
 
                 gf24_mpoly_ctx_init(native_ctx, ctx->nvars, ctx->ord);
                 gf24_mpoly_init(A, native_ctx);
@@ -511,11 +500,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                 fq_nmod_mpoly_to_gf24_mpoly(B, GET_FQ_POLY(poly3),
                                             ctx->field_ctx->ctx.fq_ctx, GET_FQ_CTX(ctx));
 
-                use_native_try = gf24_mpoly_can_use_array_mul(A, B, native_ctx);
-                int success = 0;
-                if (use_native_try) {
-                    success = gf24_mpoly_mul(C, A, B, native_ctx);
-                }
+                int success = gf24_mpoly_mul(C, A, B, native_ctx);
                 if (success) {
                     gf24_mpoly_to_fq_nmod_mpoly(GET_FQ_POLY(poly1), C,
                                                 ctx->field_ctx->ctx.fq_ctx, GET_FQ_CTX(ctx));
@@ -533,8 +518,8 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                 gf24_mpoly_clear(C, native_ctx);
                 gf24_mpoly_ctx_clear(native_ctx);
 
-                if (use_native_try && !success) {
-                    WARN_THRICE("GF(2^4) array multiplication failed, using standard method\n");
+                if (!success) {
+                    WARN_THRICE("GF(2^4) native multiplication unavailable, using standard method\n");
                 }
             }
             fq_nmod_mpoly_mul(GET_FQ_POLY(poly1), GET_FQ_POLY(poly2),
@@ -543,11 +528,9 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
             return 1;
             
         case FIELD_ID_GF28:
-            if (use_gf28_array_mul) {
+            if (use_gf28_native_mul) {
                 gf28_mpoly_t A, B, C;
                 gf28_mpoly_ctx_t native_ctx;
-                slong mva = -1, mvb = -1;
-                int use_native_try = 0;
                 
                 gf28_mpoly_ctx_init(native_ctx, ctx->nvars, ctx->ord);
                 gf28_mpoly_init(A, native_ctx);
@@ -559,12 +542,8 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                 fq_nmod_mpoly_to_gf28_mpoly(B, GET_FQ_POLY(poly3), 
                                             ctx->field_ctx->ctx.fq_ctx, GET_FQ_CTX(ctx));
 
-                use_native_try = gf28_mpoly_can_use_array_mul(A, B, native_ctx);
-                int success = 0;
-                if (use_native_try) {
-                    success = gf28_mpoly_mul_with_fqctx(C, A, B, native_ctx,
+                int success = gf28_mpoly_mul_with_fqctx(C, A, B, native_ctx,
                                                         ctx->field_ctx->ctx.fq_ctx);
-                }
                 if (success) {
                     gf28_mpoly_to_fq_nmod_mpoly(GET_FQ_POLY(poly1), C, 
                                                 ctx->field_ctx->ctx.fq_ctx, GET_FQ_CTX(ctx));
@@ -582,8 +561,8 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                 gf28_mpoly_clear(C, native_ctx);
                 gf28_mpoly_ctx_clear(native_ctx);
 
-                if (use_native_try && !success) {
-                    WARN_THRICE("GF(2^8) array multiplication failed, using standard method\n");
+                if (!success) {
+                    WARN_THRICE("GF(2^8) native multiplication unavailable, using standard method\n");
                 }
             }
             /* Fall through to standard multiplication */
@@ -593,7 +572,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
             return 1;
             
         case FIELD_ID_GF216:
-            if (use_gf216_array_mul) {
+            if (use_gf216_native_mul) {
                 gf216_mpoly_t A, B, C;
                 gf216_mpoly_ctx_t native_ctx;
                 
@@ -624,7 +603,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                     gf216_mpoly_clear(B, native_ctx);
                     gf216_mpoly_clear(C, native_ctx);
                     gf216_mpoly_ctx_clear(native_ctx);
-                    WARN_THRICE("GF(2^16) array multiplication failed, using standard method\n");
+                    WARN_THRICE("GF(2^16) native multiplication unavailable, using standard method\n");
                 }
             }
             /* Fall through to standard multiplication */
@@ -634,7 +613,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
             return 1;
             
         case FIELD_ID_GF232:
-            if (use_gf232_array_mul) {
+            if (use_gf232_native_mul) {
                 gf232_mpoly_t A, B, C;
                 gf232_mpoly_ctx_t native_ctx;
                 
@@ -665,7 +644,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                     gf232_mpoly_clear(B, native_ctx);
                     gf232_mpoly_clear(C, native_ctx);
                     gf232_mpoly_ctx_clear(native_ctx);
-                    WARN_THRICE("GF(2^32) array multiplication failed, using standard method\n");
+                    WARN_THRICE("GF(2^32) native multiplication unavailable, using standard method\n");
                 }
             }
             /* Fall through to standard multiplication */
@@ -675,7 +654,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
             return 1;
             
         case FIELD_ID_GF264:
-            if (use_gf264_array_mul) {
+            if (use_gf264_native_mul) {
                 gf264_mpoly_t A, B, C;
                 gf264_mpoly_ctx_t native_ctx;
                 
@@ -706,7 +685,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                     gf264_mpoly_clear(B, native_ctx);
                     gf264_mpoly_clear(C, native_ctx);
                     gf264_mpoly_ctx_clear(native_ctx);
-                    WARN_THRICE("GF(2^64) array multiplication failed, using standard method\n");
+                    WARN_THRICE("GF(2^64) native multiplication unavailable, using standard method\n");
                 }
             }
             /* Fall through to standard multiplication */
@@ -716,7 +695,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
             return 1;
             
         case FIELD_ID_GF2128:
-            if (use_gf2128_array_mul) {
+            if (use_gf2128_native_mul) {
                 gf2128_mpoly_t A, B, C;
                 gf2128_mpoly_ctx_t native_ctx;
                 
@@ -730,7 +709,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                 fq_nmod_mpoly_to_gf2128_mpoly(B, GET_FQ_POLY(poly3), 
                                               ctx->field_ctx->ctx.fq_ctx, GET_FQ_CTX(ctx));
                 
-                int success = gf2128_mpoly_mul_array(C, A, B, native_ctx);
+                int success = gf2128_mpoly_mul(C, A, B, native_ctx);
                 
                 if (success) {
                     gf2128_mpoly_to_fq_nmod_mpoly(GET_FQ_POLY(poly1), C, 
@@ -747,7 +726,7 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                     gf2128_mpoly_clear(B, native_ctx);
                     gf2128_mpoly_clear(C, native_ctx);
                     gf2128_mpoly_ctx_clear(native_ctx);
-                    WARN_THRICE("GF(2^128) array multiplication failed, using standard method\n");
+                    WARN_THRICE("GF(2^128) native multiplication unavailable, using standard method\n");
                 }
             }
             /* Fall through to standard multiplication */

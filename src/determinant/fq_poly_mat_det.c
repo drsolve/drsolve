@@ -4,6 +4,7 @@
 #include "fq_poly_mat_det.h"
 #include <flint/nmod_mat.h>
 #include "poly_mat_eval_batch.h"
+#include "gf28_poly_mat_det.h"
 #include <stdlib.h>
 #include <string.h>
 #ifdef _OPENMP
@@ -819,6 +820,19 @@ void fq_nmod_poly_mat_det_iter(fq_nmod_poly_t det,
     /* Initialize field context with compile-time dispatch */
     field_ctx_t field_ctx;
     field_ctx_init(&field_ctx, ctx);
+
+    extern int g_field_equation_reduction;
+    if (!g_field_equation_reduction &&
+        (field_ctx.field_id == FIELD_ID_GF24 || field_ctx.field_id == FIELD_ID_GF28)) {
+        double started = get_wall_time();
+        if (g_dixon_verbose_level >= 2)
+            printf("  Native byte polynomial determinant: %ld x %ld\n", mat->r, mat->c);
+        byte_poly_mat_det(det, mat, ctx, field_ctx.field_id == FIELD_ID_GF24);
+        field_ctx_clear(&field_ctx);
+        if (g_dixon_verbose_level >= 2)
+            printf("  Native byte determinant time: %.3f seconds\n", get_wall_time() - started);
+        return;
+    }
 
     /* Initialize workspace for the field context */
     ensure_workspace_initialized(&field_ctx);

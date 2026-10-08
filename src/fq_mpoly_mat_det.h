@@ -56,7 +56,8 @@
 
 /* MQ coefficient projection. result is initialized only on success (1).
  * Targets are count exponent vectors of length size-1 for each axis.
- * Only prime-field, one-parameter, divided-difference MQ matrices qualify. */
+ * One-parameter, divided-difference MQ matrices over prime or extension
+ * fields qualify, subject to the backend packing and DP workspace checks. */
 int compute_fq_det_mq_projected(unified_mpoly_struct *result, unified_mpoly_struct **matrix,
                                 slong size, const slong *rows, const slong *cols, slong count);
 

@@ -1412,73 +1412,36 @@ void gf2128_to_fq_nmod(fq_nmod_t res, const gf2128_t *elem, const fq_nmod_ctx_t 
 
 /* Initialize GF(2^8) conversion tables */
 void init_gf28_conversion(const fq_nmod_ctx_t ctx) {
-   if (g_gf28_conversion && g_gf28_conversion->initialized) {
-       return;
-   }
-   
-   if (!g_gf28_conversion) {
-       g_gf28_conversion = (gf28_conversion_t *)calloc(1, sizeof(gf28_conversion_t));
-   }
-   
-   if (!g_gf28_tables) {
-       init_gf28_tables(0x1D);
-   }
-   
-   uint64_t flint_poly = extract_irred_poly(ctx);
-   
-   if (flint_poly == 0x11D) {
-       for (int i = 0; i < 256; i++) {
-           g_gf28_conversion->flint_to_gf28[i] = i;
-           g_gf28_conversion->gf28_to_flint[i] = i;
-       }
-   } else {
-       g_gf28_conversion->flint_to_gf28[0] = 0;
-       g_gf28_conversion->gf28_to_flint[0] = 0;
-       
-       fq_nmod_t gen, elem;
-       fq_nmod_init(gen, ctx);
-       fq_nmod_init(elem, ctx);
+    static uint64_t cached_modulus = 0;
+    uint64_t modulus = extract_irred_poly(ctx);
+    if (g_gf28_conversion && g_gf28_conversion->initialized &&
+        cached_modulus == modulus) return;
+    if (!g_gf28_conversion)
+        g_gf28_conversion = calloc(1, sizeof(gf28_conversion_t));
+    init_gf28_standard();
 
-       fq_nmod_gen(gen, ctx);
-       if (!gf2_small_find_primitive_element(gen, ctx, 8)) {
-           fq_nmod_clear(gen, ctx);
-           fq_nmod_clear(elem, ctx);
-           g_gf28_conversion->initialized = 0;
-           return;
-       }
-       
-       uint8_t flint_log[256];
-       uint8_t flint_exp[256];
-       memset(flint_log, 0xFF, 256);
-       
-       fq_nmod_one(elem, ctx);
-       for (int i = 0; i < 255; i++) {
-           uint8_t poly_val = 0;
-           for (int j = 0; j < 8; j++) {
-               if (nmod_poly_get_coeff_ui(elem, j)) {
-                   poly_val |= (1 << j);
-               }
-           }
-           
-           flint_exp[i] = poly_val;
-           flint_log[poly_val] = i;
-           
-           fq_nmod_mul(elem, elem, gen, ctx);
-       }
-       
-       for (int i = 0; i < 255; i++) {
-           uint8_t flint_elem = flint_exp[i];
-           uint8_t our_elem = g_gf28_tables->exp_table[i];
-           
-           g_gf28_conversion->flint_to_gf28[flint_elem] = our_elem;
-           g_gf28_conversion->gf28_to_flint[our_elem] = flint_elem;
-       }
-       
-       fq_nmod_clear(gen, ctx);
-       fq_nmod_clear(elem, ctx);
-   }
-   
-   g_gf28_conversion->initialized = 1;
+    /* Map the source generator to a root of its defining polynomial in our
+       field. Matching arbitrary primitive elements preserves multiplication
+       but need not preserve addition, which sparse accumulation requires. */
+    uint8_t root = 0;
+    for (unsigned candidate = 1; candidate < 256; ++candidate) {
+        uint8_t value = 1; /* monic degree-eight modulus */
+        for (int j = 7; j >= 0; --j)
+            value = gf28_mul(value, (uint8_t)candidate) ^ ((modulus >> j) & 1);
+        if (value == 0) { root = (uint8_t)candidate; break; }
+    }
+    if (!root) { g_gf28_conversion->initialized = 0; return; }
+    /* Keep the identity representation for the native modulus. */
+    if (modulus == 0x11D) root = 2;
+    for (unsigned i = 0; i < 256; ++i) {
+        uint8_t value = 0;
+        for (int j = 7; j >= 0; --j)
+            value = gf28_mul(value, root) ^ ((i >> j) & 1);
+        g_gf28_conversion->flint_to_gf28[i] = value;
+        g_gf28_conversion->gf28_to_flint[value] = (uint8_t)i;
+    }
+    cached_modulus = modulus;
+    g_gf28_conversion->initialized = 1;
 }
 
 /* Initialize GF(2^16) conversion tables */
@@ -1851,9 +1814,9 @@ void init_gf264_conversion(const fq_nmod_ctx_t ctx) {
     extract_gf264_poly(ctx, &g_gf264_conversion->flint_poly_low, 
                             &g_gf264_conversion->flint_poly_high);
     
-    /* Check if polynomials match: high should be 0x2, low should be 0x47F43CB7 */
-    if (g_gf264_conversion->flint_poly_high == 0x2 &&
-        g_gf264_conversion->flint_poly_low == 0x47F43CB7) {
+    /* Check if polynomials match: high is the x^64 bit; low contains the full reduction polynomial */
+    if (g_gf264_conversion->flint_poly_high == 0x1 &&
+        g_gf264_conversion->flint_poly_low == 0x247F43CB7ULL) {
         g_gf264_conversion->initialized = 1;
         return;
     }
@@ -1902,8 +1865,8 @@ gf264_t fq_nmod_to_gf264(const fq_nmod_t elem, const fq_nmod_ctx_t ctx) {
     }
     
     // Check if same polynomial
-    if (g_gf264_conversion->flint_poly_high == 0x2 && 
-        g_gf264_conversion->flint_poly_low == 0x47F43CB7) {
+    if (g_gf264_conversion->flint_poly_high == 0x1 &&
+        g_gf264_conversion->flint_poly_low == 0x247F43CB7ULL) {
         // Direct conversion
         uint64_t poly_val = 0;
         for (int i = 0; i < 64; i++) {
@@ -1985,8 +1948,8 @@ void gf264_to_fq_nmod(fq_nmod_t res, const gf264_t *elem, const fq_nmod_ctx_t ct
         return;
     }
     
-    if (g_gf264_conversion->flint_poly_high == 0x2 && 
-        g_gf264_conversion->flint_poly_low == 0x47F43CB7) {
+    if (g_gf264_conversion->flint_poly_high == 0x1 &&
+        g_gf264_conversion->flint_poly_low == 0x247F43CB7ULL) {
         for (int i = 0; i < 64; i++) {
             if ((elem->value >> i) & 1) {
                 nmod_poly_set_coeff_ui(res, i, 1);

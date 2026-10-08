@@ -4881,6 +4881,9 @@ static int dixon_mq_pencil_project(unified_mpoly_struct *result, unified_mpoly_s
     return 1;
 }
 
+#include "dixon_gf2n_projection.h"
+#include "dixon_fq_projection.h"
+
 static int dixon_try_mq_projection_from_full(unified_mpoly_struct *result,
                                              unified_mpoly_struct **matrix,
                                              const unified_mpoly_struct *polys, slong nvars,
@@ -4890,7 +4893,10 @@ static int dixon_try_mq_projection_from_full(unified_mpoly_struct *result,
 {
     if (!g_dixon_mq_step1_filter ||
         method != DET_METHOD_RECURSIVE || npars != 1 || nvars < 2 ||
-        nvars >= FLINT_BITS || fq_nmod_ctx_degree(polys[0].ctx) != 1) return 0;
+        nvars >= FLINT_BITS) return 0;
+    int native_extension = polys[0].field_id >= FIELD_ID_GF24 && polys[0].field_id <= FIELD_ID_GF2128;
+    int extension = fq_nmod_ctx_degree(polys[0].ctx) > 1;
+    if (extension) compact = NULL;
     long *degrees = flint_malloc((size_t) (nvars + 1) * sizeof(long));
     int eligible = 1;
     for (slong i = 0; i <= nvars; i++) {
@@ -4979,6 +4985,11 @@ static int dixon_try_mq_projection_from_full(unified_mpoly_struct *result,
         for (slong i = 0; i < nr; i++) rmap[i] = -1;
         for (slong j = 0; j < nc; j++) cmap[j] = -1;
         for (slong i = 0; i < rank; i++) { rmap[rows[i]] = i; cmap[cols[i]] = i; }
+        if (extension) {
+            ok = native_extension
+                ? dixon_gf2n_verify_projection(result, nvars, rank, ri, rhs, ci, chs, rmap, cmap)
+                : dixon_fq_verify_projection(result, nvars, rank, ri, rhs, ci, chs, rmap, cmap);
+        } else {
         ulong prime = fq_nmod_ctx_modulus(polys[0].ctx)->mod.n;
         nmod_mat_t values, best;
         nmod_mat_init(values, rank, rank, prime);
@@ -5060,6 +5071,7 @@ static int dixon_try_mq_projection_from_full(unified_mpoly_struct *result,
         if (have_best) nmod_mat_clear(best);
         flint_free(perm); flint_free(best_perm);
         nmod_mat_clear(values);
+        }
         flint_free(rmap); flint_free(cmap);
     }
     if (computed && !ok) {
@@ -5070,9 +5082,13 @@ static int dixon_try_mq_projection_from_full(unified_mpoly_struct *result,
     /* The caller still owns a safely clearable conventional placeholder. */
     if (ok && compact && compact->nvars)
         dr_mpoly_init(result, 2 * nvars, 1, polys[0].ctx);
-    if (computed)
+    if (computed) {
+        /* Full MQ support before projection; cancellations may make the
+         * actual coefficient matrix smaller on sparse/degenerate inputs. */
+        dixon_info_log("  Original Dixon matrix size (structural): %ld x %ld\n", nr, nc);
         dixon_info_log("  MQ Step 1 projection: %ld x %ld candidate %s\n", rank, rank,
                        ok ? "verified" : full ? "failed; reusing full Dixon polynomial" : "failed; recomputing full Dixon polynomial");
+    }
     flint_free(target_rows); flint_free(target_cols);
     flint_free(rows); flint_free(cols);
     free_monom_index(ri, rhs); free_monom_index(ci, chs);
@@ -5182,7 +5198,7 @@ static void dixon_mq_step4_profile_clear(dixon_mq_step4_profile *p)
 
 static int dixon_mq_step4_eligible(const unified_mpoly_struct *polys, slong m, slong npars)
 {
-    if (npars != 1 || m < 2 || fq_nmod_ctx_degree(polys[0].ctx) != 1) return 0;
+    if (npars != 1 || m < 2) return 0;
     /* The checked Schur kernel uses degree weights, not quadratic formulas.
      * Admit equal-degree bivariate elimination as well, provided the parameter
      * shares the total-degree budget. Mixed degrees retain the existing path. */
@@ -5261,12 +5277,28 @@ static void dixon_mq_step4_prepare(dixon_mq_step4_profile *out,
     out->size = size; out->h = h; out->sigma = sigma;
 }
 
+#include "dixon_gf2n_schur.h"
+
 static int dixon_mq_step4_try(fq_nmod_poly_t det, const fq_nmod_poly_mat_t matrix,
                              const dixon_mq_step4_profile *p, const fq_nmod_ctx_t ctx)
 {
-    if (!p->size || p->size != matrix->r || matrix->r != matrix->c ||
-        fq_nmod_ctx_degree(ctx) != 1) return 0;
+    if (!p->size || p->size != matrix->r || matrix->r != matrix->c) return 0;
     double start = get_wall_time();
+    if (fq_nmod_ctx_degree(ctx) != 1) {
+        fq_nmod_poly_mat_t core;
+        fq_nmod_poly_mat_init(core, p->h, p->h, ctx);
+        fq_nmod_t factor; fq_nmod_init(factor, ctx);
+        int ok = !g_field_equation_reduction && dixon_extension_schur(core, factor, matrix, p, ctx);
+        if (ok) {
+            dixon_info_log("  MQ extension Step 4 Schur: %ld -> %ld, compression %.3fs\n",
+                           p->size, p->h, get_wall_time()-start);
+            fq_nmod_poly_mat_det_iter(det, core, ctx);
+            fq_nmod_poly_scalar_mul_fq_nmod(det, det, factor, ctx);
+        } else
+            dixon_info_log("  MQ extension Step 4 Schur: certificate failed; using original determinant backend\n");
+        fq_nmod_clear(factor, ctx); fq_nmod_poly_mat_clear(core, ctx);
+        return ok;
+    }
     ulong prime = fq_nmod_ctx_prime(ctx), factor = 0;
     nmod_poly_mat_t B, core;
     nmod_poly_mat_init(B, p->size, p->size, prime);
@@ -5312,7 +5344,8 @@ static int dixon_mq_step4_try(fq_nmod_poly_t det, const fq_nmod_poly_mat_t matri
 
 int dixon_bivariate_native_eligible(const unified_mpoly_struct *polys, slong nvars, slong npars)
 {
-    return nvars == 2 && dixon_mq_step4_eligible(polys, nvars, npars);
+    return nvars == 2 && fq_nmod_ctx_degree(polys[0].ctx) == 1 &&
+           dixon_mq_step4_eligible(polys, nvars, npars);
 }
 
 void dixon_bivariate_native_selected_det(unified_mpoly_struct *result,
@@ -5741,22 +5774,8 @@ static void extract_fq_coefficient_matrix_from_dixon_impl(
             } else {
                 if (g_dixon_verbose_level >= 3)
                     dixon_info_log("  Step 3 candidate verification backend: fq_nmod_mat_rank\n");
-                fq_nmod_mat_t candidate;
-                fq_nmod_mat_init(candidate, predicted, predicted, dixon_poly->ctx);
-                for (slong i = 0; i < predicted; i++) {
-                    for (slong j = 0; j < predicted; j++) {
-                        unified_mpoly_struct *entry =
-                            full_matrix[row_idx_array[i]][col_idx_array[j]];
-                        if (entry != NULL && dr_mpoly_length(entry) > 0)
-                            evaluate_dr_mpoly_at_params(fq_nmod_mat_entry(candidate, i, j), entry,
-                                                        eval_params);
-                        else
-                            fq_nmod_zero(fq_nmod_mat_entry(candidate, i, j),
-                                         dixon_poly->ctx);
-                    }
-                }
-                rank = fq_nmod_mat_rank(candidate, dixon_poly->ctx);
-                fq_nmod_mat_clear(candidate, dixon_poly->ctx);
+                rank = dixon_fq_candidate_rank(full_matrix, row_idx_array, col_idx_array,
+                                               predicted, npars, eval_params, dixon_poly->ctx);
             }
             if (!schur_repaired) {
                 if (rank == predicted) num_rows = num_cols = predicted;

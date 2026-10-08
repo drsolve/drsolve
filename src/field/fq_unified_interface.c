@@ -53,7 +53,7 @@ static int gf264_native_modulus_supported(const fq_nmod_ctx_t fq_ctx)
 {
     uint64_t low = 0, high = 0;
     extract_gf264_poly(fq_ctx, &low, &high);
-    return high == 0x2ULL && low == 0x47F43CB7ULL;
+    return high == 0x1ULL && low == 0x247F43CB7ULL;
 }
 
 static int gf2128_native_modulus_supported(const fq_nmod_ctx_t fq_ctx)

@@ -19,7 +19,7 @@ void fq_mq_compact_clear(fq_mq_compact *p);
 /* Initialize a conventional polynomial, for repair/fallback or inspection. */
 void fq_mq_compact_materialize(unified_mpoly_struct *out, const fq_mq_compact *p,
                                const fq_nmod_ctx_t ctx);
-/* Same eligibility and exact projection as compute_fq_det_mq_projected_rect.
+/* Prime-field-only compact form of compute_fq_det_mq_projected_rect.
  * On rejection leave the zero-initialized output untouched. */
 int compute_fq_det_mq_compact(fq_mq_compact *out, unified_mpoly_struct **matrix, slong size,
                               const slong *rows, slong nr, const slong *cols, slong nc);

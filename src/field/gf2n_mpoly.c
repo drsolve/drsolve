@@ -4,6 +4,7 @@
  */
 
 #include "gf2n_mpoly.h"
+#include "gf2n_mpoly_sparse.h"
 
 int gf2n_mpoly_array_limit_k = -1;
 
@@ -570,6 +571,8 @@ int FIELD##_mpoly_mul_array(FIELD##_mpoly_t A, const FIELD##_mpoly_t B,        \
     const FIELD##_mpoly_t C, const FIELD##_mpoly_ctx_t ctx)                    \
 {                                                                               \
     if (B->length == 0 || C->length == 0) { FIELD##_mpoly_zero(A,ctx); return 1; } \
+    if (ctx->minfo->nvars < 1 || B->bits > FLINT_BITS || C->bits > FLINT_BITS) \
+        return 0;                                                             \
     fmpz *maxBf = (fmpz *)flint_malloc(ctx->minfo->nfields * sizeof(fmpz));    \
     fmpz *maxCf = (fmpz *)flint_malloc(ctx->minfo->nfields * sizeof(fmpz));    \
     for (slong i = 0; i < ctx->minfo->nfields; i++) {                          \
@@ -586,7 +589,13 @@ int FIELD##_mpoly_mul_array(FIELD##_mpoly_t A, const FIELD##_mpoly_t B,        \
 }                                                                               \
 int FIELD##_mpoly_mul(FIELD##_mpoly_t res, const FIELD##_mpoly_t a,            \
     const FIELD##_mpoly_t b, const FIELD##_mpoly_ctx_t ctx)                    \
-{   return FIELD##_mpoly_mul_array(res, a, b, ctx); }                          \
+{                                                                            \
+    ulong limit = sizeof(COEFF_T) <= 4 ? (UWORD(1) << 27) : (UWORD(1) << 26); \
+    if (gf2n_prefer_array(a->exps, a->length, a->bits,                         \
+            b->exps, b->length, b->bits, ctx->minfo, limit) &&                \
+        FIELD##_mpoly_mul_array(res, a, b, ctx)) return 1;                   \
+    return FIELD##_mpoly_mul_sparse(res, a, b, ctx);                         \
+}                          \
 int FIELD##_mpoly_divides(FIELD##_mpoly_t Q, const FIELD##_mpoly_t A,          \
     const FIELD##_mpoly_t B, const FIELD##_mpoly_ctx_t ctx)                    \
 {                                                                               \
@@ -829,51 +838,42 @@ void fq_nmod_mpoly_to_gf216_mpoly(gf216_mpoly_t res, const fq_nmod_mpoly_t poly,
 {
     gf216_mpoly_ctx_t ctx;
     gf216_mpoly_ctx_init(ctx, fq_mpoly_ctx->minfo->nvars, fq_mpoly_ctx->minfo->ord);
-    gf216_mpoly_zero(res, ctx);
-    slong len = fq_nmod_mpoly_length(poly, fq_mpoly_ctx);
-    if (len == 0) { gf216_mpoly_ctx_clear(ctx); return; }
-    if (!g_gf216_conversion || !g_gf216_conversion->initialized) init_gf216_conversion(fqctx);
-    flint_bitcnt_t bits = FLINT_MAX(poly->bits, MPOLY_MIN_BITS);
-    gf216_mpoly_fit_length_reset_bits(res, len, bits, ctx);
-    res->length = 0;
-    slong nvars = fq_mpoly_ctx->minfo->nvars;
-    slong N = mpoly_words_per_exp(bits, ctx->minfo);
-    slong actual = 0;
-    for (slong i = 0; i < len; i++) {
-        fq_nmod_t coeff; fq_nmod_init(coeff, fqctx);
+    if (!g_gf216_conversion || !g_gf216_conversion->initialized)
+        init_gf216_conversion(fqctx);
+    gf216_mpoly_fit_length_reset_bits(res, poly->length, poly->bits, ctx);
+    slong N = mpoly_words_per_exp(poly->bits, ctx->minfo);
+    if (poly->length)
+        memcpy(res->exps, poly->exps, sizeof(ulong) * N * poly->length);
+    fq_nmod_t coeff;
+    fq_nmod_init(coeff, fqctx);
+    for (slong i = 0; i < poly->length; ++i) {
         fq_nmod_mpoly_get_term_coeff_fq_nmod(coeff, poly, i, fq_mpoly_ctx);
-        uint16_t c = fq_nmod_to_gf216_elem(coeff, fqctx);
-        if (c != 0) {
-            ulong *exp = (ulong *)flint_malloc(nvars * sizeof(ulong));
-            fq_nmod_mpoly_get_term_exp_ui(exp, poly, i, fq_mpoly_ctx);
-            mpoly_set_monomial_ui(res->exps + N*actual, exp, bits, ctx->minfo);
-            res->coeffs[actual++] = c;
-            flint_free(exp);
-        }
-        fq_nmod_clear(coeff, fqctx);
+        res->coeffs[i] = fq_nmod_to_gf216_elem(coeff, fqctx);
     }
-    res->length = actual;
+    res->length = poly->length;
+    fq_nmod_clear(coeff, fqctx);
     gf216_mpoly_ctx_clear(ctx);
 }
 
 void gf216_mpoly_to_fq_nmod_mpoly(fq_nmod_mpoly_t res, const gf216_mpoly_t poly,
     const fq_nmod_ctx_t fqctx, const fq_nmod_mpoly_ctx_t fq_mpoly_ctx)
 {
-    if (!g_gf216_conversion || !g_gf216_conversion->initialized) init_gf216_conversion(fqctx);
-    fq_nmod_mpoly_zero(res, fq_mpoly_ctx);
-    if (poly->length == 0) return;
+    if (!g_gf216_conversion || !g_gf216_conversion->initialized)
+        init_gf216_conversion(fqctx);
+    fq_nmod_mpoly_fit_length_reset_bits(res, poly->length, poly->bits, fq_mpoly_ctx);
+    _fq_nmod_mpoly_set_length(res, poly->length, fq_mpoly_ctx);
     slong N = mpoly_words_per_exp(poly->bits, fq_mpoly_ctx->minfo);
-    slong nvars = fq_mpoly_ctx->minfo->nvars;
-    for (slong i = 0; i < poly->length; i++) {
-        if (poly->coeffs[i] != 0) {
-            fq_nmod_t coeff; fq_nmod_init(coeff, fqctx);
-            gf216_elem_to_fq_nmod(coeff, poly->coeffs[i], fqctx);
-            ulong *exp = (ulong *)flint_malloc(nvars * sizeof(ulong));
-            mpoly_get_monomial_ui(exp, poly->exps+N*i, poly->bits, fq_mpoly_ctx->minfo);
-            fq_nmod_mpoly_set_coeff_fq_nmod_ui(res, coeff, exp, fq_mpoly_ctx);
-            flint_free(exp); fq_nmod_clear(coeff, fqctx);
-        }
+    if (poly->length)
+        memcpy(res->exps, poly->exps, sizeof(ulong) * N * poly->length);
+    fq_nmod_t coeff;
+    fq_nmod_init(coeff, fqctx);
+    for (slong i = 0; i < poly->length; ++i) {
+        gf216_elem_to_fq_nmod(coeff, poly->coeffs[i], fqctx);
+        fq_nmod_mpoly_set_term_coeff_fq_nmod(res, i, coeff, fq_mpoly_ctx);
     }
+    fq_nmod_clear(coeff, fqctx);
+    fq_nmod_mpoly_sort_terms(res, fq_mpoly_ctx);
+    fq_nmod_mpoly_combine_like_terms(res, fq_mpoly_ctx);
 }
 
 void fq_nmod_mpoly_to_gf232_mpoly(gf232_mpoly_t res, const fq_nmod_mpoly_t poly,
@@ -881,51 +881,42 @@ void fq_nmod_mpoly_to_gf232_mpoly(gf232_mpoly_t res, const fq_nmod_mpoly_t poly,
 {
     gf232_mpoly_ctx_t ctx;
     gf232_mpoly_ctx_init(ctx, fq_mpoly_ctx->minfo->nvars, fq_mpoly_ctx->minfo->ord);
-    gf232_mpoly_zero(res, ctx);
-    slong len = fq_nmod_mpoly_length(poly, fq_mpoly_ctx);
-    if (len == 0) { gf232_mpoly_ctx_clear(ctx); return; }
-    if (!g_gf232_conversion || !g_gf232_conversion->initialized) init_gf232_conversion(fqctx);
-    flint_bitcnt_t bits = FLINT_MAX(poly->bits, MPOLY_MIN_BITS);
-    gf232_mpoly_fit_length_reset_bits(res, len, bits, ctx);
-    res->length = 0;
-    slong nvars = fq_mpoly_ctx->minfo->nvars;
-    slong N = mpoly_words_per_exp(bits, ctx->minfo);
-    slong actual = 0;
-    for (slong i = 0; i < len; i++) {
-        fq_nmod_t coeff; fq_nmod_init(coeff, fqctx);
+    if (!g_gf232_conversion || !g_gf232_conversion->initialized)
+        init_gf232_conversion(fqctx);
+    gf232_mpoly_fit_length_reset_bits(res, poly->length, poly->bits, ctx);
+    slong N = mpoly_words_per_exp(poly->bits, ctx->minfo);
+    if (poly->length)
+        memcpy(res->exps, poly->exps, sizeof(ulong) * N * poly->length);
+    fq_nmod_t coeff;
+    fq_nmod_init(coeff, fqctx);
+    for (slong i = 0; i < poly->length; ++i) {
         fq_nmod_mpoly_get_term_coeff_fq_nmod(coeff, poly, i, fq_mpoly_ctx);
-        gf232_t c = fq_nmod_to_gf232(coeff, fqctx);
-        if (!gf232_is_zero(&c)) {
-            ulong *exp = (ulong *)flint_malloc(nvars * sizeof(ulong));
-            fq_nmod_mpoly_get_term_exp_ui(exp, poly, i, fq_mpoly_ctx);
-            mpoly_set_monomial_ui(res->exps + N*actual, exp, bits, ctx->minfo);
-            res->coeffs[actual++] = c;
-            flint_free(exp);
-        }
-        fq_nmod_clear(coeff, fqctx);
+        res->coeffs[i] = fq_nmod_to_gf232(coeff, fqctx);
     }
-    res->length = actual;
+    res->length = poly->length;
+    fq_nmod_clear(coeff, fqctx);
     gf232_mpoly_ctx_clear(ctx);
 }
 
 void gf232_mpoly_to_fq_nmod_mpoly(fq_nmod_mpoly_t res, const gf232_mpoly_t poly,
     const fq_nmod_ctx_t fqctx, const fq_nmod_mpoly_ctx_t fq_mpoly_ctx)
 {
-    if (!g_gf232_conversion || !g_gf232_conversion->initialized) init_gf232_conversion(fqctx);
-    fq_nmod_mpoly_zero(res, fq_mpoly_ctx);
-    if (poly->length == 0) return;
+    if (!g_gf232_conversion || !g_gf232_conversion->initialized)
+        init_gf232_conversion(fqctx);
+    fq_nmod_mpoly_fit_length_reset_bits(res, poly->length, poly->bits, fq_mpoly_ctx);
+    _fq_nmod_mpoly_set_length(res, poly->length, fq_mpoly_ctx);
     slong N = mpoly_words_per_exp(poly->bits, fq_mpoly_ctx->minfo);
-    slong nvars = fq_mpoly_ctx->minfo->nvars;
-    for (slong i = 0; i < poly->length; i++) {
-        if (!gf232_is_zero(&poly->coeffs[i])) {
-            fq_nmod_t coeff; fq_nmod_init(coeff, fqctx);
-            gf232_to_fq_nmod(coeff, &poly->coeffs[i], fqctx);
-            ulong *exp = (ulong *)flint_malloc(nvars * sizeof(ulong));
-            mpoly_get_monomial_ui(exp, poly->exps+N*i, poly->bits, fq_mpoly_ctx->minfo);
-            fq_nmod_mpoly_set_coeff_fq_nmod_ui(res, coeff, exp, fq_mpoly_ctx);
-            flint_free(exp); fq_nmod_clear(coeff, fqctx);
-        }
+    if (poly->length)
+        memcpy(res->exps, poly->exps, sizeof(ulong) * N * poly->length);
+    fq_nmod_t coeff;
+    fq_nmod_init(coeff, fqctx);
+    for (slong i = 0; i < poly->length; ++i) {
+        gf232_to_fq_nmod(coeff, &poly->coeffs[i], fqctx);
+        fq_nmod_mpoly_set_term_coeff_fq_nmod(res, i, coeff, fq_mpoly_ctx);
     }
+    fq_nmod_clear(coeff, fqctx);
+    fq_nmod_mpoly_sort_terms(res, fq_mpoly_ctx);
+    fq_nmod_mpoly_combine_like_terms(res, fq_mpoly_ctx);
 }
 
 void fq_nmod_mpoly_to_gf264_mpoly(gf264_mpoly_t res, const fq_nmod_mpoly_t poly,
@@ -933,51 +924,42 @@ void fq_nmod_mpoly_to_gf264_mpoly(gf264_mpoly_t res, const fq_nmod_mpoly_t poly,
 {
     gf264_mpoly_ctx_t ctx;
     gf264_mpoly_ctx_init(ctx, fq_mpoly_ctx->minfo->nvars, fq_mpoly_ctx->minfo->ord);
-    gf264_mpoly_zero(res, ctx);
-    slong len = fq_nmod_mpoly_length(poly, fq_mpoly_ctx);
-    if (len == 0) { gf264_mpoly_ctx_clear(ctx); return; }
-    if (!g_gf264_conversion || !g_gf264_conversion->initialized) init_gf264_conversion(fqctx);
-    flint_bitcnt_t bits = FLINT_MAX(poly->bits, MPOLY_MIN_BITS);
-    gf264_mpoly_fit_length_reset_bits(res, len, bits, ctx);
-    res->length = 0;
-    slong nvars = fq_mpoly_ctx->minfo->nvars;
-    slong N = mpoly_words_per_exp(bits, ctx->minfo);
-    slong actual = 0;
-    for (slong i = 0; i < len; i++) {
-        fq_nmod_t coeff; fq_nmod_init(coeff, fqctx);
+    if (!g_gf264_conversion || !g_gf264_conversion->initialized)
+        init_gf264_conversion(fqctx);
+    gf264_mpoly_fit_length_reset_bits(res, poly->length, poly->bits, ctx);
+    slong N = mpoly_words_per_exp(poly->bits, ctx->minfo);
+    if (poly->length)
+        memcpy(res->exps, poly->exps, sizeof(ulong) * N * poly->length);
+    fq_nmod_t coeff;
+    fq_nmod_init(coeff, fqctx);
+    for (slong i = 0; i < poly->length; ++i) {
         fq_nmod_mpoly_get_term_coeff_fq_nmod(coeff, poly, i, fq_mpoly_ctx);
-        gf264_t c = fq_nmod_to_gf264(coeff, fqctx);
-        if (!gf264_is_zero(&c)) {
-            ulong *exp = (ulong *)flint_malloc(nvars * sizeof(ulong));
-            fq_nmod_mpoly_get_term_exp_ui(exp, poly, i, fq_mpoly_ctx);
-            mpoly_set_monomial_ui(res->exps + N*actual, exp, bits, ctx->minfo);
-            res->coeffs[actual++] = c;
-            flint_free(exp);
-        }
-        fq_nmod_clear(coeff, fqctx);
+        res->coeffs[i] = fq_nmod_to_gf264(coeff, fqctx);
     }
-    res->length = actual;
+    res->length = poly->length;
+    fq_nmod_clear(coeff, fqctx);
     gf264_mpoly_ctx_clear(ctx);
 }
 
 void gf264_mpoly_to_fq_nmod_mpoly(fq_nmod_mpoly_t res, const gf264_mpoly_t poly,
     const fq_nmod_ctx_t fqctx, const fq_nmod_mpoly_ctx_t fq_mpoly_ctx)
 {
-    if (!g_gf264_conversion || !g_gf264_conversion->initialized) init_gf264_conversion(fqctx);
-    fq_nmod_mpoly_zero(res, fq_mpoly_ctx);
-    if (poly->length == 0) return;
+    if (!g_gf264_conversion || !g_gf264_conversion->initialized)
+        init_gf264_conversion(fqctx);
+    fq_nmod_mpoly_fit_length_reset_bits(res, poly->length, poly->bits, fq_mpoly_ctx);
+    _fq_nmod_mpoly_set_length(res, poly->length, fq_mpoly_ctx);
     slong N = mpoly_words_per_exp(poly->bits, fq_mpoly_ctx->minfo);
-    slong nvars = fq_mpoly_ctx->minfo->nvars;
-    for (slong i = 0; i < poly->length; i++) {
-        if (!gf264_is_zero(&poly->coeffs[i])) {
-            fq_nmod_t coeff; fq_nmod_init(coeff, fqctx);
-            gf264_to_fq_nmod(coeff, &poly->coeffs[i], fqctx);
-            ulong *exp = (ulong *)flint_malloc(nvars * sizeof(ulong));
-            mpoly_get_monomial_ui(exp, poly->exps+N*i, poly->bits, fq_mpoly_ctx->minfo);
-            fq_nmod_mpoly_set_coeff_fq_nmod_ui(res, coeff, exp, fq_mpoly_ctx);
-            flint_free(exp); fq_nmod_clear(coeff, fqctx);
-        }
+    if (poly->length)
+        memcpy(res->exps, poly->exps, sizeof(ulong) * N * poly->length);
+    fq_nmod_t coeff;
+    fq_nmod_init(coeff, fqctx);
+    for (slong i = 0; i < poly->length; ++i) {
+        gf264_to_fq_nmod(coeff, &poly->coeffs[i], fqctx);
+        fq_nmod_mpoly_set_term_coeff_fq_nmod(res, i, coeff, fq_mpoly_ctx);
     }
+    fq_nmod_clear(coeff, fqctx);
+    fq_nmod_mpoly_sort_terms(res, fq_mpoly_ctx);
+    fq_nmod_mpoly_combine_like_terms(res, fq_mpoly_ctx);
 }
 
 void fq_nmod_mpoly_to_gf2128_mpoly(gf2128_mpoly_t res, const fq_nmod_mpoly_t poly,
@@ -985,51 +967,42 @@ void fq_nmod_mpoly_to_gf2128_mpoly(gf2128_mpoly_t res, const fq_nmod_mpoly_t pol
 {
     gf2128_mpoly_ctx_t ctx;
     gf2128_mpoly_ctx_init(ctx, fq_mpoly_ctx->minfo->nvars, fq_mpoly_ctx->minfo->ord);
-    gf2128_mpoly_zero(res, ctx);
-    slong len = fq_nmod_mpoly_length(poly, fq_mpoly_ctx);
-    if (len == 0) { gf2128_mpoly_ctx_clear(ctx); return; }
-    if (!g_gf2128_conversion || !g_gf2128_conversion->initialized) init_gf2128_conversion(fqctx);
-    flint_bitcnt_t bits = FLINT_MAX(poly->bits, MPOLY_MIN_BITS);
-    gf2128_mpoly_fit_length_reset_bits(res, len, bits, ctx);
-    res->length = 0;
-    slong nvars = fq_mpoly_ctx->minfo->nvars;
-    slong N = mpoly_words_per_exp(bits, ctx->minfo);
-    slong actual = 0;
-    for (slong i = 0; i < len; i++) {
-        fq_nmod_t coeff; fq_nmod_init(coeff, fqctx);
+    if (!g_gf2128_conversion || !g_gf2128_conversion->initialized)
+        init_gf2128_conversion(fqctx);
+    gf2128_mpoly_fit_length_reset_bits(res, poly->length, poly->bits, ctx);
+    slong N = mpoly_words_per_exp(poly->bits, ctx->minfo);
+    if (poly->length)
+        memcpy(res->exps, poly->exps, sizeof(ulong) * N * poly->length);
+    fq_nmod_t coeff;
+    fq_nmod_init(coeff, fqctx);
+    for (slong i = 0; i < poly->length; ++i) {
         fq_nmod_mpoly_get_term_coeff_fq_nmod(coeff, poly, i, fq_mpoly_ctx);
-        gf2128_t c = fq_nmod_to_gf2128(coeff, fqctx);
-        if (!gf2128_is_zero(&c)) {
-            ulong *exp = (ulong *)flint_malloc(nvars * sizeof(ulong));
-            fq_nmod_mpoly_get_term_exp_ui(exp, poly, i, fq_mpoly_ctx);
-            mpoly_set_monomial_ui(res->exps + N*actual, exp, bits, ctx->minfo);
-            res->coeffs[actual++] = c;
-            flint_free(exp);
-        }
-        fq_nmod_clear(coeff, fqctx);
+        res->coeffs[i] = fq_nmod_to_gf2128(coeff, fqctx);
     }
-    res->length = actual;
+    res->length = poly->length;
+    fq_nmod_clear(coeff, fqctx);
     gf2128_mpoly_ctx_clear(ctx);
 }
 
 void gf2128_mpoly_to_fq_nmod_mpoly(fq_nmod_mpoly_t res, const gf2128_mpoly_t poly,
     const fq_nmod_ctx_t fqctx, const fq_nmod_mpoly_ctx_t fq_mpoly_ctx)
 {
-    if (!g_gf2128_conversion || !g_gf2128_conversion->initialized) init_gf2128_conversion(fqctx);
-    fq_nmod_mpoly_zero(res, fq_mpoly_ctx);
-    if (poly->length == 0) return;
+    if (!g_gf2128_conversion || !g_gf2128_conversion->initialized)
+        init_gf2128_conversion(fqctx);
+    fq_nmod_mpoly_fit_length_reset_bits(res, poly->length, poly->bits, fq_mpoly_ctx);
+    _fq_nmod_mpoly_set_length(res, poly->length, fq_mpoly_ctx);
     slong N = mpoly_words_per_exp(poly->bits, fq_mpoly_ctx->minfo);
-    slong nvars = fq_mpoly_ctx->minfo->nvars;
-    for (slong i = 0; i < poly->length; i++) {
-        if (!gf2128_is_zero(&poly->coeffs[i])) {
-            fq_nmod_t coeff; fq_nmod_init(coeff, fqctx);
-            gf2128_to_fq_nmod(coeff, &poly->coeffs[i], fqctx);
-            ulong *exp = (ulong *)flint_malloc(nvars * sizeof(ulong));
-            mpoly_get_monomial_ui(exp, poly->exps+N*i, poly->bits, fq_mpoly_ctx->minfo);
-            fq_nmod_mpoly_set_coeff_fq_nmod_ui(res, coeff, exp, fq_mpoly_ctx);
-            flint_free(exp); fq_nmod_clear(coeff, fqctx);
-        }
+    if (poly->length)
+        memcpy(res->exps, poly->exps, sizeof(ulong) * N * poly->length);
+    fq_nmod_t coeff;
+    fq_nmod_init(coeff, fqctx);
+    for (slong i = 0; i < poly->length; ++i) {
+        gf2128_to_fq_nmod(coeff, &poly->coeffs[i], fqctx);
+        fq_nmod_mpoly_set_term_coeff_fq_nmod(res, i, coeff, fq_mpoly_ctx);
     }
+    fq_nmod_clear(coeff, fqctx);
+    fq_nmod_mpoly_sort_terms(res, fq_mpoly_ctx);
+    fq_nmod_mpoly_combine_like_terms(res, fq_mpoly_ctx);
 }
 
 /* ============================================================================
@@ -1389,7 +1362,8 @@ int gf28_mpoly_mul_array(gf28_mpoly_t A, const gf28_mpoly_t B,
         init_gf28_standard();
 
     if (B->length == 0 || C->length == 0) { gf28_mpoly_zero(A, ctx); return 1; }
-    if (B->bits == 0 || C->bits == 0) return 0;
+    if (B->bits == 0 || C->bits == 0 ||
+        B->bits > FLINT_BITS || C->bits > FLINT_BITS) return 0;
 
     if (ctx->minfo->nvars < 1) return 0;
     if (mpoly_words_per_exp(B->bits, ctx->minfo) > 2 ||
@@ -1424,13 +1398,10 @@ int gf28_mpoly_mul_array(gf28_mpoly_t A, const gf28_mpoly_t B,
 int gf28_mpoly_can_use_array_mul(const gf28_mpoly_t B, const gf28_mpoly_t C,
                                  const gf28_mpoly_ctx_t ctx)
 {
-    if (B->length == 0 || C->length == 0) return 1;
-    if (B->bits == 0 || C->bits == 0) return 0;
-    if (ctx->minfo->nvars < 1) return 0;
-    if (mpoly_words_per_exp(B->bits, ctx->minfo) > 2 ||
-        mpoly_words_per_exp(C->bits, ctx->minfo) > 2) return 0;
-    return 1;
+    return gf2n_prefer_array(B->exps, B->length, B->bits,
+        C->exps, C->length, C->bits, ctx->minfo, UWORD(1) << 28);
 }
+
 
 double get_wall_time_8(void) {
     struct timeval time;
@@ -1779,6 +1750,8 @@ int gf28_mpoly_mul_with_fqctx(gf28_mpoly_t res, const gf28_mpoly_t a,
     const gf28_mpoly_t b, const gf28_mpoly_ctx_t ctx, const fq_nmod_ctx_t fq_ctx)
 {
     if (a->length == 0 || b->length == 0) { gf28_mpoly_zero(res,ctx); return 1; }
+    if (a->bits >= FLINT_BITS || b->bits >= FLINT_BITS || ctx->minfo->nvars < 1)
+        return gf28_mpoly_mul_sparse(res, a, b, ctx);
     slong mva, mvb;
     int ua = gf28_mpoly_is_univariate(a, ctx, &mva);
     int ub = gf28_mpoly_is_univariate(b, ctx, &mvb);
@@ -1786,6 +1759,9 @@ int gf28_mpoly_mul_with_fqctx(gf28_mpoly_t res, const gf28_mpoly_t a,
         slong da = gf28_mpoly_univariate_degree(a,ctx,mva);
         slong db = gf28_mpoly_univariate_degree(b,ctx,mvb);
         slong mx = FLINT_MAX(da,db);
+        if (mx < 0 ||
+            (double)mx > 4.0 * (a->length + b->length))
+            return gf28_mpoly_mul_sparse(res, a, b, ctx);
         gf28_poly_t pa,pb,pr;
         gf28_poly_init(pa); gf28_poly_init(pb); gf28_poly_init(pr);
         gf28_mpoly_to_gf28_poly_univar(pa,a,ctx,mva);
@@ -1794,7 +1770,7 @@ int gf28_mpoly_mul_with_fqctx(gf28_mpoly_t res, const gf28_mpoly_t a,
         else if (mx <= 10000) gf28_poly_mul_karatsuba(pr,pa,pb);
         else {
             gf28_poly_clear(pa);gf28_poly_clear(pb);gf28_poly_clear(pr);
-            if (fq_ctx == NULL) return 0;
+            if (fq_ctx == NULL) return gf28_mpoly_mul_sparse(res, a, b, ctx);
             gf28_mpoly_mul_flint_univar(res, a, b, ctx, mva, fq_ctx);
             return 1;
         }
@@ -1802,7 +1778,9 @@ int gf28_mpoly_mul_with_fqctx(gf28_mpoly_t res, const gf28_mpoly_t a,
         gf28_poly_clear(pa);gf28_poly_clear(pb);gf28_poly_clear(pr);
         return 1;
     }
-    return gf28_mpoly_mul_array(res, a, b, ctx);
+    if (gf28_mpoly_can_use_array_mul(a, b, ctx) &&
+        gf28_mpoly_mul_array(res, a, b, ctx)) return 1;
+    return gf28_mpoly_mul_sparse(res, a, b, ctx);
 }
 
 int gf28_mpoly_mul(gf28_mpoly_t res, const gf28_mpoly_t a,
@@ -1825,54 +1803,42 @@ void fq_nmod_mpoly_to_gf28_mpoly(gf28_mpoly_t res, const fq_nmod_mpoly_t poly,
 {
     gf28_mpoly_ctx_t ctx;
     gf28_mpoly_ctx_init(ctx, fq_mpoly_ctx->minfo->nvars, fq_mpoly_ctx->minfo->ord);
-    gf28_mpoly_zero(res, ctx);
-    slong len = fq_nmod_mpoly_length(poly, fq_mpoly_ctx);
-    if (len == 0) { gf28_mpoly_ctx_clear(ctx); return; }
-    flint_bitcnt_t bits = FLINT_MAX(poly->bits, MPOLY_MIN_BITS);
-    gf28_mpoly_fit_length_reset_bits(res, len, bits, ctx);
-    res->length = 0;
-    slong nvars = fq_mpoly_ctx->minfo->nvars;
-    slong N = mpoly_words_per_exp(bits, ctx->minfo);
-    slong actual = 0;
+    if (!g_gf28_conversion || !g_gf28_conversion->initialized)
+        init_gf28_conversion(fqctx);
+    gf28_mpoly_fit_length_reset_bits(res, poly->length, poly->bits, ctx);
+    slong N = mpoly_words_per_exp(poly->bits, ctx->minfo);
+    if (poly->length)
+        memcpy(res->exps, poly->exps, sizeof(ulong) * N * poly->length);
     fq_nmod_t coeff;
     fq_nmod_init(coeff, fqctx);
-    ulong *exp = (ulong *) flint_malloc(nvars * sizeof(ulong));
-    for (slong i = 0; i < len; i++) {
+    for (slong i = 0; i < poly->length; ++i) {
         fq_nmod_mpoly_get_term_coeff_fq_nmod(coeff, poly, i, fq_mpoly_ctx);
-        uint8_t c = fq_nmod_to_gf28_elem(coeff, fqctx);
-        if (c != 0) {
-            fq_nmod_mpoly_get_term_exp_ui(exp, poly, i, fq_mpoly_ctx);
-            mpoly_set_monomial_ui(res->exps + N*actual, exp, bits, ctx->minfo);
-            res->coeffs[actual++] = c;
-        }
+        res->coeffs[i] = fq_nmod_to_gf28_elem(coeff, fqctx);
     }
-    flint_free(exp);
+    res->length = poly->length;
     fq_nmod_clear(coeff, fqctx);
-    res->length = actual;
     gf28_mpoly_ctx_clear(ctx);
 }
 
 void gf28_mpoly_to_fq_nmod_mpoly(fq_nmod_mpoly_t res, const gf28_mpoly_t poly,
     const fq_nmod_ctx_t fqctx, const fq_nmod_mpoly_ctx_t fq_mpoly_ctx)
 {
-    fq_nmod_mpoly_zero(res, fq_mpoly_ctx);
-    if (poly->length == 0) return;
+    if (!g_gf28_conversion || !g_gf28_conversion->initialized)
+        init_gf28_conversion(fqctx);
+    fq_nmod_mpoly_fit_length_reset_bits(res, poly->length, poly->bits, fq_mpoly_ctx);
+    _fq_nmod_mpoly_set_length(res, poly->length, fq_mpoly_ctx);
     slong N = mpoly_words_per_exp(poly->bits, fq_mpoly_ctx->minfo);
-    slong nvars = fq_mpoly_ctx->minfo->nvars;
+    if (poly->length)
+        memcpy(res->exps, poly->exps, sizeof(ulong) * N * poly->length);
     fq_nmod_t coeff;
     fq_nmod_init(coeff, fqctx);
-    ulong *exp = (ulong *) flint_malloc(nvars * sizeof(ulong));
-    for (slong i = 0; i < poly->length; i++) {
-        if (poly->coeffs[i] != 0) {
-            gf28_elem_to_fq_nmod(coeff, poly->coeffs[i], fqctx);
-            mpoly_get_monomial_ui(exp, poly->exps+N*i, poly->bits, fq_mpoly_ctx->minfo);
-            fq_nmod_mpoly_push_term_fq_nmod_ui(res, coeff, exp, fq_mpoly_ctx);
-        }
+    for (slong i = 0; i < poly->length; ++i) {
+        gf28_elem_to_fq_nmod(coeff, poly->coeffs[i], fqctx);
+        fq_nmod_mpoly_set_term_coeff_fq_nmod(res, i, coeff, fq_mpoly_ctx);
     }
+    fq_nmod_clear(coeff, fqctx);
     fq_nmod_mpoly_sort_terms(res, fq_mpoly_ctx);
     fq_nmod_mpoly_combine_like_terms(res, fq_mpoly_ctx);
-    flint_free(exp);
-    fq_nmod_clear(coeff, fqctx);
 }
 
 /* ============================================================================
@@ -2175,7 +2141,8 @@ int gf24_mpoly_mul_array(gf24_mpoly_t A, const gf24_mpoly_t B,
         init_gf24_standard();
 
     if (B->length == 0 || C->length == 0) { gf24_mpoly_zero(A, ctx); return 1; }
-    if (B->bits == 0 || C->bits == 0) return 0;
+    if (B->bits == 0 || C->bits == 0 ||
+        B->bits > FLINT_BITS || C->bits > FLINT_BITS) return 0;
     if (ctx->minfo->nvars < 1) return 0;
     if (mpoly_words_per_exp(B->bits, ctx->minfo) > 2 ||
         mpoly_words_per_exp(C->bits, ctx->minfo) > 2) return 0;
@@ -2215,7 +2182,9 @@ int gf24_mpoly_can_use_array_mul(const gf24_mpoly_t B, const gf24_mpoly_t C,
 int gf24_mpoly_mul(gf24_mpoly_t res, const gf24_mpoly_t a,
                    const gf24_mpoly_t b, const gf24_mpoly_ctx_t ctx)
 {
-    return gf24_mpoly_mul_array(res, a, b, ctx);
+    if (gf24_mpoly_can_use_array_mul(a, b, ctx) &&
+        gf24_mpoly_mul_array(res, a, b, ctx)) return 1;
+    return gf24_mpoly_mul_sparse(res, a, b, ctx);
 }
 
 void fq_nmod_mpoly_to_gf24_mpoly(gf24_mpoly_t res, const fq_nmod_mpoly_t poly,
@@ -2223,60 +2192,42 @@ void fq_nmod_mpoly_to_gf24_mpoly(gf24_mpoly_t res, const fq_nmod_mpoly_t poly,
 {
     gf24_mpoly_ctx_t ctx;
     gf24_mpoly_ctx_init(ctx, fq_mpoly_ctx->minfo->nvars, fq_mpoly_ctx->minfo->ord);
-    gf24_mpoly_zero(res, ctx);
-    slong len = fq_nmod_mpoly_length(poly, fq_mpoly_ctx);
-    if (len == 0) { gf24_mpoly_ctx_clear(ctx); return; }
     if (!g_gf24_conversion || !g_gf24_conversion->initialized)
         init_gf24_conversion(fqctx);
-
-    flint_bitcnt_t bits = FLINT_MAX(poly->bits, MPOLY_MIN_BITS);
-    gf28_mpoly_fit_length_reset_bits(res, len, bits, ctx);
-    res->length = 0;
-    slong nvars = fq_mpoly_ctx->minfo->nvars;
-    slong N = mpoly_words_per_exp(bits, ctx->minfo);
-    slong actual = 0;
+    gf28_mpoly_fit_length_reset_bits(res, poly->length, poly->bits, ctx);
+    slong N = mpoly_words_per_exp(poly->bits, ctx->minfo);
+    if (poly->length)
+        memcpy(res->exps, poly->exps, sizeof(ulong) * N * poly->length);
     fq_nmod_t coeff;
     fq_nmod_init(coeff, fqctx);
-    ulong *exp = (ulong *) flint_malloc(nvars * sizeof(ulong));
-    for (slong i = 0; i < len; i++) {
+    for (slong i = 0; i < poly->length; ++i) {
         fq_nmod_mpoly_get_term_coeff_fq_nmod(coeff, poly, i, fq_mpoly_ctx);
-        uint8_t c = fq_nmod_to_gf24_elem(coeff, fqctx);
-        if (c != 0) {
-            fq_nmod_mpoly_get_term_exp_ui(exp, poly, i, fq_mpoly_ctx);
-            mpoly_set_monomial_ui(res->exps + N*actual, exp, bits, ctx->minfo);
-            res->coeffs[actual++] = c;
-        }
+        res->coeffs[i] = fq_nmod_to_gf24_elem(coeff, fqctx);
     }
-    flint_free(exp);
+    res->length = poly->length;
     fq_nmod_clear(coeff, fqctx);
-    res->length = actual;
     gf24_mpoly_ctx_clear(ctx);
 }
 
 void gf24_mpoly_to_fq_nmod_mpoly(fq_nmod_mpoly_t res, const gf24_mpoly_t poly,
     const fq_nmod_ctx_t fqctx, const fq_nmod_mpoly_ctx_t fq_mpoly_ctx)
 {
-    fq_nmod_mpoly_zero(res, fq_mpoly_ctx);
-    if (poly->length == 0) return;
     if (!g_gf24_conversion || !g_gf24_conversion->initialized)
         init_gf24_conversion(fqctx);
-
+    fq_nmod_mpoly_fit_length_reset_bits(res, poly->length, poly->bits, fq_mpoly_ctx);
+    _fq_nmod_mpoly_set_length(res, poly->length, fq_mpoly_ctx);
     slong N = mpoly_words_per_exp(poly->bits, fq_mpoly_ctx->minfo);
-    slong nvars = fq_mpoly_ctx->minfo->nvars;
+    if (poly->length)
+        memcpy(res->exps, poly->exps, sizeof(ulong) * N * poly->length);
     fq_nmod_t coeff;
     fq_nmod_init(coeff, fqctx);
-    ulong *exp = (ulong *) flint_malloc(nvars * sizeof(ulong));
-    for (slong i = 0; i < poly->length; i++) {
-        if (poly->coeffs[i] != 0) {
-            gf24_elem_to_fq_nmod(coeff, poly->coeffs[i], fqctx);
-            mpoly_get_monomial_ui(exp, poly->exps + N*i, poly->bits, fq_mpoly_ctx->minfo);
-            fq_nmod_mpoly_push_term_fq_nmod_ui(res, coeff, exp, fq_mpoly_ctx);
-        }
+    for (slong i = 0; i < poly->length; ++i) {
+        gf24_elem_to_fq_nmod(coeff, poly->coeffs[i], fqctx);
+        fq_nmod_mpoly_set_term_coeff_fq_nmod(res, i, coeff, fq_mpoly_ctx);
     }
+    fq_nmod_clear(coeff, fqctx);
     fq_nmod_mpoly_sort_terms(res, fq_mpoly_ctx);
     fq_nmod_mpoly_combine_like_terms(res, fq_mpoly_ctx);
-    flint_free(exp);
-    fq_nmod_clear(coeff, fqctx);
 }
 
 /* ============================================================================
@@ -2374,3 +2325,17 @@ static void _gf28_mpoly_mul_schoolbook(
     flint_free(ec);
 }
 
+
+/* Shared sparse kernel, specialized for every native binary extension field. */
+DEFINE_GF2N_SPARSE_MUL(gf24, uint8_t, GF28_IS_ZERO, GF28_ADD, gf24_mul,
+    if (!g_gf24_complete_tables.initialized) init_gf24_standard())
+DEFINE_GF2N_SPARSE_MUL(gf28, uint8_t, GF28_IS_ZERO, GF28_ADD, GF28_MUL,
+    if (!g_gf28_complete_tables.initialized) init_gf28_standard())
+DEFINE_GF2N_SPARSE_MUL(gf216, uint16_t, GF216_IS_ZERO, GF216_ADD, GF216_MUL,
+    if (!g_gf216_tables) init_gf216_standard())
+DEFINE_GF2N_SPARSE_MUL(gf232, gf232_t, GF232_IS_ZERO, GF232_ADD, GF232_MUL,
+    init_gf232())
+DEFINE_GF2N_SPARSE_MUL(gf264, gf264_t, GF264_IS_ZERO, GF264_ADD, GF264_MUL,
+    init_gf264())
+DEFINE_GF2N_SPARSE_MUL(gf2128, gf2128_t, GF2128_IS_ZERO, GF2128_ADD, GF2128_MUL,
+    init_gf2128())

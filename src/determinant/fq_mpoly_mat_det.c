@@ -2156,6 +2156,7 @@ static void compute_fq_det_nmod_minor_direct(unified_mpoly_struct *result,
  * about its rank. On ineligibility/budget failure, leave result untouched.
  * Each axis contains its own count of exponent vectors of length size-1. */
 #include "mq_compact_output.h"
+#include "mq_gf2n_layout.h"
 
 static int compute_fq_det_mq_projected_impl(unified_mpoly_struct *result, fq_mq_compact *compact,
                                             unified_mpoly_struct **matrix, slong size,
@@ -2163,7 +2164,7 @@ static int compute_fq_det_mq_projected_impl(unified_mpoly_struct *result, fq_mq_
                                             slong col_count)
 {
     if (size < 2 || size >= FLINT_BITS || row_count <= 0 || row_count > MQ_FILTER_MAX_MONOMS ||
-        col_count <= 0 || col_count > MQ_FILTER_MAX_MONOMS || !rows || !cols || !is_prime_field(matrix[0][0].ctx) ||
+        col_count <= 0 || col_count > MQ_FILTER_MAX_MONOMS || !rows || !cols ||
         matrix[0][0].nvars != 2 * (size - 1) || matrix[0][0].npars != 1) return 0;
     /* This backend intentionally accepts only divided-difference MQ matrices.
      * Check all entries, including the parameter degree, before packing. */
@@ -2188,6 +2189,11 @@ static int compute_fq_det_mq_projected_impl(unified_mpoly_struct *result, fq_mq_
         if (cols[i] < 0 || cols[i] > size + 1) return 0;
     mq_det_filter filter;
     if (!mq_filter_init(&filter, size - 1, rows, row_count, cols, col_count)) return 0;
+    if (!is_prime_field(matrix[0][0].ctx)) {
+        int ok = !compact && mq_extension_projected(result, matrix, size, &filter);
+        mq_filter_clear(&filter);
+        return ok;
+    }
     const fq_nmod_ctx_struct *fq = matrix[0][0].ctx;
     slong nv = matrix[0][0].nvars;
     nmod_mpoly_ctx_t ctx;
