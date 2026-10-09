@@ -51,10 +51,10 @@ static void dixon_mq_native_det(fq_nmod_poly_t out, nmod_poly_mat_t matrix,
             }
             if (valid) interpolation_bound = bound;
             nmod_poly_mat_swap(matrix,core);
-            dixon_info_log("  MQ Step 4 Schur: %ld -> %ld, compression %.3fs\n",
+            dixon_info_log("  Step 4 Schur: %ld -> %ld, compression %.3fs\n",
                            n,p->h,get_wall_time()-start);
         } else {
-            dixon_info_log("  MQ Step 4 Schur: complement singular or degree check failed; using native determinant backend\n");
+            dixon_info_log("  Step 4 Schur: complement singular or degree check failed; using native determinant backend\n");
         }
         nmod_poly_mat_clear(core);
         if(p->odd) factor=prime-factor;

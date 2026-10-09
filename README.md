@@ -270,7 +270,10 @@ one retained parameter over a prime field, `auto` uses interpolation when
 the field has enough points and at least four threads are used. Explicit `interp` uses all field elements when
 the degree bound is too large, returning a polynomial with the same values
 on the base field rather than an exact resultant. Schur compression is enabled by default for
-eligible systems; `--no-mq-step4-schur` disables it.
+eligible single-parameter systems, including higher and mixed degrees with two or
+more eliminated variables. The parameter must share each polynomial's total-degree
+budget; degree and complement-invertibility checks must pass, otherwise the original
+backend is used. `--no-mq-step4-schur` disables compression.
 
 Example:
 ```bash

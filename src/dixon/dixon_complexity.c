@@ -2327,7 +2327,7 @@ static void dixon_complexity_write_report_body(
             detailed.step4_log2 = select_step4_best_method(&detailed, &detailed.step4_best_method);
             if (detailed.step4_mq_schur_log2 < detailed.step4_log2) {
                 detailed.step4_log2 = detailed.step4_mq_schur_log2;
-                detailed.step4_best_method = "MQ blocked Schur + core determinant";
+                detailed.step4_best_method = "blocked Schur + core determinant";
             }
         }
         detailed.overall_log2 = FLINT_MAX(detailed.step1_best_log2, detailed.step4_log2);
@@ -2831,7 +2831,7 @@ static void dixon_complexity_write_report_body(
         fprintf(fp, "Step 4 sparse interpolation (log2): %.6f\n",
                 report->step4_sparse_log2);
         if (verbose_level >= 2 && isfinite(report->step4_mq_schur_log2)) {
-            fprintf(fp, "Step 4 MQ blocked Schur + core determinant (log2): %.6f\n",
+            fprintf(fp, "Step 4 blocked Schur + core determinant (log2): %.6f\n",
                     report->step4_mq_schur_log2);
             fprintf(fp, "  Core size: %ld; formation: %.6f; core determinant: %.6f; verification: %.6f (log2).\n",
                     report->step4_mq_core_size, report->step4_mq_schur_formation_log2,

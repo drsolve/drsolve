@@ -5199,10 +5199,9 @@ static void dixon_mq_step4_profile_clear(dixon_mq_step4_profile *p)
 static int dixon_mq_step4_eligible(const unified_mpoly_struct *polys, slong m, slong npars)
 {
     if (npars != 1 || m < 2) return 0;
-    /* The checked Schur kernel uses degree weights, not quadratic formulas.
-     * Admit equal-degree bivariate elimination as well, provided the parameter
-     * shares the total-degree budget. Mixed degrees retain the existing path. */
-    slong common_degree = 0;
+    /* Degree weights and the checked complement certificate also apply to
+     * higher and mixed degrees in any number of eliminated variables. Each
+     * parameter must share its polynomial's elimination-degree budget. */
     for (slong i = 0; i <= m; i++) {
         slong max_elim = 0, max_total = 0;
         for (slong t = 0; t < dr_mpoly_length(&(polys[i])); t++) {
@@ -5216,10 +5215,7 @@ static int dixon_mq_step4_eligible(const unified_mpoly_struct *polys, slong m, s
             if (term->par_exp) degree += term->par_exp[0];
             max_total = FLINT_MAX(max_total, degree);
         }
-        if (max_elim < 2 || max_total > max_elim) return 0;
-        if (m != 2 && max_elim != 2) return 0;
-        if (i == 0) common_degree = max_elim;
-        else if (max_elim != common_degree) return 0;
+        if (max_elim < 1 || max_total > max_elim) return 0;
     }
     return 1;
 }
@@ -5234,7 +5230,10 @@ static void dixon_mq_step4_prepare(dixon_mq_step4_profile *out,
                                          degrees, m + 1, m)) return;
     flint_free(R);
     for (slong d = 0; d < hl; d++) h += H[d];
-    if (size != rho || h <= 0 || h >= size) { flint_free(H); return; }
+    /* Higher-degree systems can have actual rank below the model's rho.
+     * Use the selected size; the degree-layer counts, zero complement budget,
+     * and kernel's invertibility checks certify the proposed compression. */
+    if (h <= 0 || h >= size) { flint_free(H); return; }
     out->rows = flint_malloc((size_t)size * sizeof(slong));
     out->cols = flint_malloc((size_t)size * sizeof(slong));
     out->rd = flint_malloc((size_t)size * sizeof(slong));
@@ -5290,12 +5289,12 @@ static int dixon_mq_step4_try(fq_nmod_poly_t det, const fq_nmod_poly_mat_t matri
         fq_nmod_t factor; fq_nmod_init(factor, ctx);
         int ok = !g_field_equation_reduction && dixon_extension_schur(core, factor, matrix, p, ctx);
         if (ok) {
-            dixon_info_log("  MQ extension Step 4 Schur: %ld -> %ld, compression %.3fs\n",
+            dixon_info_log("  Step 4 Schur (extension field): %ld -> %ld, compression %.3fs\n",
                            p->size, p->h, get_wall_time()-start);
             fq_nmod_poly_mat_det_iter(det, core, ctx);
             fq_nmod_poly_scalar_mul_fq_nmod(det, det, factor, ctx);
         } else
-            dixon_info_log("  MQ extension Step 4 Schur: certificate failed; using original determinant backend\n");
+            dixon_info_log("  Step 4 Schur (extension field): certificate failed; using original determinant backend\n");
         fq_nmod_clear(factor, ctx); fq_nmod_poly_mat_clear(core, ctx);
         return ok;
     }
@@ -5323,7 +5322,7 @@ static int dixon_mq_step4_try(fq_nmod_poly_t det, const fq_nmod_poly_mat_t matri
                 fq_nmod_poly_set_coeff(fq_nmod_poly_mat_entry(small, i, j), k, coefficient, ctx);
             }
         }
-        dixon_info_log("  MQ Step 4 Schur: %ld -> %ld, compression %.3fs\n",
+        dixon_info_log("  Step 4 Schur: %ld -> %ld, compression %.3fs\n",
                        p->size, p->h, get_wall_time() - start);
         fq_nmod_poly_mat_det_iter(det, small, ctx);
         if (p->odd) factor = prime - factor;
@@ -5332,7 +5331,7 @@ static int dixon_mq_step4_try(fq_nmod_poly_t det, const fq_nmod_poly_mat_t matri
         fq_nmod_clear(coefficient, ctx);
         fq_nmod_poly_mat_clear(small, ctx);
     } else {
-        dixon_info_log("  MQ Step 4 Schur: complement singular or degree check failed; using original determinant backend\n");
+        dixon_info_log("  Step 4 Schur: complement singular or degree check failed; using original determinant backend\n");
     }
     nmod_poly_mat_clear(core);
     return ok;
@@ -6335,7 +6334,7 @@ static void dixon_step4_resultant(unified_mpoly_struct *result,
         fq_nmod_poly_t det;
         fq_nmod_poly_init(det,polys[0].ctx);
         if (g_dixon_mq_step4_schur && !mq_profile->size)
-            dixon_info_log("  MQ Step 4 Schur: no eligible complement profile; using original determinant backend\n");
+            dixon_info_log("  Step 4 Schur: no eligible complement profile; using original determinant backend\n");
         if (prime_matrix) dixon_mq_native_det(det,prime_matrix,mq_profile,polys[0].ctx);
         else if (!dixon_mq_step4_try(det,poly_matrix,mq_profile,polys[0].ctx))
             fq_nmod_poly_mat_det_iter(det,poly_matrix,polys[0].ctx);
