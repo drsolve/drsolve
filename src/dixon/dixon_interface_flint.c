@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 // Complete fixed Dixon resultant string interface implementation
 #include "dixon_interface_flint.h"
+#include "dixon_pipeline.h"
 #include <stdint.h>
 
 // Fixed string parser implementation
@@ -1445,10 +1446,11 @@ char *dr_mpoly_to_string(const unified_mpoly_struct *poly, char **par_names, con
 // Core Dixon Function
 
 // Internal computation function with file output
-char *compute_dixon_internal_with_file(const char **poly_strings, slong npoly_strings,
+static char *compute_dixon_internal_with_screen(const char **poly_strings, slong npoly_strings,
                                        const char **var_names, slong nvars, const fq_nmod_ctx_t ctx,
                                        char ***remaining_vars, slong *num_remaining, FILE *fp_file,
-                                       int print_to_stdout, unified_mpoly_struct *result_poly_out)
+                                       int print_to_stdout, unified_mpoly_struct *result_poly_out,
+                                       dixon_scalar_screen_report_t *screen)
 {
 
     if (npoly_strings != nvars + 1) {
@@ -1511,6 +1513,15 @@ char *compute_dixon_internal_with_file(const char **poly_strings, slong npoly_st
         
         parse_expression(&state, &polys[i]);
     }
+    int screening = screen && state.npars == 0 &&
+                    g_resultant_method != RESULTANT_METHOD_MACAULAY;
+    dixon_scalar_screen_report_t *previous_screen = NULL;
+    if (screening) {
+        *screen = (dixon_scalar_screen_report_t){
+            .status = DIXON_SCREEN_INCONCLUSIVE, .constant_col = -1
+        };
+        previous_screen = dixon_scalar_screen_set_report(screen);
+    }
     // Compute resultant with original names
     unified_mpoly_struct dixon_result_poly = {0};
     if (g_resultant_method == RESULTANT_METHOD_MACAULAY) {
@@ -1524,6 +1535,8 @@ char *compute_dixon_internal_with_file(const char **poly_strings, slong npoly_st
                                       state.var_names, state.par_names, gen_name);
     }
 
+    if (screening) dixon_scalar_screen_set_report(previous_screen);
+
     if (result_poly_out) {
         dr_mpoly_move(result_poly_out, &dixon_result_poly);
     }
@@ -1532,10 +1545,12 @@ char *compute_dixon_internal_with_file(const char **poly_strings, slong npoly_st
     char *result_string;
     if (result_poly_out) {
         result_string = NULL;
+    } else if (screening) {
+        result_string = strdup(screen->status == DIXON_SCREEN_NO_COMMON_ZERO ? "1" : "0");
     } else if (dr_mpoly_length(&(dixon_result_poly)) == 0) {
         result_string = strdup("0");
     } else {
-        find_and_print_roots_of_univariate_resultant_with_file(&dixon_result_poly, &state, fp_file, print_to_stdout);
+        if (!screening) find_and_print_roots_of_univariate_resultant_with_file(&dixon_result_poly, &state, fp_file, print_to_stdout);
         result_string = dr_mpoly_to_string(&dixon_result_poly, state.par_names, gen_name);
     }
 
@@ -1570,6 +1585,34 @@ char *compute_dixon_internal_with_file(const char **poly_strings, slong npoly_st
     free(gen_name);
     
     return result_string;
+}
+
+char *compute_dixon_internal_with_file(const char **poly_strings, slong npoly_strings,
+                                       const char **var_names, slong nvars, const fq_nmod_ctx_t ctx,
+                                       char ***remaining_vars, slong *num_remaining, FILE *fp_file,
+                                       int print_to_stdout, unified_mpoly_struct *result_poly_out)
+{
+    return compute_dixon_internal_with_screen(poly_strings, npoly_strings, var_names, nvars,
+        ctx, remaining_vars, num_remaining, fp_file, print_to_stdout, result_poly_out, NULL);
+}
+
+char *dixon_str_with_scalar_screen(const char *poly_string, const char *vars_string,
+                                  const fq_nmod_ctx_t ctx,
+                                  dixon_scalar_screen_report_t *report)
+{
+    slong count = 0, nvars = 0, nremaining = 0;
+    char **polys = split_string(poly_string, &count);
+    char **vars = split_string(vars_string, &nvars);
+    char **remaining = NULL;
+    char *result = NULL;
+    if (report) *report = (dixon_scalar_screen_report_t){.constant_col = -1};
+    if (report && polys && vars && count == nvars + 1)
+        result = compute_dixon_internal_with_screen((const char **)polys, count,
+            (const char **)vars, nvars, ctx, &remaining, &nremaining, NULL, 1, NULL, report);
+    free_split_strings(remaining, nremaining);
+    free_split_strings(vars, nvars);
+    free_split_strings(polys, count);
+    return result;
 }
 
 // Internal computation function

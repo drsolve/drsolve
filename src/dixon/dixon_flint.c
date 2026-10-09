@@ -5412,11 +5412,123 @@ static hash_entry_t **dixon_label_index(const monom_t *labels, slong count,
     return index;
 }
 
+/* The caller owns the report. A scoped thread-local destination keeps modular
+ * reconstruction and nested/library computations separate from CLI screening. */
+static _Thread_local dixon_scalar_screen_report_t *scalar_screen_report;
+
+dixon_scalar_screen_report_t *dixon_scalar_screen_set_report(dixon_scalar_screen_report_t *report)
+{
+    dixon_scalar_screen_report_t *previous = scalar_screen_report;
+    scalar_screen_report = report;
+    return previous;
+}
+
+int dixon_scalar_screen_active(void)
+{
+    return scalar_screen_report != NULL;
+}
+
+int dixon_scalar_screen_value(void)
+{
+    return scalar_screen_report && scalar_screen_report->status == DIXON_SCREEN_NO_COMMON_ZERO;
+}
+
+/* At an affine common root a, M*m(a)=0 and the constant monomial is 1.
+ * Hence its column lies in the span of the other columns. A rank increase
+ * certifies inconsistency, while equal ranks do NOT certify a common root. */
+static void dixon_screen_scalar(unified_mpoly_struct ***matrix, slong nr, slong nc,
+    const monom_t *labels, slong nvars, const fq_nmod_ctx_t ctx)
+{
+    dixon_scalar_screen_report_t *report = scalar_screen_report;
+    *report = (dixon_scalar_screen_report_t){
+        .status = DIXON_SCREEN_INCONCLUSIVE, .nrows = nr, .ncols = nc,
+        .constant_col = -1
+    };
+    for (slong j = 0; labels && j < nc; j++) {
+        int constant = 1;
+        for (slong v = 0; v < nvars; v++)
+            if (labels[j].exp[v]) { constant = 0; break; }
+        if (constant) { report->constant_col = j; break; }
+    }
+    /* Put the constant column last so a window represents all other columns.
+     * If absent it is an implicit zero column, so the ranks are equal. */
+    slong c = report->constant_col;
+    slong *perm = flint_malloc((size_t) FLINT_MAX(nr, 1) * sizeof(*perm));
+    /* One row-pivoted LU gives both ranks. With the constant column last,
+     * deleting it loses a pivot iff the last pivot of U is in that column.
+     * FLINT stores L strictly below the diagonal, so scan the last nonzero
+     * U row starting at rank-1, not at column 0. */
+    if (fq_nmod_ctx_degree(ctx) == 1) {
+        nmod_mat_t a;
+        nmod_mat_init(a, nr, nc, fq_nmod_ctx_prime(ctx));
+        for (slong i = 0; i < nr; i++) for (slong j = 0; j < nc; j++) {
+            slong dest = j == c ? nc - 1 : j - (c >= 0 && j > c);
+            if (matrix[i][j] && dr_mpoly_length(matrix[i][j])) {
+                DR_MPOLY_TERM(term, matrix[i][j], 0);
+                nmod_mat_entry(a, i, dest) = nmod_poly_get_coeff_ui(term.coeff, 0);
+            }
+        }
+        report->rank = nmod_mat_lu(perm, a, 0);
+        report->nonconstant_rank = report->rank;
+        if (c >= 0 && report->rank > 0) {
+            slong pivot = report->rank - 1;
+            while (pivot < nc && nmod_mat_entry(a, report->rank - 1, pivot) == 0) pivot++;
+            FLINT_ASSERT(pivot < nc);
+            if (pivot == nc - 1) report->nonconstant_rank--;
+        }
+        nmod_mat_clear(a);
+    } else {
+        fq_nmod_mat_t a;
+        fq_nmod_mat_init(a, nr, nc, ctx);
+        for (slong i = 0; i < nr; i++) for (slong j = 0; j < nc; j++) {
+            slong dest = j == c ? nc - 1 : j - (c >= 0 && j > c);
+            if (matrix[i][j] && dr_mpoly_length(matrix[i][j])) {
+                DR_MPOLY_TERM(term, matrix[i][j], 0);
+                fq_nmod_set(fq_nmod_mat_entry(a, i, dest), term.coeff, ctx);
+            }
+        }
+        report->rank = fq_nmod_mat_lu(perm, a, 0, ctx);
+        report->nonconstant_rank = report->rank;
+        if (c >= 0 && report->rank > 0) {
+            slong pivot = report->rank - 1;
+            while (pivot < nc && fq_nmod_is_zero(fq_nmod_mat_entry(a, report->rank - 1, pivot), ctx)) pivot++;
+            FLINT_ASSERT(pivot < nc);
+            if (pivot == nc - 1) report->nonconstant_rank--;
+        }
+        fq_nmod_mat_clear(a, ctx);
+    }
+    flint_free(perm);
+    if (report->rank > report->nonconstant_rank)
+        report->status = DIXON_SCREEN_NO_COMMON_ZERO;
+    dixon_info_log("  rank(M) = %ld; rank(M without constant column) = %ld\n",
+                   report->rank, report->nonconstant_rank);
+    if (c < 0)
+        dixon_info_log("  Constant monomial column is absent (implicitly zero).\n");
+}
+
 /* Exact elimination records original row indices and pivot columns. Rank alone
  * does not certify the leading principal block. Works over extension fields too. */
 static void dixon_select_scalar(unified_mpoly_struct ***matrix, slong nr, slong nc,
     const fq_nmod_ctx_t ctx, slong **rows, slong **cols, slong *size)
 {
+    if (fq_nmod_ctx_degree(ctx) == 1) {
+        /* Two native LU factorizations recover original row/column indices. */
+        mp_limb_t *a = flint_calloc((size_t) nr * nc, sizeof(*a));
+        for (slong i = 0; i < nr; i++) for (slong j = 0; j < nc; j++)
+            if (matrix[i][j] && dr_mpoly_length(matrix[i][j])) {
+                DR_MPOLY_TERM(term, matrix[i][j], 0);
+                a[i * nc + j] = nmod_poly_get_coeff_ui(term.coeff, 0);
+            }
+        find_pivot_rows_nmod_dense(rows, size, a, nr, nc, &ctx->mod);
+        mp_limb_t *transpose = flint_malloc((size_t) nc * (*size) * sizeof(*transpose));
+        for (slong i = 0; i < *size; i++) for (slong j = 0; j < nc; j++)
+            transpose[j * (*size) + i] = a[(*rows)[i] * nc + j];
+        slong col_rank = 0;
+        find_pivot_rows_nmod_dense(cols, &col_rank, transpose, nc, *size, &ctx->mod);
+        FLINT_ASSERT(col_rank == *size);
+        flint_free(transpose); flint_free(a);
+        return;
+    }
     fq_nmod_mat_t a;
     fq_nmod_mat_init(a, nr, nc, ctx);
     slong *perm = flint_malloc(nr * sizeof(slong));
@@ -5443,6 +5555,7 @@ static void dixon_select_scalar(unified_mpoly_struct ***matrix, slong nr, slong 
         (*rows)[r]=perm[r]; (*cols)[r]=c;
         fq_nmod_inv(inv,fq_nmod_mat_entry(a,r,c),ctx);
         for (slong i=r+1; i<nr; i++) {
+            if (fq_nmod_is_zero(fq_nmod_mat_entry(a,i,c),ctx)) continue;
             fq_nmod_mul(factor,fq_nmod_mat_entry(a,i,c),inv,ctx);
             for (slong j=c; j<nc; j++) {
                 fq_nmod_mul(tmp,factor,fq_nmod_mat_entry(a,r,j),ctx);
@@ -5462,6 +5575,10 @@ void dixon_select_submatrix(unified_mpoly_struct ***full_matrix, slong nx_monoms
     const fq_nmod_ctx_t ctx, slong **selected_rows, slong **selected_cols, slong *size)
 {
     *selected_rows=NULL; *selected_cols=NULL; *size=0;
+    if (npars == 0 && dixon_scalar_screen_active()) {
+        dixon_screen_scalar(full_matrix, nx_monoms, ndual_monoms, dual_monoms, nvars, ctx);
+        return;
+    }
     if (!nx_monoms || !ndual_monoms) return;
     if (npars==0) {
         dixon_select_scalar(full_matrix,nx_monoms,ndual_monoms,ctx,selected_rows,selected_cols,size);
@@ -5802,7 +5919,8 @@ static void extract_fq_coefficient_matrix_from_dixon_impl(
         dixon_maybe_print_parallel_step_time("Step 2",
             (double)(clock()-step2_cpu_start)/CLOCKS_PER_SEC,get_wall_time()-step2_wall_start);
         clock_t direct_cpu = clock(); double direct_wall = get_wall_time();
-        dixon_info_log("\nStep 3: Extract maximal-rank submatrix\n");
+        dixon_info_log(dixon_scalar_screen_active() ? "\nStep 3: KSY scalar consistency screen\n"
+                                               : "\nStep 3: Extract maximal-rank submatrix\n");
         dixon_debug_log("  Using MQ candidate verified in Step 1\n");
         dixon_info_log("  Submatrix size: %ld x %ld\n",nx_monoms,nx_monoms);
         if (mq_profile)
@@ -5857,7 +5975,8 @@ static void extract_fq_coefficient_matrix_from_dixon_impl(
 
     clock_t step3_cpu_start = clock();
     double step3_wall_start = get_wall_time();
-    dixon_info_log("\nStep 3: Extract maximal-rank submatrix\n");
+    dixon_info_log(dixon_scalar_screen_active() ? "\nStep 3: KSY scalar consistency screen\n"
+                                               : "\nStep 3: Extract maximal-rank submatrix\n");
     slong *row_idx_array = NULL;
     slong *col_idx_array = NULL;
     slong num_rows, num_cols;
@@ -5888,7 +6007,7 @@ coefficient_matrix_selected: ;
     slong submat_rank = FLINT_MIN(num_rows, num_cols);
 
     if (submat_rank == 0) {
-        dixon_info_log("Warning: Matrix has rank 0\n");
+        if (!dixon_scalar_screen_active()) dixon_info_log("Warning: Matrix has rank 0\n");
         *matrix_size = 0;
         dixon_maybe_print_parallel_step_time("Step 3",
                                              (double) (clock() - step3_cpu_start) / CLOCKS_PER_SEC,
@@ -6507,7 +6626,7 @@ void fq_dixon_resultant(unified_mpoly_struct *result, unified_mpoly_struct *poly
                            dr_mpoly_length(result));
         }
 
-        if (g_dixon_verbose_level >= 1) print_resultant_summary(result, NULL, 0);
+        if (g_dixon_verbose_level >= 1 && !dixon_scalar_screen_active()) print_resultant_summary(result, NULL, 0);
         // Cleanup coefficient matrix
         for (slong i = 0; i < matrix_size; i++) {
             for (slong j = 0; j < matrix_size; j++) {
@@ -6518,7 +6637,10 @@ void fq_dixon_resultant(unified_mpoly_struct *result, unified_mpoly_struct *poly
         flint_free(coeff_matrix);
     } else {
         dr_mpoly_init(result, 0, npars, polys[0].ctx);
-        dixon_info_log("Warning: Empty coefficient matrix, resultant is 0\n");
+        if (dixon_scalar_screen_active())
+            dixon_info_log("\nStep 4: Dixon decision result\n  Dixon screening value = %d\n",
+                           dixon_scalar_screen_value());
+        else dixon_info_log("Warning: Empty coefficient matrix, resultant is 0\n");
     }
     
     // Cleanup
@@ -6527,7 +6649,8 @@ void fq_dixon_resultant(unified_mpoly_struct *result, unified_mpoly_struct *poly
 
     dr_mpoly_clear(&d_poly);
 
-    dixon_info_log("\n=== Dixon Resultant Computation Complete ===\n");
+    dixon_info_log(dixon_scalar_screen_active() ? "\n=== Dixon Scalar Screening Complete ===\n"
+                                               : "\n=== Dixon Resultant Computation Complete ===\n");
 }
 
 void fq_dixon_resultant_with_names(unified_mpoly_struct *result, unified_mpoly_struct *polys,
@@ -6639,7 +6762,7 @@ void fq_dixon_resultant_with_names(unified_mpoly_struct *result, unified_mpoly_s
             dixon_info_log("  Final resultant too large to display (%ld terms)\n",
                            dr_mpoly_length(result));
         }
-        if (g_dixon_verbose_level >= 1) print_resultant_summary(result, par_names, npars);
+        if (g_dixon_verbose_level >= 1 && !dixon_scalar_screen_active()) print_resultant_summary(result, par_names, npars);
         
         for (slong i = 0; i < matrix_size; i++) {
             for (slong j = 0; j < matrix_size; j++) {
@@ -6650,7 +6773,10 @@ void fq_dixon_resultant_with_names(unified_mpoly_struct *result, unified_mpoly_s
         flint_free(coeff_matrix);
     } else {
         dr_mpoly_init(result, 0, npars, polys[0].ctx);
-        dixon_info_log("Warning: Empty coefficient matrix, resultant is 0\n");
+        if (dixon_scalar_screen_active())
+            dixon_info_log("\nStep 4: Dixon decision result\n  Dixon screening value = %d\n",
+                           dixon_scalar_screen_value());
+        else dixon_info_log("Warning: Empty coefficient matrix, resultant is 0\n");
     }
     
     flint_free(row_indices);
@@ -6669,5 +6795,6 @@ void fq_dixon_resultant_with_names(unified_mpoly_struct *result, unified_mpoly_s
     flint_free(M_mvpoly);
     flint_free(modified_M_mvpoly);
 
-    dixon_info_log("\n=== Dixon Resultant Computation Complete ===\n");
+    dixon_info_log(dixon_scalar_screen_active() ? "\n=== Dixon Scalar Screening Complete ===\n"
+                                               : "\n=== Dixon Resultant Computation Complete ===\n");
 }

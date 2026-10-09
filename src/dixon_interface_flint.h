@@ -24,6 +24,7 @@
 #include <flint/fmpq_poly.h>
 #include <flint/fmpz_poly.h>
 
+#include "dixon_scalar_screen.h"
 #include "dixon_complexity.h"
 #include "dixon_recursive.h"
 #include "fq_multivariate_interpolation.h"
@@ -130,6 +131,15 @@ char* dixon_str(const char *poly_string,    // comma-separated polynomials
                 const char *vars_string,     // comma-separated variables
                 const fq_nmod_ctx_t ctx);
 
+/* Like dixon_str for parameterized inputs. With no remaining variables, fill
+ * report with a KSY consistency screen and return "1" for certified no common
+ * zero, or "0" for inconclusive. No determinant is computed in this case.
+ * These are screening indicators, NOT resultant values; 0 does not assert
+ * either a zero resultant or the existence of a common root.
+ * The caller frees the returned string. NULL denotes failure. */
+char *dixon_str_with_scalar_screen(const char *poly_string, const char *vars_string,
+                                  const fq_nmod_ctx_t ctx,
+                                  dixon_scalar_screen_report_t *report);
 /* Compute a finite-field resultant without serializing it to a string. */
 int dixon_compute_result_poly(const char *poly_string, const char *vars_string,
                               const fq_nmod_ctx_t ctx, unified_mpoly_struct *result_poly);

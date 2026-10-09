@@ -2,6 +2,12 @@
 #ifndef DIXON_PIPELINE_H
 #define DIXON_PIPELINE_H
 #include "dixon_flint.h"
+#include "dixon_scalar_screen.h"
+
+/* Scoped per-thread screen destination, installed only by the screening API. */
+dixon_scalar_screen_report_t *dixon_scalar_screen_set_report(dixon_scalar_screen_report_t *report);
+int dixon_scalar_screen_active(void);
+int dixon_scalar_screen_value(void);
 
 /* Borrowed matrix/labels; returned indices are owned by the caller. */
 void dixon_select_submatrix(unified_mpoly_struct ***matrix, slong nrows, slong ncols,

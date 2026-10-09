@@ -74,8 +74,8 @@ Example:
 ```
 - Writes all solutions to `out/solution_YYYYMMDD_HHMMSS.dr`
 
-Overdetermined systems over machine-word prime fields automatically use the
-quotient solver. Use `--quotient` to enable it for square systems:
+Dixon is the default. Use `--quotient` or `--solver quotient` to explicitly
+select quotient algebra over machine-word prime fields:
 
 ```bash
 # Overdetermined system
@@ -85,7 +85,7 @@ quotient solver. Use `--quotient` to enable it for square systems:
 # Select the Dixon solver
 ./drsolve --solver dixon "x^2-1, y-x, x*y-1" 257
 # Random system with a guaranteed solution: 3 variables, 5 equations
-./drsolve -r -n 3 "[2]*5" 257 --seed 123
+./drsolve --quotient -r -n 3 "[2]*5" 257 --seed 123
 ```
 
 ### FILE FORMAT

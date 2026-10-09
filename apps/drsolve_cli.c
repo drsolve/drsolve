@@ -2685,6 +2685,13 @@ static void print_polynomial_solutions_brief(const polynomial_solutions_t *sols)
     }
 }
 
+static void print_scalar_screen_report(FILE *out, const dixon_scalar_screen_report_t *report)
+{
+    fprintf(out, "Dixon scalar screen: %s\n",
+            report->status == DIXON_SCREEN_NO_COMMON_ZERO
+                ? "no_common_zero" : "inconclusive");
+}
+
 static FILE *save_result_to_file(const char *filename,
                                  const char *polys_str,
                                  const char *vars_str,
@@ -2692,7 +2699,8 @@ static FILE *save_result_to_file(const char *filename,
                                  const char *allvars_str,
                                  const fmpz_t prime, ulong power,
                                  const char *result,
-                                 double cpu_time, double wall_time, int threads_num)
+                                 double cpu_time, double wall_time, int threads_num,
+                                 const dixon_scalar_screen_report_t *screen)
 {
     FILE *out_fp = fopen(filename, "w");
     if (!out_fp) {
@@ -2700,7 +2708,8 @@ static FILE *save_result_to_file(const char *filename,
         return NULL;
     }
 
-    fprintf(out_fp, "%s\n", resultant_method_heading(g_resultant_method));
+    fprintf(out_fp, "%s\n", screen ? "Dixon Scalar Consistency Screen"
+                                    : resultant_method_heading(g_resultant_method));
     fprintf(out_fp, "==========================\n");
     fprintf(out_fp, "Field: ");
     print_field_label(out_fp, prime, power);
@@ -2715,19 +2724,24 @@ static FILE *save_result_to_file(const char *filename,
         fprintf(out_fp, "Ideal generators: %s\n", ideal_str);
         fprintf(out_fp, "All variables: %s\n", allvars_str);
     } else {
-        fprintf(out_fp, "Mode: Basic Dixon resultant\n");
+        fprintf(out_fp, "Mode: %s\n", screen ? "Dixon scalar consistency screen" : "Basic Dixon resultant");
     }
     fprintf(out_fp, "Variables eliminated: %s\n", vars_str);
     fprintf(out_fp, "Polynomials: %s\n", polys_str);
     (void) cpu_time;
     (void) threads_num;
     fprintf(out_fp, "Time: %.3f seconds\n", wall_time);
-    fprintf(out_fp, "\nResultant:\n%s\n", result);
+    if (screen) {
+        fputc('\n', out_fp);
+        print_scalar_screen_report(out_fp, screen);
+    } else {
+        fprintf(out_fp, "\nResultant:\n%s\n", result);
+    }
     return out_fp;
 }
 
 static void insert_random_seed_before_polynomials(const char *filename, ulong seed,
-                                                  const char *solution)
+                                                  const char *solution, int pure_random)
 {
     FILE *fp = NULL;
     char *text = NULL;
@@ -2758,6 +2772,7 @@ static void insert_random_seed_before_polynomials(const char *filename, ulong se
     if (fp) {
         fwrite(text, 1, prefix_len, fp);
         fputs(seed_line, fp);
+        if (pure_random) fputs("Random generation: pure random (no planted solution)\n", fp);
         if (solution) fprintf(fp, "Planted solution: %s\n", solution);
         fwrite(text + prefix_len, 1, (size_t) size - prefix_len, fp);
         fclose(fp);
@@ -3106,6 +3121,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int    verbose_level = 1;
     int    solve_mode  = 0;
     int execution_failed = 0;
+    dixon_scalar_screen_report_t scalar_screen = {0};
     polynomial_solver_method_t solver_method = POLYNOMIAL_SOLVER_AUTO;
     int solver_method_explicit = 0, quotient_limits_given = 0;
     slong quotient_degree = 0, quotient_memory = 0;
@@ -3153,6 +3169,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int random_homogeneous = 0;
     ulong random_seed = 0;
     int random_seed_given = 0;
+    int random_pure = 0;
     int complex_mode = 0;
     int resultant_only_mode = 0;
     int approximate_root_mode = 0;
@@ -3229,6 +3246,8 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         } else if (strcmp(argv[i], "--random") == 0 ||
                    strcmp(argv[i], "-r")       == 0) {
             rand_mode = 1;
+        } else if (strcmp(argv[i], "--pure-random") == 0) {
+            random_pure = 1;
         } else if (strcmp(argv[i], "--vardeg") == 0) {
             rand_mode = 1;
             random_vardeg = 1;
@@ -3559,8 +3578,8 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         return 1;
     }
     if (!rand_mode && (random_nvars_given || random_density_given ||
-                       random_seed_given || random_homogeneous || random_npolys_given)) {
-        fprintf(stderr, "Error: -n/--nvars, --density, --seed, and --homogeneous may only be used together with --random.\n");
+                       random_seed_given || random_homogeneous || random_npolys_given || random_pure)) {
+        fprintf(stderr, "Error: -n/--nvars, --density, --seed, --homogeneous, and --pure-random may only be used together with --random.\n");
         return 1;
     }
 
@@ -3636,8 +3655,8 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         }
         deg_str   = positional_args[0];
         field_str = positional_args[1];
-        /* An overdetermined random input is a full-system solve, not a
-         * square Dixon resultant. Preserve explicit resultant-only requests. */
+        /* n+1 equations in n variables can eliminate every variable.
+         * Only larger systems need automatic full-system solver mode. */
         if (!comp_mode) {
             slong random_count = 0;
             long *spec = parse_degree_list(deg_str, &random_count);
@@ -3645,9 +3664,9 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
                        (random_nvars_given ? random_nvars : random_count);
             slong ne = random_vardeg && random_npolys_given ? random_npolys : random_count;
             free(spec);
-            if (nv > 0 && ne > nv) {
+            if (nv > 0 && ne > nv + 1) {
                 if (resultant_only_mode) {
-                    fprintf(stderr, "Error: overdetermined random input requires solver mode; remove --resultant-only.\n");
+                    fprintf(stderr, "Error: random input with more than n+1 equations requires solver mode; remove --resultant-only.\n");
                     return 1;
                 }
                 solve_mode = 1;
@@ -3985,8 +4004,8 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         goto cleanup_fail;
     }
     if (quotient_limits_given && (rational_mode || large_prime_mode || power != 1 ||
-                                 solver_method == POLYNOMIAL_SOLVER_DIXON)) {
-        fprintf(stderr, "Error: quotient limits require the prime-field auto or quotient solver.\n");
+                                 solver_method != POLYNOMIAL_SOLVER_QUOTIENT)) {
+        fprintf(stderr, "Error: quotient limits require --quotient or --solver quotient over a machine-word prime field.\n");
         goto cleanup_fail;
     }
     if (complex_mode && !rational_mode) {
@@ -4266,7 +4285,9 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             rand_generated = 1;
         }
 random_done:
-        if (!comp_mode &&
+        if (!comp_mode && random_pure && !silent_mode)
+            printf("Random generation: pure random (no planted solution)\n");
+        if (!comp_mode && !random_pure &&
             count_comma_separated_items(polys_str) > count_comma_separated_items(allvars_str)) {
             if (!plant_random_system_solution(&polys_str, allvars_str,
                                                rational_mode, large_prime_mode,
@@ -4630,10 +4651,7 @@ random_done:
             }
 
             if (rand_generated && allvars_str && !specialize_vars_arg &&
-                (solver_method == POLYNOMIAL_SOLVER_QUOTIENT ||
-                 (solver_method == POLYNOMIAL_SOLVER_AUTO && power == 1 &&
-                  count_comma_separated_items(effective_polys_str) >
-                  count_comma_separated_items(allvars_str)))) {
+                solver_method == POLYNOMIAL_SOLVER_QUOTIENT) {
                 /* Keep declared random variables even if sparsity removes
                  * them from every polynomial. Otherwise a positive-dimensional
                  * system could be mistaken for a smaller zero-dimensional one. */
@@ -4722,7 +4740,7 @@ random_done:
             if (resultant_method == RESULTANT_METHOD_SUBRES) {
                 result = compute_subres_resultant_str(polys_str, vars_str, ctx);
             } else {
-                result = dixon_str(polys_str, vars_str, ctx);
+                result = dixon_str_with_scalar_screen(polys_str, vars_str, ctx, &scalar_screen);
             }
         }
 
@@ -4835,7 +4853,20 @@ random_done:
             }
         }
     } else {
-        if (result) {
+        if (scalar_screen.status != DIXON_SCREEN_NOT_RUN) {
+            print_scalar_screen_report(stdout, &scalar_screen);
+            execution_failed = scalar_screen.status == DIXON_SCREEN_INCONCLUSIVE ? 2 : 0;
+            if (output_filename) {
+                FILE *fp = save_result_to_file(output_filename, polys_str, vars_str,
+                    NULL, allvars_str, p_fmpz, power, result, cpu_time, wall_time,
+                    total_threads, &scalar_screen);
+                if (fp) {
+                    fclose(fp);
+                    if (!silent_mode) printf("\nScreening report saved to: %s\n", output_filename);
+                } else execution_failed = 1;
+            }
+            free(result);
+        } else if (result) {
             slong resultant_terms = dixon_get_last_resultant_term_count();
             if (resultant_only_mode && silent_mode &&
                 resultant_terms >= 0 && resultant_terms < 100) {
@@ -4849,7 +4880,7 @@ random_done:
                 double save_start_time = drsolve_monotonic_time_seconds();
                 FILE *fp_append = save_result_to_file(output_filename, polys_str, vars_str,
                                                       ideal_str, allvars_str, p_fmpz, power,
-                                                      result, cpu_time, wall_time, total_threads);
+                                                      result, cpu_time, wall_time, total_threads, NULL);
                 if (fp_append) {
                     if (!resultant_only_mode && large_prime_mode) {
                         large_prime_print_roots_from_resultant_string(result, polys_str, vars_str,
@@ -4880,6 +4911,7 @@ random_done:
             }
             free(result);
         } else {
+            execution_failed = 1;
             if (!silent_mode)
                 fprintf(stderr, "\nError: Computation failed\n");
         }
@@ -4896,7 +4928,7 @@ random_done:
 
     /* Keep the seed used to generate random input next to its polynomial data. */
     if (rand_mode && !comp_mode && random_seed_given && output_filename) {
-        insert_random_seed_before_polynomials(output_filename, random_seed, random_solution);
+        insert_random_seed_before_polynomials(output_filename, random_seed, random_solution, random_pure);
     }
 
 cleanup_success:
@@ -4936,7 +4968,7 @@ cleanup_success:
     dixon_set_suppress_root_reporting(0);
     dixon_set_approximate_root_mode(0, 128);
     flint_cleanup_master();
-    return execution_failed ? 1 : 0;
+    return execution_failed;
 
 cleanup_fail:
     cleanup_unified_workspace();

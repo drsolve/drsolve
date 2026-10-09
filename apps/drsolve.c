@@ -48,7 +48,9 @@ static void print_short_usage(const char *prog_name)
     printf("  -r \"[d1,d2,...,dn]\" random polynomial generation\n");
     printf("  -s  solving mode (auto-enables when no vars given)\n");
     printf("  --quotient  Use certified quotient algebra over a machine-word prime field\n");
-    printf("  --solver auto|dixon|quotient  Auto selects quotient for overdetermined prime-field systems\n");
+    printf("  --solver auto|dixon|quotient  Auto uses Dixon; quotient is opt-in\n");
+    printf("  Finite-field Dixon with no remaining variables screens for inconsistency.\n");
+    printf("  Screening exit codes: 0 = certified no common zero, 2 = inconclusive; screening values: 1 = no common zero, 0 = inconclusive.\n");
     printf("  -c, --comp, --complexity  complexity analysis mode\n");
     printf("EXAMPLES:\n");
     printf("  Dixon resultant elimination:\n");
@@ -115,8 +117,8 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    -> Writes all solutions to %s/solution_YYYYMMDD_HHMMSS.dr\n", DEFAULT_OUTPUT_DIR);
     printf("    -> `-s` / `--solve` is optional here; `--solve-rational-only` keeps only exact rational solutions\n");
     printf("    -> `--specialize-vars a=0,b=1` fixes variables before solving; in extension fields integers use the generator expansion (F_2^k: 2=t, 3=1+t, 4=t^2)\n");
-    printf("    -> Prime-field overdetermined systems automatically use certified quotient algebra\n");
-    printf("    -> Square systems keep Dixon by default; --quotient (or --solver quotient) opts in\n");
+    printf("    -> Random n+1 equations in n variables default to Dixon scalar consistency screening\n");
+    printf("    -> Solvers use Dixon by default; --quotient (or --solver quotient) opts into quotient algebra\n");
     printf("    -> --solver auto|dixon|quotient selects the solver; quotient requires at least as many equations as variables\n");
     printf("    -> No degree or memory budget by default; optional --quotient-max-degree <D> and --quotient-memory <MiB> (0 = unlimited)\n");
     printf("    -> Limits return an incomplete-solve error, not a claim that no solutions exist\n");
@@ -212,6 +214,7 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    -> Add -n <num_vars> to set the total variable count; fewer variables than equations auto-enables solver mode\n");
     printf("    -> Example: %s -r -n 3 \"[2]*5\" 257 --seed 123\n", prog_name);
     printf("    -> Overdetermined random systems include a guaranteed solution in the input field\n");
+    printf("    -> Add --pure-random to skip planting a solution; --seed remains reproducible\n");
     printf("    -> Resultant/complexity mode still requires num_vars >= #equations-1\n");
     printf("    -> Add --density <ratio> with 0 <= ratio <= 1 to choose the fraction of all monomials used (default: 0.5 over F2, otherwise 1)\n");
     printf("    -> Add --homogeneous (alias --hom) to use only monomials whose total degree equals the requested degree\n");
@@ -393,6 +396,7 @@ static int validate_cli_options(int argc, char *argv[])
         {"num-equations", required_argument, NULL, OPT_FLAG},
         {"density", required_argument, NULL, OPT_FLAG},
         {"seed", required_argument, NULL, OPT_FLAG},
+        {"pure-random", no_argument, NULL, OPT_FLAG},
         {"specialize-vars", required_argument, NULL, OPT_FLAG},
         {"help", no_argument, NULL, 'h'},
         {"version", no_argument, NULL, 'V'},

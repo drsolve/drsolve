@@ -2377,9 +2377,7 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
 static int solve_selected(char **polys, slong count, variable_info_t *vars,
                           slong n, polynomial_solutions_t *sols)
 {
-    int use_quotient = solver_method == POLYNOMIAL_SOLVER_QUOTIENT ||
-        (solver_method == POLYNOMIAL_SOLVER_AUTO && n > 0 && count > n &&
-         fq_nmod_ctx_degree(sols->ctx) == 1);
+    int use_quotient = solver_method == POLYNOMIAL_SOLVER_QUOTIENT;
     if (use_quotient) {
         solver_progress("Solver: quotient algebra (%ld equations, %ld variables)", count, n);
         int ok = solve_by_quotient_closure(polys, count, vars, n, sols,

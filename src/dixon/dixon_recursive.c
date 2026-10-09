@@ -2129,10 +2129,12 @@ static void fast_dixon_extract_square_submatrix(unified_mpoly_struct ***coeff_ma
                             support_scan_elapsed, trim_grid_elapsed);
     }
 
-    fast_dixon_info_log("\nStep 3: Extract maximal-rank submatrix\n");
+    fast_dixon_info_log(dixon_scalar_screen_active() ? "\nStep 3: KSY scalar consistency screen\n"
+                                                    : "\nStep 3: Extract maximal-rank submatrix\n");
     step3_wall_start = get_wall_time();
     rank_select_start = get_wall_time();
-    fast_dixon_debug_log("  Select maximal-rank submatrix from trimmed support...\n");
+    if (!dixon_scalar_screen_active())
+        fast_dixon_debug_log("  Select maximal-rank submatrix from trimmed support...\n");
     /* Rows use radices (v+1)*d_v, columns (nvars-v)*d_v.
      * Preserve the raw-to-trimmed map for the native Step 4 certificate. */
     monom_t *row_labels=flint_malloc(trimmed_nrows*sizeof(monom_t));
@@ -2168,7 +2170,7 @@ static void fast_dixon_extract_square_submatrix(unified_mpoly_struct ***coeff_ma
         flint_free(trimmed_cols);
         if (row_idx_array != NULL) flint_free(row_idx_array);
         if (col_idx_array != NULL) flint_free(col_idx_array);
-        fast_dixon_info_log("Warning: Fast Dixon matrix has rank 0\n");
+        if (!dixon_scalar_screen_active()) fast_dixon_info_log("Warning: Fast Dixon matrix has rank 0\n");
         dixon_maybe_print_step_time("Step 3", get_wall_time() - step3_wall_start);
         return;
     }
@@ -2321,7 +2323,7 @@ static void fq_dixon_fast_resultant_common(unified_mpoly_struct *result,
         };
         dixon_compute_dense_resultant(result,coeff_matrix,matrix_size,polys,
                                      nvars,npars,0,par_names,&native);
-        if (g_dixon_verbose_level >= 1) print_resultant_summary(result, par_names, npars);
+        if (g_dixon_verbose_level >= 1 && !dixon_scalar_screen_active()) print_resultant_summary(result, par_names, npars);
 
         if (g_dixon_verbose_level >= 1 && dr_mpoly_length(result) < 100) {
             if (var_names || par_names || gen_name) {
@@ -2336,7 +2338,10 @@ static void fq_dixon_fast_resultant_common(unified_mpoly_struct *result,
         }
     } else {
         dr_mpoly_init(result, 0, npars, polys[0].ctx);
-        fast_dixon_info_log("Warning: Empty fast Dixon coefficient matrix, resultant is 0\n");
+        if (dixon_scalar_screen_active())
+            fast_dixon_info_log("\nStep 4: Dixon decision result\n  Dixon screening value = %d\n",
+                               dixon_scalar_screen_value());
+        else fast_dixon_info_log("Warning: Empty fast Dixon coefficient matrix, resultant is 0\n");
     }
 
     clear_fast_dixon_coeff_matrix(coeff_matrix, matrix_size);
@@ -2345,7 +2350,8 @@ static void fq_dixon_fast_resultant_common(unified_mpoly_struct *result,
     flint_free(degrees);
     flint_free(poly_ptrs);
 
-    fast_dixon_info_log("\n=== Fast Dixon Resultant Computation Complete ===\n");
+    fast_dixon_info_log(dixon_scalar_screen_active() ? "\n=== Dixon Scalar Screening Complete ===\n"
+                                                    : "\n=== Fast Dixon Resultant Computation Complete ===\n");
 }
 
 void fq_dixon_fast_resultant(unified_mpoly_struct *result, unified_mpoly_struct *polys, slong nvars,

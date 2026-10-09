@@ -1116,3 +1116,14 @@ test-dixon-pipeline: $(BUILD_DIR)/dixon_pipeline_test
 
 $(BUILD_DIR)/dixon_pipeline_test: $(SRC_DIR)/test/dixon_pipeline_test.c $(SRC_DIR)/test/dixon_recursive_native_test.c $(SRC_DIR)/dixon/dixon_recursive.c $(SRC_DIR)/dixon/dixon_pipeline.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon_pipeline_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+$(BUILD_DIR)/dixon_scalar_screen_test: $(SRC_DIR)/test/dixon_scalar_screen_test.c $(SRC_DIR)/dixon_scalar_screen.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-scalar-screen
+test-scalar-screen: $(BUILD_DIR)/dixon_scalar_screen_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=2 ./$(BUILD_DIR)/dixon_scalar_screen_test
+
+.PHONY: test-scalar-screen-cli
+test-scalar-screen-cli: $(DIXON_TARGET)
+	python3 $(SRC_DIR)/test/dixon_scalar_screen_cli_test.py ./$(DIXON_TARGET)
