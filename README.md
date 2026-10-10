@@ -74,20 +74,6 @@ Example:
 ```
 - Writes all solutions to `out/solution_YYYYMMDD_HHMMSS.dr`
 
-Dixon is the default. Use `--quotient` or `--solver quotient` to explicitly
-select quotient algebra over machine-word prime fields:
-
-```bash
-# Overdetermined system
-./drsolve "x^2-1, y-x, x*y-1" 257
-# Square system with the quotient solver
-./drsolve --quotient "x^2-1, y^2-1" 257
-# Select the Dixon solver
-./drsolve --solver dixon "x^2-1, y-x, x*y-1" 257
-# Random system with a guaranteed solution: 3 variables, 5 equations
-./drsolve --quotient -r -n 3 "[2]*5" 257 --seed 123
-```
-
 ### FILE FORMAT
 #### File input/output
 ```bash
@@ -262,18 +248,7 @@ Example:
 ./drsolve --fq-det-method hnf <args>
 ./drsolve --fq-det-method iter <args>
 ./drsolve --fq-det-method interp <args>
-./drsolve --no-mq-step4-schur <args>
 ```
-`--fq-det-method` selects the prime-field, single-parameter determinant
-backend (`auto` by default). For three equations in three variables with
-one retained parameter over a prime field, `auto` uses interpolation when
-the field has enough points and at least four threads are used. Explicit `interp` uses all field elements when
-the degree bound is too large, returning a polynomial with the same values
-on the base field rather than an exact resultant. Schur compression is enabled by default for
-eligible single-parameter systems, including higher and mixed degrees with two or
-more eliminated variables. The parameter must share each polynomial's total-degree
-budget; degree and complement-invertibility checks must pass, otherwise the original
-backend is used. `--no-mq-step4-schur` disables compression.
 
 Example:
 ```bash
