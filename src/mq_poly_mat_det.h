@@ -21,6 +21,12 @@ extern "C" {
  */
 int nmod_poly_mat_mq_schur(nmod_poly_mat_t core, ulong *factor, const nmod_poly_mat_t B,
                           const slong *row_degree, const slong *col_degree, slong h, slong sigma);
+/* Retry a singular prescribed complement using pivots from the full degree
+ * layers. Permutations preserve each slot's degree, including core slots.
+ * The determinant identity and failure/input-preservation contract above
+ * still hold; factor includes both additional permutation signs. */
+int nmod_poly_mat_mq_schur_repair(nmod_poly_mat_t core, ulong *factor, const nmod_poly_mat_t B,
+                                 const slong *row_degree, const slong *col_degree, slong h, slong sigma);
 #ifdef __cplusplus
 }
 #endif

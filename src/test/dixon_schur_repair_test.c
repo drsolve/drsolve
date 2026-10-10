@@ -317,8 +317,48 @@ static void check_large_repair_and_cache_limit(const fq_nmod_ctx_t ctx)
     puts("Large repair dispatch and bounded cache passed");
 }
 
+/* Candidate compression must recover an actual nonsingular minor, including
+ * skipped U columns, nontrivial row permutations and recursive LU packing. */
+static void check_candidate_compression(void)
+{
+    const slong expected[] = {12,43,102,201,350,555,830,1185,1624,2163,2812};
+    for (long d = 2; d <= 12; d++) {
+        long degrees[4] = {d,d,d,d};
+        slong upper = (5*d*d*d-2*d)/3;
+        assert(dixon_four_equal_rank_target(degrees,4,3,upper) == expected[d-2]);
+        degrees[3]++;
+        assert(dixon_four_equal_rank_target(degrees,4,3,upper) == upper);
+        assert(dixon_four_equal_rank_target(degrees,3,2,upper) == upper);
+    }
+    for (int backend = 0; backend < 3; backend++) {
+        slong n = 80, r = 53, rows[80], cols[80], perm[80];
+        nmod_mat_t original, lu, minor;
+        nmod_mat_init(original,n,n,65537);
+        nmod_mat_init(lu,n,n,65537);
+        nmod_mat_init(minor,r,r,65537);
+        for (slong i = 0; i < r; i++) {
+            /* Leave column zero empty and force row swaps. */
+            slong row = n-1-i, col = i+1+i/3;
+            nmod_mat_entry(original,row,col) = i+1;
+            if (row > 0) nmod_mat_entry(original,row-1,col) = i+2;
+        }
+        nmod_mat_set(lu,original);
+        for (slong i = 0; i < n; i++) rows[i] = cols[i] = i;
+        slong rank = backend == 0 ? nmod_mat_lu(perm,lu,0)
+                   : backend == 1 ? nmod_mat_lu_classical(perm,lu,0)
+                   : nmod_mat_lu_recursive(perm,lu,0);
+        assert(rank == r);
+        assert(dixon_nmod_compress_candidate(rows,cols,lu,perm,rank));
+        for (slong i = 0; i < r; i++) for (slong j = 0; j < r; j++)
+            nmod_mat_entry(minor,i,j) = nmod_mat_entry(original,rows[i],cols[j]);
+        assert(nmod_mat_rank(minor) == r);
+        nmod_mat_clear(minor); nmod_mat_clear(lu); nmod_mat_clear(original);
+    }
+}
+
 int main(void)
 {
+    check_candidate_compression();
     fq_nmod_ctx_t ctx;
     fmpz_t prime;
     fmpz_init_set_ui(prime, 65537);

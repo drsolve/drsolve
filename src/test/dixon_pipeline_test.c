@@ -67,7 +67,7 @@ static void check_scalar(slong extension)
     fast_dixon_matrix_clear(&full); fq_nmod_clear(one,ctx); fq_nmod_ctx_clear(ctx);
 }
 
-static void check_pipeline(ulong prime, slong extension, slong nvars, slong npars)
+static void check_pipeline(ulong prime, slong extension, slong nvars, slong npars, slong degree)
 {
     fq_nmod_ctx_t ctx; fq_nmod_ctx_init_ui(ctx,prime,extension,"a");
     flint_rand_t rng; flint_rand_init(rng); flint_rand_set_seed(rng,1729+nvars,43);
@@ -77,9 +77,9 @@ static void check_pipeline(ulong prime, slong extension, slong nvars, slong npar
     fq_nmod_t one; fq_nmod_init(one,ctx); fq_nmod_gen(one,ctx);
     for (slong i=0;i<=nvars;i++) {
         dr_mpoly_init(p+i,nvars,npars,ctx); ptrs[i]=p+i;
-        random_terms(p+i,exp,0,2,rng,0);
+        random_terms(p+i,exp,0,degree,rng,0);
         for (slong v=0;v<nvars;v++) {
-            slong x[3]={0}, par[2]={0}; x[v]=2;
+            slong x[3]={0}, par[2]={0}; x[v]=degree;
             dr_mpoly_add_term_fast(p+i,x,par,one);
         }
     }
@@ -135,11 +135,12 @@ int main(void)
     g_dixon_verbose_level=getenv("DRSOLVE_PIPELINE_TEST_VERBOSE") ? 3 : 0;
     omp_set_num_threads(2);
     check_scalar(1);check_scalar(2);check_dense_content();
-    check_pipeline(65537,1,2,1);
-    check_pipeline(101,1,3,1);
-    check_pipeline(101,1,2,2);
-    check_pipeline(101,2,2,1);
-    check_pipeline(101,1,2,0);
+    check_pipeline(65537,1,2,1,2);
+    check_pipeline(101,1,3,1,2);
+    check_pipeline(101,1,2,2,2);
+    check_pipeline(101,2,2,1,2);
+    check_pipeline(101,1,2,0,2);
+    check_pipeline(65537,1,3,1,4); /* Corrected rank 102, old bound 104. */
     unsetenv("DRSOLVE_FAST_NATIVE");unsetenv("DRSOLVE_PREDICT_MAXRANK");
     dixon_global_method_step4=-1;
     puts("Dixon shared pipeline tests passed");

@@ -4376,6 +4376,82 @@ static void dixon_refine_streamed_minor(unified_mpoly_struct ***matrix, slong nr
     dixon_maybe_print_step_detail_time("Step 3 blocked degree-aware selection", cpu_start, wall_start);
 }
 
+/* Four equal-degree equations, eliminating three variables.  The correction
+ * in experiments/rank.txt is conjectural: use it only as a verified candidate
+ * target, leaving the original profile (a proved upper bound) unchanged.
+ * Returning the old bound also covers mixed degrees and overflow. */
+static slong dixon_four_equal_rank_target(const long *degrees, slong num_polys,
+                                          slong nvars, slong upper)
+{
+    if (!degrees || num_polys != 4 || nvars != 3 || degrees[0] < 4)
+        return upper;
+    for (slong i = 1; i < 4; i++)
+        if (degrees[i] != degrees[0]) return upper;
+    slong d = degrees[0], k = (d - 1) / 3, tail = d - 2*k - 1;
+    if (upper <= 0 || k > upper / (k + 1)) return upper;
+    slong correction = k * (k + 1);
+    if (tail <= 0 || correction > upper / tail) return upper;
+    correction *= tail;
+    return correction < upper ? upper - correction : upper;
+}
+
+/* FLINT packs L below the first rank diagonal entries, while U retains its
+ * original pivot columns.  Read increasing pivots, and copy rows before
+ * applying the LU permutation in-place.  Failure leaves both arrays intact. */
+static int dixon_nmod_compress_candidate(slong *rows, slong *cols,
+                                        const nmod_mat_t lu,
+                                        const slong *perm, slong rank)
+{
+    slong *rr = flint_malloc((size_t) rank * sizeof(slong));
+    slong *cc = flint_malloc((size_t) rank * sizeof(slong));
+    slong next = 0;
+    for (slong i = 0; i < rank; i++) {
+        rr[i] = rows[perm[i]];
+        while (next < lu->c && !nmod_mat_entry(lu, i, next)) next++;
+        if (next == lu->c) { flint_free(rr); flint_free(cc); return 0; }
+        cc[i] = cols[next++];
+    }
+    memcpy(rows, rr, (size_t) rank * sizeof(slong));
+    memcpy(cols, cc, (size_t) rank * sizeof(slong));
+    flint_free(rr); flint_free(cc);
+    return 1;
+}
+
+/* Seed degree-aware exchange directly from the compressed candidate LU;
+ * no refactorization or second full-matrix rank selection is needed. */
+static void dixon_refine_compressed_candidate(unified_mpoly_struct ***matrix,
+    slong nrows, slong ncols, slong *rows, slong *cols,
+    const nmod_mat_t lu, slong rank, fq_nmod_t *params, const fq_nmod_ctx_t ctx)
+{
+    clock_t cpu_start = clock();
+    double wall_start = get_wall_time();
+    dixon_exchange_solver_t solver;
+    dixon_eval_cache_t cache;
+    dixon_exchange_solver_init(&solver, rank, lu->mod.n);
+    dixon_eval_cache_init(&cache, matrix, ncols, params, ctx);
+    slong next = 0;
+    for (slong j = 0; j < rank; j++) {
+        while (next < lu->c && !nmod_mat_entry(lu, j, next)) next++;
+        solver.perm[j] = j;
+        for (slong i = 0; i < rank; i++)
+            nmod_mat_entry(solver.lu, i, j) = i > j
+                ? nmod_mat_entry(lu, i, j) : nmod_mat_entry(lu, i, next);
+        next++;
+    }
+    nmod_mat_transpose(solver.transposed, solver.lu);
+    for (int pass = 0; pass < 3; pass++) {
+        slong nr = dixon_exchange_axis(&solver, &cache, nrows, ncols, rows, cols, 0);
+        slong nc = dixon_exchange_axis(&solver, &cache, nrows, ncols, rows, cols, 1);
+        dixon_debug_log("  Corrected candidate degree exchange %d: rows=%ld, columns=%ld\n",
+                        pass + 1, nr, nc);
+        if (!nr && !nc) break;
+    }
+    dixon_eval_cache_clear(&cache);
+    dixon_exchange_solver_clear(&solver);
+    dixon_maybe_print_step_detail_time("Step 3 corrected candidate degree exchange",
+                                       cpu_start, wall_start);
+}
+
 /* Reuse the rank-deficient candidate's packed LU.  The core consists of the
    first s permuted rows and U's pivot columns.  Its L is stored below the
    first s diagonal entries (not below the original pivot columns).
@@ -5309,6 +5385,10 @@ static int dixon_mq_step4_try(fq_nmod_poly_t det, const fq_nmod_poly_mat_t matri
             nmod_poly_set_coeff_ui(target, k, nmod_poly_get_coeff_ui(entry->coeffs + k, 0));
     }
     int ok = nmod_poly_mat_mq_schur(core, &factor, B, p->rd, p->cd, p->h, p->sigma);
+    if (!ok) {
+        ok = nmod_poly_mat_mq_schur_repair(core, &factor, B, p->rd, p->cd, p->h, p->sigma);
+        if (ok) dixon_info_log("  Step 4 Schur: repaired complement by degree-layer pivoting\n");
+    }
     nmod_poly_mat_clear(B);
     if (ok) {
         fq_nmod_poly_mat_t small;
@@ -5658,7 +5738,14 @@ void dixon_select_submatrix(unified_mpoly_struct ***full_matrix, slong nx_monoms
             }
             flint_free(model_R);
         }
+        /* Build the original mirror envelope: merely reducing its requested
+         * size would break its staircase count.  LU then extracts a certified
+         * minor of the corrected size from this slightly larger envelope. */
+        slong target = fq_nmod_ctx_degree(ctx) == 1
+            ? dixon_four_equal_rank_target(degrees, num_polys, nvars, predicted)
+            : predicted;
         predicted = FLINT_MIN(predicted, min_size);
+        target = FLINT_MIN(target, predicted);
         slong rank = 0;
         slong predicted_size = 0;
         long dmin = LONG_MAX;
@@ -5672,11 +5759,14 @@ void dixon_select_submatrix(unified_mpoly_struct ***full_matrix, slong nx_monoms
                 nvars, model_H, model_h_len, sigma, (slong) dmin, predicted);
         if (use_predicted_candidate) {
             if (g_dixon_verbose_level >= 3)
-                dixon_info_log("  Step 3 predicted rank: %ld\n", predicted);
+                dixon_info_log("  Step 3 predicted rank: %ld\n", target);
             dixon_maybe_print_step_detail_time("Step 3 rank prediction",
                                                prediction_cpu_start,
                                                prediction_wall_start);
         }
+        if (use_predicted_candidate && target < predicted)
+            dixon_debug_log("  Four-equation equal-degree correction (conjectural): "
+                            "%ld -> %ld; verifying mirror envelope\n", predicted, target);
         int candidate_constructed = candidate_ok;
         int schur_repaired = 0;
         clock_t verification_cpu_start = clock();
@@ -5731,7 +5821,19 @@ void dixon_select_submatrix(unified_mpoly_struct ***full_matrix, slong nx_monoms
                 fq_nmod_clear(value, ctx);
 #endif
                 rank = nmod_mat_lu(perm, candidate, 0);
-                if (rank < predicted && rank > 0 &&
+                if (target < predicted && rank == target &&
+                    dixon_nmod_compress_candidate(row_idx_array, col_idx_array,
+                                                  candidate, perm, rank)) {
+                    dixon_debug_log("  Corrected candidate certified by LU: %ld x %ld\n",
+                                    rank, rank);
+                    predicted = target;
+                    /* A raw LU minor may carry extra parameter factors.
+                     * Preserve the selector's degree minimization before
+                     * handing the smaller minor to Step 4. */
+                    dixon_refine_compressed_candidate(full_matrix, nx_monoms, ndual_monoms,
+                        row_idx_array, col_idx_array, candidate, predicted, eval_params, ctx);
+                }
+                if (target == predicted && rank < predicted && rank > 0 &&
                     dixon_repair_predicted_minor(full_matrix, nx_monoms, ndual_monoms,
                         row_idx_array, col_idx_array, predicted, candidate, perm, rank,
                         row_order, col_order, sigma, eval_params, ctx)) {

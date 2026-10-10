@@ -35,7 +35,12 @@ static void dixon_mq_native_det(fq_nmod_poly_t out, nmod_poly_mat_t matrix,
         flint_free(at); flint_free(position);
         nmod_poly_mat_t core; nmod_poly_mat_init(core,p->h,p->h,prime);
         ulong schur_factor=0;
-        if(nmod_poly_mat_mq_schur(core,&schur_factor,matrix,p->rd,p->cd,p->h,p->sigma)) {
+        int schur_ok = nmod_poly_mat_mq_schur(core,&schur_factor,matrix,p->rd,p->cd,p->h,p->sigma);
+        if (!schur_ok) {
+            schur_ok = nmod_poly_mat_mq_schur_repair(core,&schur_factor,matrix,p->rd,p->cd,p->h,p->sigma);
+            if (schur_ok) dixon_info_log("  Step 4 Schur: repaired complement by degree-layer pivoting\n");
+        }
+        if (schur_ok) {
             factor=schur_factor;
             /* Each determinant product has degree <= h*sigma-sum(rd+cd).
              * Confirm the compressed entries retain these degree bounds. */

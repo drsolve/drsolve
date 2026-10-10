@@ -108,6 +108,35 @@ int main(void)
         nmod_poly_mat_set(saved, B);
         assert(!nmod_poly_mat_mq_schur(core, &factor, B, d, d, 1, 3));
         assert(nmod_poly_mat_equal(B, saved) && factor == 42);
+        /* Fixed monomial ordering fails, but same-degree pivots repair both
+         * axes. Check the exact determinant, not just nonsingularity. */
+        assert(nmod_poly_mat_mq_schur_repair(core, &factor, B, d, d, 1, 3));
+        nmod_poly_mat_det(got, core);
+        nmod_poly_scalar_mul_nmod(got, got, factor);
+        assert(nmod_poly_equal(expected, got) && nmod_poly_mat_equal(B, saved));
+        /* Only a row swap is needed here: its odd sign must be included. */
+        nmod_poly_mat_zero(B);
+        nmod_poly_one(nmod_poly_mat_entry(B, 0, 2));
+        nmod_poly_one(nmod_poly_mat_entry(B, 2, 1));
+        nmod_poly_set_coeff_ui(nmod_poly_mat_entry(B, 1, 0), 1, 1);
+        nmod_poly_mat_set(saved, B);
+        nmod_poly_mat_det(expected, B);
+        assert(!nmod_poly_mat_mq_schur(core, &factor, B, d, d, 1, 3));
+        assert(nmod_poly_mat_mq_schur_repair(core, &factor, B, d, d, 1, 3));
+        nmod_poly_mat_det(got, core);
+        nmod_poly_scalar_mul_nmod(got, got, factor);
+        assert(nmod_poly_equal(expected, got) && nmod_poly_mat_equal(B, saved));
+        /* A genuinely deficient full layer cannot be repaired. Preserve all
+         * caller-owned outputs on this failure and on degree violations. */
+        nmod_poly_zero(nmod_poly_mat_entry(B, 2, 1));
+        nmod_poly_mat_set(saved, B);
+        nmod_poly_one(nmod_poly_mat_entry(core, 0, 0)); factor = 42;
+        assert(!nmod_poly_mat_mq_schur_repair(core, &factor, B, d, d, 1, 3));
+        assert(factor == 42 && nmod_poly_is_one(nmod_poly_mat_entry(core, 0, 0)) &&
+               nmod_poly_mat_equal(B, saved));
+        nmod_poly_set_coeff_ui(nmod_poly_mat_entry(B, 2, 2), 1, 1);
+        assert(!nmod_poly_mat_mq_schur_repair(core, &factor, B, d, d, 1, 3));
+        assert(factor == 42 && nmod_poly_is_one(nmod_poly_mat_entry(core, 0, 0)));
         nmod_poly_clear(expected);
         nmod_poly_clear(got);
         nmod_poly_mat_clear(B);

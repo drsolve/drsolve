@@ -55,28 +55,33 @@ typedef struct
     slong *perm;
 } mq_constant_block;
 
-int nmod_poly_mat_mq_schur(nmod_poly_mat_t core, ulong *factor, const nmod_poly_mat_t B,
-                           const slong *rd, const slong *cd, slong h, slong sigma)
+static int mq_schur_valid(const nmod_poly_mat_t core, const ulong *factor,
+                          const nmod_poly_mat_t B, const slong *rd,
+                          const slong *cd, slong h, slong sigma)
 {
-    slong n = B->r;
+    slong n = B->r, budget = 0;
     if (!factor || !rd || !cd || n != B->c || h < 0 || h > n || sigma < 0 || core == B ||
         core->r != h || core->c != h || core->modulus != B->modulus)
         return 0;
-    slong e = n - h, budget = 0;
     for (slong i = 0; i < n; i++)
         if (rd[i] < 0 || cd[i] < 0 || rd[i] > sigma || cd[i] > sigma)
             return 0;
-    for (slong i = 0; i < n; i++)
-    {
-        if (i >= h)
-            budget += sigma - rd[i] - cd[i];
+    for (slong i = 0; i < n; i++) {
+        if (i >= h) budget += sigma - rd[i] - cd[i];
         for (slong j = 0; j < n; j++)
             if (!nmod_poly_is_zero(nmod_poly_mat_entry(B, i, j)) &&
                 nmod_poly_degree(nmod_poly_mat_entry(B, i, j)) > sigma - rd[i] - cd[j])
                 return 0;
     }
-    if (budget)
-        return 0;
+    return budget == 0;
+}
+
+int nmod_poly_mat_mq_schur(nmod_poly_mat_t core, ulong *factor, const nmod_poly_mat_t B,
+                           const slong *rd, const slong *cd, slong h, slong sigma)
+{
+    slong n = B->r;
+    if (!mq_schur_valid(core, factor, B, rd, cd, h, sigma)) return 0;
+    slong e = n - h;
 
     slong *rows = flint_malloc((size_t)e * sizeof(slong));
     slong *cols = flint_malloc((size_t)e * sizeof(slong));
@@ -213,5 +218,83 @@ int nmod_poly_mat_mq_schur(nmod_poly_mat_t core, ulong *factor, const nmod_poly_
     flint_free(blocks);
     flint_free(cols);
     flint_free(rows);
+    return ok;
+}
+
+/* Assign pivot indices to complement slots and unused indices to core slots.
+ * Only indices of this exact degree move, so all entry degree bounds survive. */
+static void mq_place_degree_pivots(slong *map, const slong *weights, slong n,
+    slong h, slong degree, const slong *indices, slong count,
+    const slong *pivots, slong k)
+{
+    unsigned char *used = flint_calloc((size_t)count, 1);
+    for (slong i = 0; i < k; i++) used[pivots[i]] = 1;
+    slong a = 0, b = 0;
+    for (slong i = 0; i < n; i++) if (weights[i] == degree) {
+        if (i >= h) map[i] = indices[pivots[b++]];
+        else {
+            while (a < count && used[a]) a++;
+            map[i] = indices[a++];
+        }
+    }
+    flint_free(used);
+}
+
+int nmod_poly_mat_mq_schur_repair(nmod_poly_mat_t core, ulong *factor,
+    const nmod_poly_mat_t B, const slong *rd, const slong *cd, slong h, slong sigma)
+{
+    if (!mq_schur_valid(core, factor, B, rd, cd, h, sigma)) return 0;
+    slong n = B->r;
+    slong *rows = flint_malloc((size_t)n * sizeof(slong));
+    slong *cols = flint_malloc((size_t)n * sizeof(slong));
+    slong *ri = flint_malloc((size_t)n * sizeof(slong));
+    slong *ci = flint_malloc((size_t)n * sizeof(slong));
+    slong *perm = flint_malloc((size_t)n * sizeof(slong));
+    slong *pivots = flint_malloc((size_t)n * sizeof(slong));
+    int ok = 1;
+    for (slong i = 0; i < n; i++) rows[i] = cols[i] = i;
+    for (slong d = 0; d <= sigma && ok; d++) {
+        slong nr = 0, nc = 0, kr = 0, kc = 0;
+        for (slong i = 0; i < n; i++) {
+            if (rd[i] == d) { ri[nr++] = i; kr += i >= h; }
+            if (cd[i] == sigma - d) { ci[nc++] = i; kc += i >= h; }
+        }
+        if (kr != kc) { ok = 0; break; }
+        if (!kr) continue;
+        nmod_mat_t block;
+        nmod_mat_init(block, nr, nc, B->modulus);
+        for (slong i = 0; i < nr; i++) for (slong j = 0; j < nc; j++)
+            nmod_mat_entry(block, i, j) = nmod_poly_get_coeff_ui(
+                nmod_poly_mat_entry(B, ri[i], ci[j]), 0);
+        slong rank = nmod_mat_lu(perm, block, 0);
+        if (rank < kr) ok = 0;
+        else {
+            slong next = 0;
+            for (slong i = 0; i < kr; i++) {
+                while (next < nc && !nmod_mat_entry(block, i, next)) next++;
+                pivots[i] = next++;
+            }
+            mq_place_degree_pivots(rows, rd, n, h, d, ri, nr, perm, kr);
+            mq_place_degree_pivots(cols, cd, n, h, sigma - d, ci, nc, pivots, kr);
+        }
+        nmod_mat_clear(block);
+    }
+    if (ok) {
+        nmod_poly_mat_t reordered;
+        nmod_poly_mat_init(reordered, n, n, B->modulus);
+        for (slong i = 0; i < n; i++) for (slong j = 0; j < n; j++)
+            nmod_poly_set(nmod_poly_mat_entry(reordered, i, j),
+                          nmod_poly_mat_entry(B, rows[i], cols[j]));
+        ulong scale;
+        ok = nmod_poly_mat_mq_schur(core, &scale, reordered, rd, cd, h, sigma);
+        if (ok) {
+            if (mq_permutation_odd(rows, n, 0) ^ mq_permutation_odd(cols, n, 0))
+                scale = B->modulus - scale;
+            *factor = scale;
+        }
+        nmod_poly_mat_clear(reordered);
+    }
+    flint_free(pivots); flint_free(perm); flint_free(ci); flint_free(ri);
+    flint_free(cols); flint_free(rows);
     return ok;
 }
