@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "drsolve_cli.h"
+#include "quotient_solver.h"
 
 /* =========================================================================
  * Utility helpers
@@ -3109,6 +3110,68 @@ static int generate_random_poly_strings_rational(
     return 1;
 }
 
+/* Keep the parameter count independent of the resultant support: a vanished
+ * parameter must not silently disable explicitly requested sifting. */
+static slong sift_parameter_count(const char *polys, const char *elim)
+{
+    slong m=0,n=0,ne=0,count=0;
+    char **fs=split_string(polys,&m), **es=split_string(elim,&ne), **names=NULL;
+    collect_variables((const char **)fs,m,NULL,&names,&n);
+    for (slong i=0;i<n;i++) {
+        int eliminated=0;
+        for (slong j=0;j<ne;j++) if (!strcmp(names[i],es[j])) eliminated=1;
+        if (!eliminated) count++;
+    }
+    free_split_strings(names,n); free_split_strings(fs,m); free_split_strings(es,ne);
+    return count;
+}
+
+static char *sift_resultant_cli(const char *raw, const char *polys,
+                               const char *elim, ulong prime,
+                               slong degree, char **report, slong *terms_out)
+{
+    slong m=0,n=0,ne=0,used=0;
+    char **fs=split_string(polys,&m), **es=split_string(elim,&ne), **names=NULL;
+    collect_variables((const char **)fs,m,NULL,&names,&n);
+    char *answer=NULL;
+    if (!n) goto cleanup_names;
+    nmod_mpoly_ctx_t ctx; nmod_mpoly_ctx_init(ctx,n,ORD_DEGLEX,prime);
+    nmod_mpoly_t input, sifted, removed;
+    nmod_mpoly_init(input,ctx); nmod_mpoly_init(sifted,ctx); nmod_mpoly_init(removed,ctx);
+    nmod_mpoly_struct *original=flint_malloc(m*sizeof(*original));
+    for (slong i=0;i<m;i++) nmod_mpoly_init(original+i,ctx);
+    int ok=!nmod_mpoly_set_str_pretty(input,raw,(const char **)names,ctx);
+    if (ok) *terms_out=nmod_mpoly_length(input,ctx);
+    for (slong i=0;i<m && ok;i++)
+        ok=!nmod_mpoly_set_str_pretty(original+i,fs[i],(const char **)names,ctx);
+    for (slong i=0;i<n && ok;i++) for (slong j=0;j<ne;j++)
+        if (!strcmp(names[i],es[j]) && nmod_mpoly_degree_si(input,i,ctx)>0) ok=0;
+    if (ok) ok=quotient_sift_resultant(sifted,removed,input,original,m,ctx,degree,&used);
+    if (ok) {
+        char *filtered=nmod_mpoly_get_str_pretty(sifted,(const char **)names,ctx);
+        char *factor=nmod_mpoly_get_str_pretty(removed,(const char **)names,ctx);
+        answer=strdup(filtered);
+        *terms_out=nmod_mpoly_length(sifted,ctx);
+        size_t len=strlen(factor)+320;
+        *report=malloc(len);
+        snprintf(*report,len,
+            "Quotient sift: certified removed multiplier = %s\n"
+            "Relation degree reached: %ld (limit %ld). "
+            "Unproved factors retained; minimality is not certified.\n",
+            factor,used,degree);
+        flint_free(filtered); flint_free(factor);
+    } else {
+        *report=strdup("Quotient sift: unavailable (parse or factorization failure); original resultant retained.\n");
+    }
+    for (slong i=0;i<m;i++) nmod_mpoly_clear(original+i,ctx);
+    flint_free(original);
+    nmod_mpoly_clear(input,ctx); nmod_mpoly_clear(sifted,ctx); nmod_mpoly_clear(removed,ctx);
+    nmod_mpoly_ctx_clear(ctx);
+cleanup_names:
+    free_split_strings(names,n); free_split_strings(fs,m); free_split_strings(es,ne);
+    return answer;
+}
+
 /* =========================================================================
  * CLI execution
  * ========================================================================= */
@@ -3121,6 +3184,9 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int    verbose_level = 1;
     int    solve_mode  = 0;
     int execution_failed = 0;
+    int sift_mode = 0, sift_active = 0, sift_limits_given = 0;
+    slong sift_degree = 4;
+    char *sift_report = NULL;
     dixon_scalar_screen_report_t scalar_screen = {0};
     polynomial_solver_method_t solver_method = POLYNOMIAL_SOLVER_AUTO;
     int solver_method_explicit = 0, quotient_limits_given = 0;
@@ -3183,6 +3249,20 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         } else if (strcmp(argv[i], "--solve-verbose") == 0) {
             solve_mode = 1;
             verbose_level = 2;
+        } else if (!strcmp(argv[i], "--sift")) {
+            sift_mode = 1;
+        } else if (!strcmp(argv[i], "--no-sift")) {
+            sift_mode = 0;
+        } else if (!strcmp(argv[i], "--sift-max-degree")) {
+            char *end = NULL;
+            errno = 0;
+            long value = i+1<argc ? strtol(argv[i+1], &end, 10) : 0;
+            if (i+1>=argc || errno==ERANGE || end==argv[i+1] || *end || value<=0 ||
+                (unsigned long)value>(ulong)WORD_MAX) {
+                fprintf(stderr, "Error: %s requires a positive integer.\n", argv[i]); return 1;
+            }
+            sift_degree=value;
+            sift_limits_given=1; i++;
         } else if (strcmp(argv[i], "--quotient") == 0) {
             solve_mode = 1;
             solver_method = POLYNOMIAL_SOLVER_QUOTIENT;
@@ -4004,8 +4084,8 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         goto cleanup_fail;
     }
     if (quotient_limits_given && (rational_mode || large_prime_mode || power != 1 ||
-                                 solver_method != POLYNOMIAL_SOLVER_QUOTIENT)) {
-        fprintf(stderr, "Error: quotient limits require --quotient or --solver quotient over a machine-word prime field.\n");
+                                 solver_method == POLYNOMIAL_SOLVER_DIXON)) {
+        fprintf(stderr, "Error: quotient limits require --solver auto or quotient over a machine-word prime field.\n");
         goto cleanup_fail;
     }
     if (complex_mode && !rational_mode) {
@@ -4396,6 +4476,22 @@ random_done:
         }
     }
 
+    int sift_supported = !solve_mode && !comp_mode && !ideal_mode &&
+                         !rational_mode && !large_prime_mode && power==1 &&
+                         !field_eq_mode && !field_eq_final_only_mode && vars_str;
+    if ((sift_mode==1 || sift_limits_given) && !sift_supported) {
+        fprintf(stderr, "Error: sift options require ordinary resultant mode over a machine-word prime field (without ideal/field-equation reduction).\n");
+        goto cleanup_fail;
+    }
+    if (sift_supported && sift_mode==1) {
+        slong parameters=sift_parameter_count(polys_str,vars_str);
+        sift_active=parameters>=1;
+    }
+    if (sift_limits_given && !sift_active) {
+        fprintf(stderr, "Error: sift limits require active sifting (use --sift).\n");
+        goto cleanup_fail;
+    }
+
     if (!silent_mode) {
         if (!comp_mode && !solve_mode) {
             printf("=== %s ===\n", resultant_method_heading(resultant_method));
@@ -4500,7 +4596,7 @@ random_done:
     effective_polys_str = polys_str;
 
     dixon_clear_last_root_report();
-    dixon_set_suppress_root_reporting(resultant_only_mode);
+    dixon_set_suppress_root_reporting(resultant_only_mode || sift_active);
     dixon_set_approximate_root_mode(approximate_root_mode, approximate_root_precision);
     dixon_set_print_complex_roots(complex_mode);
     complex_solver_solution_list_init(&complex_solutions);
@@ -4752,6 +4848,29 @@ random_done:
         }
     }
 
+    if (sift_active && result && scalar_screen.status==DIXON_SCREEN_NOT_RUN) {
+        slong sift_terms=dixon_get_last_resultant_term_count();
+        char *filtered=sift_resultant_cli(result,polys_str,vars_str,
+            fq_nmod_ctx_prime(ctx),sift_degree,&sift_report,&sift_terms);
+        if (filtered) { free(result); result=filtered; }
+        if (!silent_mode) {
+            if (sift_report) fputs(sift_report,stdout);
+            if (strlen(result)<=4096) printf("Sifted resultant = %s\n",result);
+            else if (sift_terms>=0) printf("Sifted resultant: %ld terms (not displayed)\n",sift_terms);
+            else printf("Sifted resultant: not displayed (term count unavailable)\n");
+        }
+        if (!resultant_only_mode) {
+            dixon_set_suppress_root_reporting(0);
+            /* Regenerate both the displayed and cached roots from the filtered
+             * polynomial; never append the unsifted roots to the result file. */
+            FILE *root_out=silent_mode ? tmpfile() : stdout;
+            if (root_out) {
+                append_roots_to_file_from_result(result,polys_str,vars_str,ctx,root_out);
+                if (silent_mode) fclose(root_out);
+            }
+        }
+    }
+
     /* ---- compute total time ---- */
     clock_t cpu_end_time   = clock();
     double  cpu_time       = (double)(cpu_end_time - start_time) / CLOCKS_PER_SEC;
@@ -4869,7 +4988,8 @@ random_done:
         } else if (result) {
             slong resultant_terms = dixon_get_last_resultant_term_count();
             if (resultant_only_mode && silent_mode &&
-                resultant_terms >= 0 && resultant_terms < 100) {
+                ((sift_active && strlen(result)<=4096) ||
+                 (!sift_active && resultant_terms >= 0 && resultant_terms < 100))) {
                 printf("%s\n", result);
             }
             if (resultant_only_mode && large_prime_mode && !silent_mode &&
@@ -4882,6 +5002,7 @@ random_done:
                                                       ideal_str, allvars_str, p_fmpz, power,
                                                       result, cpu_time, wall_time, total_threads, NULL);
                 if (fp_append) {
+                    if (sift_report) fprintf(fp_append,"\n%s",sift_report);
                     if (!resultant_only_mode && large_prime_mode) {
                         large_prime_print_roots_from_resultant_string(result, polys_str, vars_str,
                                                                       p_fmpz, fp_append, !silent_mode);
@@ -4932,6 +5053,7 @@ random_done:
     }
 
 cleanup_success:
+    free(sift_report);
     /* ---- cleanup ---- */
     cleanup_unified_workspace();
     if (ctx_initialized) fq_nmod_ctx_clear(ctx);
@@ -4971,6 +5093,7 @@ cleanup_success:
     return execution_failed;
 
 cleanup_fail:
+    free(sift_report);
     cleanup_unified_workspace();
     if (field_poly_str) free(field_poly_str);
     if (gen_var_name)   free(gen_var_name);

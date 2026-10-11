@@ -1,0 +1,7 @@
+# Qin et al., Example 35 (p. 118), modulo 65537.
+# The quadratic in Step 2 is +34*z^2+66*z-53; Step 3 has a sign typo.
+x,y
+65537
+z*(2*z-1)-1
+(81*x^2+77*z-87)*y-60+50*z^2+74*z
+((19*z^2-68*z+78)*y-53+34*z^2+66*z)*x+(59*z^2+28*z+38)*y-47+6*z^2-50*z

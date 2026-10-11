@@ -84,7 +84,7 @@ void free_equation_combinations(equation_combination_t *combinations, slong num_
 void polynomial_solver_set_realtime_progress(int enabled);
 void polynomial_solver_set_internal_trace(int enabled);
 
-/* AUTO uses Dixon elimination; quotient closure requires explicit selection. */
+/* AUTO uses Dixon, then tries quotient on prime-field overdetermined back substitution. */
 typedef enum {
     POLYNOMIAL_SOLVER_AUTO = 0,
     POLYNOMIAL_SOLVER_DIXON,

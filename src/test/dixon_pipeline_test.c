@@ -43,6 +43,48 @@ static void check_dense_content(void)
     fq_nmod_clear(one,ctx);fq_nmod_ctx_clear(ctx);
 }
 
+/* Check both sides of the automatic small-matrix cutoff against a known
+ * determinant, with prime/extension coefficients and one/two parameters. */
+static void check_step4_boundary(slong size, slong npars, slong extension)
+{
+    fq_nmod_ctx_t ctx; fq_nmod_ctx_init_ui(ctx,101,extension,"t");
+    fq_nmod_t one, alpha; fq_nmod_init(one,ctx); fq_nmod_init(alpha,ctx);
+    fq_nmod_one(one,ctx);
+    if (extension==1) fq_nmod_one(alpha,ctx); else fq_nmod_gen(alpha,ctx);
+    unified_mpoly_struct **matrix=flint_malloc(size*sizeof(*matrix));
+    slong zero[2]={0}, a[2]={1,0}, b[2]={0,1};
+    if (npars==1) b[0]=1;
+    for (slong i=0;i<size;i++) {
+        matrix[i]=flint_calloc(size,sizeof(**matrix));
+        for (slong j=0;j<size;j++) dr_mpoly_init(&matrix[i][j],0,npars,ctx);
+        dr_mpoly_add_term_fast(&matrix[i][i],NULL,zero,one);
+    }
+    dr_mpoly_add_term_fast(&matrix[0][0],NULL,a,alpha);
+    dr_mpoly_add_term_fast(&matrix[1][1],NULL,b,one);
+    unified_mpoly_struct expected={0}, result={0}, polys[2]={0};
+    dr_mpoly_init(&expected,0,npars,ctx);
+    dr_mpoly_mul(&expected,&matrix[0][0],&matrix[1][1]);
+    dr_mpoly_make_monic(&expected);
+    slong x=1;
+    for (slong i=0;i<2;i++) {
+        dr_mpoly_init(polys+i,1,npars,ctx);
+        dr_mpoly_add_term_fast(polys+i,&x,zero,one);
+    }
+    dixon_global_method_step4=-1;
+    if (g_dixon_verbose_level)
+        printf("Boundary: size=%ld parameters=%ld extension=%ld\n",size,npars,extension);
+    dixon_compute_dense_resultant(&result,matrix,size,polys,1,npars,0,NULL,NULL);
+    assert(pipeline_equal(&result,&expected));
+    dr_mpoly_clear(&expected); dr_mpoly_clear(&result);
+    for (slong i=0;i<2;i++) dr_mpoly_clear(polys+i);
+    for (slong i=0;i<size;i++) {
+        for (slong j=0;j<size;j++) dr_mpoly_clear(&matrix[i][j]);
+        flint_free(matrix[i]);
+    }
+    flint_free(matrix); fq_nmod_clear(one,ctx); fq_nmod_clear(alpha,ctx);
+    fq_nmod_ctx_clear(ctx);
+}
+
 static void check_scalar(slong extension)
 {
     fq_nmod_ctx_t ctx;
@@ -135,6 +177,10 @@ int main(void)
     g_dixon_verbose_level=getenv("DRSOLVE_PIPELINE_TEST_VERBOSE") ? 3 : 0;
     omp_set_num_threads(2);
     check_scalar(1);check_scalar(2);check_dense_content();
+    for (slong size=10;size<=11;size++)
+        for (slong npars=1;npars<=2;npars++)
+            for (slong extension=1;extension<=2;extension++)
+                check_step4_boundary(size,npars,extension);
     check_pipeline(65537,1,2,1,2);
     check_pipeline(101,1,3,1,2);
     check_pipeline(101,1,2,2,2);

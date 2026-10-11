@@ -1884,6 +1884,22 @@ int solve_by_back_substitution_recursive_enhanced(char **original_polys, slong n
                                              &combinations, &num_combinations);
             }
             
+            /* Keep every reduced equation for the first AUTO attempt. */
+            int try_quotient = solver_method == POLYNOMIAL_SOLVER_AUTO &&
+                               fq_nmod_ctx_degree(sols->ctx) == 1 &&
+                               num_nonzero_polys > target_equations;
+            if (try_quotient) {
+                combinations = realloc(combinations,
+                    (num_combinations + 1) * sizeof(*combinations));
+                memmove(combinations + 1, combinations,
+                        num_combinations * sizeof(*combinations));
+                combinations[0] = (equation_combination_t){0};
+                combinations[0].num_equations = num_nonzero_polys;
+                combinations[0].equation_indices = malloc(num_nonzero_polys * sizeof(slong));
+                for (slong i = 0; i < num_nonzero_polys; i++)
+                    combinations[0].equation_indices[i] = i;
+                num_combinations++;
+            }
             solver_trace_stdout("Generated %ld equation combinations to try\n", num_combinations);
             
             variable_info_t *remaining_vars = (variable_info_t*) malloc((num_vars - 1) * sizeof(variable_info_t));
@@ -1897,24 +1913,31 @@ int solve_by_back_substitution_recursive_enhanced(char **original_polys, slong n
             int found_dimension_gt_zero = 0;
             
             for (slong comb_idx = 0; comb_idx < num_combinations; comb_idx++) {
+                slong selected_count = combinations[comb_idx].num_equations;
+                int quotient_attempt = try_quotient && comb_idx == 0;
                 solver_trace_stdout("  Trying combination %ld: equations ", comb_idx + 1);
-                for (slong i = 0; i < target_equations; i++) {
+                for (slong i = 0; i < selected_count; i++) {
                     if (i > 0) solver_trace_stdout(", ");
                     solver_trace_stdout("%ld", combinations[comb_idx].equation_indices[i]);
                 }
                 solver_trace_stdout("\n");
                 
-                int combination_uses_all_reduced_equations = (num_nonzero_polys == target_equations);
-                char **final_polys = (char**) malloc(target_equations * sizeof(char*));
-                for (slong i = 0; i < target_equations; i++) {
+                int combination_uses_all_reduced_equations = (num_nonzero_polys == selected_count);
+                char **final_polys = (char**) malloc(selected_count * sizeof(char*));
+                for (slong i = 0; i < selected_count; i++) {
                     final_polys[i] = reduced_polys[combinations[comb_idx].equation_indices[i]];
                 }
 
                 {
                     char *base_str = fq_nmod_get_str_pretty(base_solutions[base_idx], sols->ctx);
                     char *eq_list = format_equation_index_list(combinations[comb_idx].equation_indices,
-                                                               target_equations);
-                    if (target_equations == 1) {
+                                                               selected_count);
+                    if (quotient_attempt) {
+                        add_resultant_step(sols,
+                            "Base %s = %s -> quotient algebra (%ld equations, %ld variables)",
+                            sorted_vars[0].name, base_str ? base_str : "?",
+                            selected_count, num_vars - 1);
+                    } else if (target_equations == 1) {
                         add_resultant_step(sols,
                                            "Base %s = %s -> solve reduced eq(%s)",
                                            sorted_vars[0].name,
@@ -1931,12 +1954,28 @@ int solve_by_back_substitution_recursive_enhanced(char **original_polys, slong n
                     if (base_str) free(base_str);
                 }
 
-                // Recursively solve
-                polynomial_solutions_t *test_sols = solve_polynomial_system_array_with_vars(final_polys, 
-                                                                                           target_equations,
-                                                                                           remaining_vars,
-                                                                                           num_vars - 1,
-                                                                                           sols->ctx);
+                polynomial_solutions_t *test_sols;
+                if (quotient_attempt) {
+                    solver_progress("Back substitution: quotient algebra (%ld equations, %ld variables)",
+                                    selected_count, num_vars - 1);
+                    test_sols = malloc(sizeof(*test_sols));
+                    polynomial_solutions_init(test_sols, num_vars - 1, sols->ctx);
+                    test_sols->num_equations = selected_count;
+                    for (slong i = 0; i < num_vars - 1; i++)
+                        test_sols->variable_names[i] = strdup(remaining_vars[i].name);
+                    test_sols->is_valid = solve_by_quotient_closure(final_polys,
+                        selected_count, remaining_vars, num_vars - 1, test_sols,
+                        quotient_max_degree, quotient_memory_mb);
+                    if (!test_sols->is_valid) {
+                        solver_progress("Back substitution: quotient failed (%s); falling back to Dixon",
+                            test_sols->error_message ? test_sols->error_message : "unknown error");
+                        add_resultant_step(sols, "Quotient failed; falling back to Dixon: %s",
+                            test_sols->error_message ? test_sols->error_message : "unknown error");
+                    }
+                } else {
+                    test_sols = solve_polynomial_system_array_with_vars(final_polys,
+                        selected_count, remaining_vars, num_vars - 1, sols->ctx);
+                }
                 
                 if (test_sols && test_sols->is_valid) {
                     if (test_sols->num_solution_sets > 0 && !combination_uses_all_reduced_equations) {
@@ -2015,11 +2054,15 @@ int solve_by_back_substitution_recursive_enhanced(char **original_polys, slong n
                     solver_trace_stdout("  ✗ Combination %ld failed to solve\n", comb_idx + 1);
                 }
                 
+                /* Certified emptiness of the full reduced system ends this branch. */
+                int quotient_empty = quotient_attempt && test_sols && test_sols->is_valid &&
+                                     test_sols->has_no_solutions == 1;
                 if (test_sols) {
                     polynomial_solutions_clear(test_sols);
                     free(test_sols);
                 }
                 free(final_polys);
+                if (quotient_empty) break;
             }
             free(remaining_vars);
             

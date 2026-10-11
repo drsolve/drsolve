@@ -11,6 +11,7 @@
 #include <flint/nmod_vec.h>
 #include <flint/nmod_poly.h>
 #include <flint/nmod_poly_factor.h>
+#include <flint/nmod_mpoly_factor.h>
 #include <assert.h>
 #include <stdint.h>
 #include <limits.h>
@@ -104,10 +105,49 @@ static slong *pivots(const nmod_mat_t E)
     return p;
 }
 
+/* RREF with implicit identity pivot columns. p and f are the sorted
+ * pivot and free columns; only the nontrivial tails are stored. */
+typedef struct {
+    slong r, c;
+    slong *p, *f;
+    nmod_mat_t tail;
+    nmod_t mod;
+} relations_struct;
+typedef relations_struct relations_t[1];
+
+static void relations_init(relations_t E, slong nc, ulong prime)
+{
+    E->r=0; E->c=nc; E->p=NULL;
+    E->f=flint_malloc(nc*sizeof(slong));
+    for (slong j=0;j<nc;j++) E->f[j]=j;
+    matrix_init(E->tail,0,nc,prime); E->mod=E->tail->mod;
+}
+
+static void relations_clear(relations_t E)
+{
+    flint_free(E->p); flint_free(E->f);
+    nmod_mat_clear(E->tail);
+}
+
+static void relations_projection(nmod_mat_t W, const relations_t E)
+{
+    slong nf=E->c-E->r;
+    matrix_init(W,E->c,nf,E->mod.n);
+    for (slong j=0;j<nf;j++) {
+        nmod_mat_entry(W,E->f[j],j)=1;
+        for (slong i=0;i<E->r;i++)
+            nmod_mat_entry(W,E->p[i],j)=nmod_neg(nmod_mat_entry(E->tail,i,j),E->mod);
+    }
+}
+
 typedef struct {
     basis_t basis;
-    nmod_mat_t E, processed;
+    relations_t E;
+    /* Only pivots are needed to identify a complement of the already
+     * processed subspace; its full matrix need not be retained. */
+    slong *processed, nprocessed;
     slong *shift, submitted, rref_calls;
+    int original_only, processed_ready, inherited;
     uint64_t rref_cells, matmul_work;
 } closure_t;
 
@@ -121,9 +161,9 @@ static void compact_rref(nmod_mat_t M, closure_t *cl)
 
 static void closure_init(closure_t *cl, slong n, slong degree, ulong p)
 {
-    memset(cl,0,sizeof(*cl)); basis_init(&cl->basis,n,degree);
+    memset(cl,0,sizeof(*cl)); cl->original_only=1; basis_init(&cl->basis,n,degree);
     slong nc=cl->basis.count;
-    matrix_init(cl->E,0,nc,p); matrix_init(cl->processed,0,nc,p);
+    relations_init(cl->E,nc,p);
     cl->shift=flint_malloc(nc*n*sizeof(slong));
     for (slong j=0;j<nc;j++) for (slong v=0;v<n;v++) {
         ulong e[n]; memcpy(e,cl->basis.exps+j*n,n*sizeof(ulong)); e[v]++;
@@ -133,7 +173,7 @@ static void closure_init(closure_t *cl, slong n, slong degree, ulong p)
 
 static void closure_clear(closure_t *cl)
 {
-    basis_clear(&cl->basis); nmod_mat_clear(cl->E); nmod_mat_clear(cl->processed); flint_free(cl->shift);
+    basis_clear(&cl->basis); relations_clear(cl->E); flint_free(cl->processed); flint_free(cl->shift);
 }
 
 /* Retain the previous degree's relations and one variable multiple per
@@ -145,7 +185,18 @@ static void closure_seed(closure_t *cl, const closure_t *prev)
 {
     slong nc=cl->basis.count, pc=prev->basis.count, n=cl->basis.n;
     slong offset=nc-pc, rank=0, nf=0;
-    slong *p=pivots(prev->E);
+    cl->inherited=1;
+    cl->original_only=prev->original_only;
+    /* If no closure relation has been added, the previous space is exactly
+     * the Macaulay space at degree d-1. All its variable multiples are
+     * covered by insert_original_rows at degree d, so reuse its RREF. */
+    if (prev->original_only) {
+        cl->nprocessed=prev->E->r;
+        cl->processed=flint_malloc(cl->nprocessed*sizeof(slong));
+        for (slong i=0;i<cl->nprocessed;i++) cl->processed[i]=prev->E->p[i]+offset;
+        cl->processed_ready=1;
+    }
+    const slong *p=prev->E->p;
     slong *source=flint_malloc(nc*sizeof(slong));
     slong *variable=flint_malloc(nc*sizeof(slong));
     slong *index=flint_malloc(nc*sizeof(slong));
@@ -165,19 +216,14 @@ static void closure_seed(closure_t *cl, const closure_t *prev)
     }
     /* The old RREF has nonzero tails only in its free columns. Back
      * substitution through those sparse tails avoids a rank-by-rank U. */
-    slong pn=pc-prev->E->r, pi=0, k=0;
-    slong *pf=flint_malloc(pn*sizeof(slong));
-    for (slong j=0;j<pc;j++) {
-        if (pi<prev->E->r && p[pi]==j) pi++;
-        else pf[k++]=j;
-    }
-    nmod_mat_t tails,V;
-    select_matrix(tails,prev->E,NULL,prev->E->r,pf,pn);
+    slong pn=pc-prev->E->r;
+    const slong *pf=prev->E->f;
+    nmod_mat_t V;
     matrix_init(V,rank,nf,cl->E->mod.n);
     for (slong j=nc-1;nf && j>=0;j--) if (source[j]>=0) {
         slong row=index[j], src=source[j], v=variable[j];
         for (slong t=0;t<pn;t++) {
-            ulong a=nmod_mat_entry(tails,src,t);
+            ulong a=nmod_mat_entry(prev->E->tail,src,t);
             if (!a) continue;
             slong dest=v<0?pf[t]+offset:cl->shift[(pf[t]+offset)*n+v];
             assert(dest>j);
@@ -191,79 +237,74 @@ static void closure_seed(closure_t *cl, const closure_t *prev)
             }
         }
     }
-    nmod_mat_clear(cl->E); matrix_init(cl->E,rank,nc,V->mod.n);
-    for (slong j=0;j<nc;j++) if (source[j]>=0) {
-        slong row=index[j]; nmod_mat_entry(cl->E,row,j)=1;
-        for (slong t=0;t<nf;t++) nmod_mat_entry(cl->E,row,cols[t])=nmod_mat_entry(V,row,t);
-    }
-    nmod_mat_clear(tails); nmod_mat_clear(V); flint_free(pf);
-    flint_free(p); flint_free(source); flint_free(variable); flint_free(index); flint_free(cols);
+    cl->E->r=rank;
+    cl->E->p=flint_realloc(cl->E->p,rank*sizeof(slong));
+    for (slong j=0;j<nc;j++) if (source[j]>=0) cl->E->p[index[j]]=j;
+    memcpy(cl->E->f,cols,nf*sizeof(slong));
+    nmod_mat_swap(cl->E->tail,V); nmod_mat_clear(V);
+    flint_free(source); flint_free(variable); flint_free(index); flint_free(cols);
 }
 
 /* Merge relations expressed only in the current free columns. */
-static void insert_reduced_rows(closure_t *cl, nmod_mat_t S,
-                                const slong *p, const slong *freecols)
+static void insert_reduced_rows(closure_t *cl, nmod_mat_t S)
 {
-    slong nc=cl->basis.count, rank=cl->E->r, nf=S->c;
+    relations_struct *E=cl->E;
+    slong rank=E->r, nf=S->c;
+    assert(nf==E->c-rank);
     compact_rref(S,cl);
-    if (S->r) {
-        slong *np=pivots(S);
-        slong *rest=flint_malloc(nf*sizeof(slong)), *global=flint_malloc(nf*sizeof(slong)), nr=0;
-        slong pi=0;
-        for (slong j=0;j<nf;j++) {
-            if (pi<S->r && np[pi]==j) pi++;
-            else { rest[nr]=j; global[nr++]=freecols[j]; }
-        }
-        nmod_mat_t tail,En,product,updated,joined;
-        select_matrix(tail,S,NULL,S->r,rest,nr);
-        for (slong i=0;i<S->r;i++) np[i]=freecols[np[i]];
-        select_matrix(En,cl->E,NULL,rank,np,S->r);
-        matrix_init(product,rank,nr,S->mod.n); nmod_mat_mul(product,En,tail);
-        select_matrix(updated,cl->E,NULL,rank,global,nr); nmod_mat_sub(updated,updated,product);
-        cl->matmul_work+=(uint64_t)rank*S->r*nr;
-        matrix_init(joined,rank+S->r,nc,S->mod.n);
-        slong old=0,add=0;
-        for (slong i=0;i<joined->r;i++) {
-            int use_old=old<rank && (add==S->r || p[old]<np[add]);
-            nmod_mat_entry(joined,i,use_old?p[old]:np[add])=1;
-            for (slong j=0;j<nr;j++) nmod_mat_entry(joined,i,global[j])=use_old?nmod_mat_entry(updated,old,j):nmod_mat_entry(tail,add,j);
-            if (use_old) old++; else add++;
-        }
-        nmod_mat_swap(cl->E,joined);
-        nmod_mat_clear(joined); nmod_mat_clear(tail); nmod_mat_clear(En);
-        nmod_mat_clear(product); nmod_mat_clear(updated); flint_free(np);
-        flint_free(rest); flint_free(global);
+    if (!S->r) return;
+    slong *np=pivots(S), *rest=flint_malloc(nf*sizeof(slong));
+    slong nr=0, pi=0;
+    for (slong j=0;j<nf;j++) {
+        if (pi<S->r && np[pi]==j) pi++;
+        else rest[nr++]=j;
     }
+    nmod_mat_t tail,En,product,updated,joined;
+    select_matrix(tail,S,NULL,S->r,rest,nr);
+    select_matrix(En,E->tail,NULL,rank,np,S->r);
+    matrix_init(product,rank,nr,S->mod.n); nmod_mat_mul(product,En,tail);
+    select_matrix(updated,E->tail,NULL,rank,rest,nr); nmod_mat_sub(updated,updated,product);
+    cl->matmul_work+=(uint64_t)rank*S->r*nr;
+    for (slong i=0;i<S->r;i++) np[i]=E->f[np[i]];
+    slong *p=flint_malloc((rank+S->r)*sizeof(slong));
+    matrix_init(joined,rank+S->r,nr,S->mod.n);
+    slong old=0,add=0;
+    for (slong i=0;i<joined->r;i++) {
+        int use_old=old<rank && (add==S->r || E->p[old]<np[add]);
+        p[i]=use_old?E->p[old]:np[add];
+        for (slong j=0;j<nr;j++)
+            nmod_mat_entry(joined,i,j)=use_old?nmod_mat_entry(updated,old,j):nmod_mat_entry(tail,add,j);
+        if (use_old) old++; else add++;
+    }
+    for (slong i=0;i<nr;i++) E->f[i]=E->f[rest[i]];
+    flint_free(E->p); E->p=p; E->r+=S->r;
+    nmod_mat_swap(E->tail,joined);
+    nmod_mat_clear(joined); nmod_mat_clear(tail); nmod_mat_clear(En);
+    nmod_mat_clear(product); nmod_mat_clear(updated); flint_free(np); flint_free(rest);
 }
 
 static void insert_rows(closure_t *cl, const nmod_mat_t M)
 {
-    slong nc=cl->basis.count, rank=cl->E->r; cl->submitted+=M->r;
-    if (!M->r || rank==nc) return;
-    if (!rank) {
-        nmod_mat_clear(cl->E); nmod_mat_init_set(cl->E,M); compact_rref(cl->E,cl); return;
-    }
-    slong *p=pivots(cl->E), *freecols=flint_malloc(nc*sizeof(slong)), nf=0, pi=0;
-    for (slong j=0;j<nc;j++) { if (pi<rank && p[pi]==j) pi++; else freecols[nf++]=j; }
-    nmod_mat_t Ef,S;
-    select_matrix(Ef,cl->E,NULL,rank,freecols,nf);
+    relations_struct *E=cl->E;
+    slong rank=E->r, nf=E->c-rank; cl->submitted+=M->r;
+    if (!M->r || !nf) return;
+    nmod_mat_t S;
     matrix_init(S,M->r,nf,M->mod.n);
-    /* Bound the pivot-column scratch space even for tall Macaulay batches. */
+    /* Bound the pivot-column scratch space even for tall batches. */
     for (slong start=0;start<M->r;start+=256) {
         slong rows=FLINT_MIN(256,M->r-start);
         nmod_mat_t Mp,block;
         matrix_init(Mp,rows,rank,M->mod.n);
         for (slong i=0;i<rows;i++) for (slong j=0;j<rank;j++)
-            nmod_mat_entry(Mp,i,j)=nmod_mat_entry(M,start+i,p[j]);
+            nmod_mat_entry(Mp,i,j)=nmod_mat_entry(M,start+i,E->p[j]);
         nmod_mat_window_init(block,S,start,0,start+rows,nf);
-        nmod_mat_mul(block,Mp,Ef);
+        nmod_mat_mul(block,Mp,E->tail);
         for (slong i=0;i<rows;i++) for (slong j=0;j<nf;j++)
-            nmod_mat_entry(block,i,j)=nmod_sub(nmod_mat_entry(M,start+i,freecols[j]),nmod_mat_entry(block,i,j),M->mod);
+            nmod_mat_entry(block,i,j)=nmod_sub(nmod_mat_entry(M,start+i,E->f[j]),nmod_mat_entry(block,i,j),M->mod);
         nmod_mat_window_clear(block); nmod_mat_clear(Mp);
     }
     cl->matmul_work+=(uint64_t)M->r*rank*nf;
-    nmod_mat_clear(Ef); insert_reduced_rows(cl,S,p,freecols);
-    nmod_mat_clear(S); flint_free(p); flint_free(freecols);
+    insert_reduced_rows(cl,S); nmod_mat_clear(S);
 }
 
 static void closure_run(closure_t *cl, const nmod_mat_t initial,
@@ -273,31 +314,40 @@ static void closure_run(closure_t *cl, const nmod_mat_t initial,
     insert_rows(cl,initial);
     for (;;) {
         if (cl->E->r==nc) break;
-        slong *p=pivots(cl->E);
-        slong *lowidx=flint_malloc(cl->E->r*sizeof(slong)),nl=0;
-        for (slong i=0;i<cl->E->r;i++) if (cl->basis.degrees[p[i]]<cl->basis.degree) lowidx[nl++]=i;
-        nmod_mat_t low,delta;
-        select_matrix(low,cl->E,lowidx,nl,NULL,nc); nmod_mat_init_set(delta,low);
-        if (cl->processed->r) {
-            slong *pp=pivots(cl->processed);
-            nmod_mat_t Lp,product; select_matrix(Lp,low,NULL,nl,pp,cl->processed->r);
-            matrix_init(product,nl,nc,ctx->mod.n); nmod_mat_mul(product,Lp,cl->processed);
-            nmod_mat_sub(delta,delta,product);
-            cl->matmul_work+=(uint64_t)nl*cl->processed->r*nc;
-            nmod_mat_clear(Lp); nmod_mat_clear(product); flint_free(pp);
+        slong *low=flint_malloc(cl->E->r*sizeof(slong));
+        slong *delta=flint_malloc(cl->E->r*sizeof(slong));
+        slong nl=0,nd=0,np=0;
+        /* processed is a subspace of the low-degree space. Its pivots
+         * are a subset of the latter's; rows with new pivots form a
+         * complement even when old pivot rows have changed tails. */
+        for (slong i=0;i<cl->E->r;i++) {
+            slong pivot=cl->E->p[i];
+            if (cl->basis.degrees[pivot]>=cl->basis.degree) continue;
+            low[nl++]=pivot;
+            if (np<cl->nprocessed && cl->processed[np]==pivot) np++;
+            else delta[nd++]=i;
         }
-        nmod_mat_swap(cl->processed,low); nmod_mat_clear(low); compact_rref(delta,cl);
-        flint_free(p); flint_free(lowidx);
-        if (!delta->r) { nmod_mat_clear(delta); break; }
-        nmod_mat_t extra; matrix_init(extra,delta->r*n,nc,ctx->mod.n);
-        for (slong i=0;i<delta->r;i++) for (slong j=0;j<nc;j++) if (nmod_mat_entry(delta,i,j))
-            for (slong v=0;v<n;v++) {
-                slong dest=cl->shift[j*n+v]; assert(dest>=0);
-                nmod_mat_entry(extra,i*n+v,dest)=nmod_mat_entry(delta,i,j);
+        assert(np==cl->nprocessed);
+        flint_free(cl->processed); cl->processed=low; cl->nprocessed=nl;
+        if (!nd) { flint_free(delta); break; }
+        nmod_mat_t extra; matrix_init(extra,nd*n,nc,ctx->mod.n);
+        for (slong i=0;i<nd;i++) {
+            slong row=delta[i];
+            for (slong v=0;v<n;v++)
+                nmod_mat_entry(extra,i*n+v,cl->shift[cl->E->p[row]*n+v])=1;
+            for (slong j=0;j<cl->E->tail->c;j++) {
+                ulong a=nmod_mat_entry(cl->E->tail,row,j);
+                if (!a) continue;
+                for (slong v=0;v<n;v++) {
+                    slong dest=cl->shift[cl->E->f[j]*n+v]; assert(dest>=0);
+                    nmod_mat_entry(extra,i*n+v,dest)=a;
+                }
             }
+        }
         slong oldrank=cl->E->r; insert_rows(cl,extra);
-        nmod_mat_clear(extra); nmod_mat_clear(delta);
+        nmod_mat_clear(extra); flint_free(delta);
         if (cl->E->r==oldrank) break;
+        cl->original_only=0;
     }
 }
 
@@ -349,7 +399,8 @@ static void projection(nmod_mat_t W, const nmod_mat_t E, slong **free_out)
 
 /* Construct Macaulay relations directly in quotient coordinates. Each
  * input multiple has only fs[i].length nonzeros, even when the ambient
- * monomial basis has thousands of columns. No dense ambient batch is needed. */
+ * monomial basis has thousands of columns. No dense ambient batch is needed.
+ * After seeding, all multiples of lower degree have already been inherited. */
 static void insert_original_rows(closure_t *cl, nmod_mpoly_struct *fs, slong m,
                                   const nmod_mpoly_ctx_t ctx)
 {
@@ -364,17 +415,18 @@ static void insert_original_rows(closure_t *cl, nmod_mpoly_struct *fs, slong m,
     basis_t multipliers; basis_init(&multipliers,n,md);
     for (slong i=0;i<m;i++) if (fs[i].length) {
         slong d=nmod_mpoly_total_degree_si(fs+i,ctx);
-        for (slong j=0;j<multipliers.count;j++) if (multipliers.degrees[j]<=degree-d) count++;
+        for (slong j=0;j<multipliers.count;j++) if (multipliers.degrees[j]<=degree-d &&
+            (!cl->inherited || multipliers.degrees[j]==degree-d)) count++;
     }
-    slong *p=pivots(cl->E), *freecols;
-    nmod_mat_t W,S; projection(W,cl->E,&freecols);
+    nmod_mat_t W,S; relations_projection(W,cl->E);
     matrix_init(S,count,W->c,ctx->mod.n);
     slong row=0;
     for (slong i=0;i<m;i++) if (fs[i].length) {
         slong d=nmod_mpoly_total_degree_si(fs+i,ctx);
         ulong *exps=flint_malloc(fs[i].length*n*sizeof(ulong));
         for (slong a=0;a<fs[i].length;a++) nmod_mpoly_get_term_exp_ui(exps+a*n,fs+i,a,ctx);
-        for (slong j=0;j<multipliers.count;j++) if (multipliers.degrees[j]<=degree-d) {
+        for (slong j=0;j<multipliers.count;j++) if (multipliers.degrees[j]<=degree-d &&
+            (!cl->inherited || multipliers.degrees[j]==degree-d)) {
             for (slong a=0;a<fs[i].length;a++) {
                 ulong e[n];
                 for (slong v=0;v<n;v++) e[v]=exps[a*n+v]+multipliers.exps[j*n+v];
@@ -388,8 +440,8 @@ static void insert_original_rows(closure_t *cl, nmod_mpoly_struct *fs, slong m,
     }
     assert(row==count); cl->submitted+=count;
     nmod_mat_clear(W); basis_clear(&multipliers);
-    insert_reduced_rows(cl,S,p,freecols);
-    nmod_mat_clear(S); flint_free(p); flint_free(freecols);
+    insert_reduced_rows(cl,S);
+    nmod_mat_clear(S);
 }
 
 static void row_times(ulong *out, const ulong *in, const nmod_mat_t T)
@@ -445,7 +497,7 @@ static void quotient_close(quotient_result *result, closure_t *cl,
                             nmod_mpoly_struct *fs, slong m, const nmod_mpoly_ctx_t ctx)
 {
     slong n=cl->basis.n,nc=cl->basis.count;slong *freecols;
-    nmod_mat_t W;projection(W,cl->E,&freecols);flint_free(freecols);
+    nmod_mat_t W;relations_projection(W,cl->E);
     slong *low=flint_malloc(nc*sizeof(slong)),nl=0;
     for (slong j=nc-1;j>=0;j--) if (cl->basis.degrees[j]<cl->basis.degree) low[nl++]=j;
     slong *shift=flint_malloc(n*nl*sizeof(slong));
@@ -473,17 +525,34 @@ static void quotient_close(quotient_result *result, closure_t *cl,
         nmod_mat_swap(W,newW);nmod_mat_clear(newW);nmod_mat_clear(inv);nmod_mat_clear(WB);
         nmod_mat_clear(WL);select_matrix(WL,W,low,nl,NULL,dim);
         nmod_mat_struct *T=flint_malloc(n*sizeof(*T));
-        nmod_mat_t C,product,shifted;matrix_init(C,n*nl,dim,ctx->mod.n);matrix_init(product,nl,dim,ctx->mod.n);
+        /* Build all operators, but stream consistency relations. A nonzero
+         * block already gives valid ideal relations and strictly lowers
+         * the dimension. Restart in the smaller coordinates immediately.
+         * Certification still requires a complete pass with no relations. */
         for(slong i=0;i<n;i++) {
             slong *sb=flint_malloc(dim*sizeof(slong));
             for(slong j=0;j<dim;j++)sb[j]=shift[i*nl+local[j]];
             select_matrix(T+i,W,sb,dim,NULL,dim);flint_free(sb);
-            nmod_mat_mul(product,WL,T+i);select_matrix(shifted,W,shift+i*nl,nl,NULL,dim);
-            for(slong a=0;a<nl;a++)for(slong b=0;b<dim;b++)
-                nmod_mat_entry(C,i*nl+a,b)=nmod_sub(nmod_mat_entry(shifted,a,b),nmod_mat_entry(product,a,b),ctx->mod);
-            nmod_mat_clear(shifted);cl->matmul_work+=(uint64_t)nl*dim*dim;
         }
-        nmod_mat_clear(product);nmod_mat_clear(WL);compact_rref(C,cl);
+        nmod_mat_t C; matrix_init(C,0,dim,ctx->mod.n);
+        for(slong i=0;i<n && !C->r;i++) {
+            for(slong start=0;start<nl;start+=256) {
+                slong rows=FLINT_MIN(256,nl-start);
+                nmod_mat_t block,product;
+                nmod_mat_window_init(block,WL,start,0,start+rows,dim);
+                matrix_init(product,rows,dim,ctx->mod.n);
+                nmod_mat_mul(product,block,T+i);
+                nmod_mat_window_clear(block);
+                nmod_mat_clear(C); matrix_init(C,rows,dim,ctx->mod.n);
+                for(slong a=0;a<rows;a++)for(slong b=0;b<dim;b++)
+                    nmod_mat_entry(C,a,b)=nmod_sub(nmod_mat_entry(W,shift[i*nl+start+a],b),
+                                                  nmod_mat_entry(product,a,b),ctx->mod);
+                nmod_mat_clear(product); cl->matmul_work+=(uint64_t)rows*dim*dim;
+                compact_rref(C,cl);
+                if(C->r) break;
+            }
+        }
+        nmod_mat_clear(WL);
         int stop=0;
         if (!C->r) {
             ulong *one=flint_malloc(dim*sizeof(ulong));
@@ -646,9 +715,13 @@ int solve_by_quotient_closure(char **polys, slong count,
         insert_original_rows(&cl,fs,count,ctx);
         quotient_close(&result,&cl,fs,count,ctx);
         if(!result.certified) {
-            nmod_mat_clear(cl.processed);
-            original_rows(cl.processed,fs,count,ctx,&cl.basis,1,d-1);
-            compact_rref(cl.processed,NULL);
+            if (!cl.processed_ready) {
+                nmod_mat_t processed;
+                original_rows(processed,fs,count,ctx,&cl.basis,1,d-1);
+                compact_rref(processed,NULL);
+                cl.processed=pivots(processed); cl.nprocessed=processed->r;
+                nmod_mat_clear(processed);
+            }
             nmod_mat_t empty; matrix_init(empty,0,cl.basis.count,ctx->mod.n);
             slong oldrank=cl.E->r;
             closure_run(&cl,empty,ctx); nmod_mat_clear(empty);
@@ -699,4 +772,148 @@ int solve_by_quotient_closure(char **polys, slong count,
     for(slong i=0;i<initialized;i++) nmod_mpoly_clear(fs+i,ctx);
     flint_free(fs); flint_free(degrees); flint_free(names); nmod_mpoly_ctx_clear(ctx);
     return success;
+}
+
+/* Membership in a subspace of I is a sufficient certificate. Failure to
+ * reduce to zero is deliberately NOT interpreted as nonmembership in I. */
+static int sift_relation_contains(const closure_t *cl, const nmod_mpoly_t f,
+                                  const nmod_mpoly_ctx_t ctx)
+{
+    if (!nmod_mpoly_total_degree_fits_si(f,ctx) ||
+        nmod_mpoly_total_degree_si(f,ctx)>cl->basis.degree) return 0;
+    slong nc=cl->basis.count, n=cl->basis.n;
+    ulong *row=flint_calloc(nc,sizeof(ulong));
+    ulong e[n];
+    for (slong j=0;j<f->length;j++) {
+        nmod_mpoly_get_term_exp_ui(e,f,j,ctx);
+        slong col=basis_find(&cl->basis,e);
+        assert(col>=0); row[col]=f->coeffs[j];
+    }
+    const relations_struct *E=cl->E;
+    for (slong i=0;i<E->r;i++) {
+        ulong a=row[E->p[i]];
+        if (!a) continue;
+        for (slong j=0;j<E->tail->c;j++)
+            row[E->f[j]]=nmod_sub(row[E->f[j]],
+                nmod_mul(a,nmod_mat_entry(E->tail,i,j),E->mod),E->mod);
+    }
+    int zero=1;
+    for (slong j=0;j<E->tail->c;j++) if (row[E->f[j]]) { zero=0; break; }
+    flint_free(row); return zero;
+}
+
+/* Multiples of certified relations are still in I, even when the tested
+ * polynomial exceeds the closure degree. This is ordinary division by a
+ * (not necessarily Groebner) set: only a zero remainder proves membership. */
+static int sift_reduce_contains(const closure_t *cl, const nmod_mpoly_t f,
+                                const nmod_mpoly_ctx_t ctx)
+{
+    const relations_struct *E=cl->E;
+    slong n=cl->basis.n, nr=0;
+    slong *selected=flint_malloc(E->r*sizeof(slong));
+    /* Keep the minimal leading monomials to avoid thousands of redundant
+     * monomial multiples in FLINT's division heap. */
+    for (slong i=E->r;i-- > 0;) {
+        const ulong *e=cl->basis.exps+E->p[i]*n;
+        int redundant=0;
+        for (slong j=0;j<nr && !redundant;j++) {
+            const ulong *q=cl->basis.exps+E->p[selected[j]]*n;
+            int divides=1;
+            for (slong v=0;v<n;v++) if (q[v]>e[v]) { divides=0; break; }
+            redundant=divides;
+        }
+        if (!redundant) selected[nr++]=i;
+    }
+    if (!nr) { flint_free(selected); return nmod_mpoly_is_zero(f,ctx); }
+    nmod_mpoly_struct **basis=flint_malloc(nr*sizeof(*basis));
+    nmod_mpoly_struct **quotients=flint_malloc(nr*sizeof(*quotients));
+    for (slong j=0;j<nr;j++) {
+        basis[j]=flint_malloc(sizeof(**basis)); nmod_mpoly_init(basis[j],ctx);
+        quotients[j]=flint_malloc(sizeof(**quotients)); nmod_mpoly_init(quotients[j],ctx);
+        slong i=selected[j];
+        nmod_mpoly_push_term_ui_ui(basis[j],1,cl->basis.exps+E->p[i]*n,ctx);
+        for (slong k=0;k<E->tail->c;k++) {
+            ulong a=nmod_mat_entry(E->tail,i,k);
+            if (a) nmod_mpoly_push_term_ui_ui(basis[j],a,cl->basis.exps+E->f[k]*n,ctx);
+        }
+        nmod_mpoly_sort_terms(basis[j],ctx);
+    }
+    nmod_mpoly_t remainder; nmod_mpoly_init(remainder,ctx);
+    nmod_mpoly_divrem_ideal(quotients,remainder,f,basis,nr,ctx);
+    int zero=nmod_mpoly_is_zero(remainder,ctx);
+    nmod_mpoly_clear(remainder,ctx);
+    for (slong j=0;j<nr;j++) {
+        nmod_mpoly_clear(basis[j],ctx); flint_free(basis[j]);
+        nmod_mpoly_clear(quotients[j],ctx); flint_free(quotients[j]);
+    }
+    flint_free(basis); flint_free(quotients); flint_free(selected);
+    return zero;
+}
+
+int quotient_sift_resultant(nmod_mpoly_t sifted, nmod_mpoly_t removed,
+                           const nmod_mpoly_t resultant,
+                           nmod_mpoly_struct *polys, slong count,
+                           const nmod_mpoly_ctx_t ctx,
+                           slong max_degree,
+                           slong *used_degree)
+{
+    *used_degree=0;
+    nmod_mpoly_set(sifted,resultant,ctx);
+    nmod_mpoly_one(removed,ctx);
+    if (max_degree<=0 || count<=0 ||
+        ctx->minfo->nvars<=0) return 0;
+    if (nmod_mpoly_is_zero(resultant,ctx) || nmod_mpoly_is_ui(resultant,ctx)) return 1;
+    if (!nmod_mpoly_total_degree_fits_si(resultant,ctx)) return 0;
+    slong n=ctx->minfo->nvars, start=1;
+    slong *degrees=flint_malloc(count*sizeof(slong));
+    for (slong i=0;i<count;i++) {
+        if (!nmod_mpoly_total_degree_fits_si(polys+i,ctx)) { flint_free(degrees); return 0; }
+        degrees[i]=nmod_mpoly_total_degree_si(polys+i,ctx);
+        start=FLINT_MAX(start,degrees[i]);
+    }
+    /* Check the degree bound and addressability before factorization. */
+    slong columns;
+    if (start>max_degree || degree_fits(n,start,degrees,count,0,&columns)!=1) {
+        flint_free(degrees); return 1;
+    }
+    nmod_mpoly_factor_t factors;
+    nmod_mpoly_factor_init(factors,ctx);
+    if (!nmod_mpoly_factor(factors,resultant,ctx)) {
+        nmod_mpoly_factor_clear(factors,ctx); flint_free(degrees); return 0;
+    }
+    slong nf=nmod_mpoly_factor_length(factors,ctx);
+    slong *left=flint_malloc(nf*sizeof(slong));
+    for (slong i=0;i<nf;i++) left[i]=nmod_mpoly_factor_get_exp_si(factors,i,ctx);
+    nmod_mpoly_t candidate, factor;
+    nmod_mpoly_init(candidate,ctx); nmod_mpoly_init(factor,ctx);
+    closure_t previous;
+    int have_previous=0;
+    for (slong d=start;d<=max_degree;d++) {
+        if (degree_fits(n,d,degrees,count,0,&columns)!=1) break;
+        closure_t cl; closure_init(&cl,n,d,ctx->mod.n);
+        if (have_previous) { closure_seed(&cl,&previous); closure_clear(&previous); }
+        insert_original_rows(&cl,polys,count,ctx);
+        nmod_mat_t empty; matrix_init(empty,0,cl.basis.count,ctx->mod.n);
+        closure_run(&cl,empty,ctx); nmod_mat_clear(empty);
+        *used_degree=d;
+        for (slong i=0;i<nf;i++) {
+            nmod_mpoly_factor_get_base(factor,factors,i,ctx);
+            while (left[i]>0) {
+                int divides=nmod_mpoly_divides(candidate,sifted,factor,ctx);
+                assert(divides);
+                if (!divides || (!sift_relation_contains(&cl,candidate,ctx) &&
+                                 !sift_reduce_contains(&cl,candidate,ctx))) break;
+                nmod_mpoly_swap(sifted,candidate,ctx);
+                nmod_mpoly_mul(removed,removed,factor,ctx);
+                left[i]--;
+            }
+        }
+        previous=cl; have_previous=1;
+        if (nmod_mpoly_is_ui(sifted,ctx) || d==WORD_MAX) break;
+    }
+    if (have_previous) closure_clear(&previous);
+    nmod_mpoly_clear(candidate,ctx); nmod_mpoly_clear(factor,ctx);
+    nmod_mpoly_factor_clear(factors,ctx);
+    flint_free(left); flint_free(degrees);
+    return 1;
 }

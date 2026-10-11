@@ -1,0 +1,6 @@
+# Elimination ideal <a*(b^3+a*b^2-b^2-a*b+1)> over F_65537.
+x,y
+65537
+x^2+y+b+a
+x*y*b+x*a-1
+x*a*b+a

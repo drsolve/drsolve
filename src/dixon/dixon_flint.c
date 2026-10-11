@@ -1222,6 +1222,9 @@ void compute_fq_coefficient_matrix_det(unified_mpoly_struct *result,
         } else if (method == DET_METHOD_BALANCED_SPLIT) {
             dixon_debug_log("  Method: balanced split Laplace (experimental)\n");
             compute_fq_det_balanced_split_experimental(result, coeff_matrix, size);
+        } else if (method == DET_METHOD_RECURSIVE) {
+            dixon_debug_log("  Method: minor expansion\n");
+            compute_fq_det_recursive(result, coeff_matrix, size);
         } else {
             dr_mpoly_init(result, 0, npars, ctx);
 
@@ -6544,12 +6547,44 @@ static void dixon_step4_resultant(unified_mpoly_struct *result,
     clock_t cpu_start=clock(); double wall_start=get_wall_time();
     int univariate=poly_matrix || prime_matrix;
     det_method_t method;
-    if (univariate) method=DET_METHOD_KRONECKER;
+    if (size<=10) method=DET_METHOD_RECURSIVE;
+    else if (univariate) method=DET_METHOD_KRONECKER;
 #ifdef _OPENMP
     else if (npars>1) method=DET_METHOD_INTERPOLATION;
 #endif
-    else method=size<9 ? DET_METHOD_RECURSIVE : DET_METHOD_KRONECKER;
+    else method=DET_METHOD_KRONECKER;
     if (dixon_global_method_step4!=-1) method=dixon_global_method_step4;
+
+    /* Small native univariate matrices must follow the same dispatch as
+     * multivariate matrices. Convert only this bounded case; large native
+     * matrices retain their compact representation and fast backend. */
+    unified_mpoly_struct **small_matrix=NULL;
+    if (univariate && method==DET_METHOD_RECURSIVE) {
+        small_matrix=flint_malloc(size*sizeof(*small_matrix));
+        fq_nmod_t coefficient; fq_nmod_init(coefficient,polys[0].ctx);
+        for (slong i=0;i<size;i++) {
+            small_matrix[i]=flint_calloc(size,sizeof(**small_matrix));
+            for (slong j=0;j<size;j++) {
+                dr_mpoly_init(&small_matrix[i][j],0,1,polys[0].ctx);
+                slong degree=prime_matrix
+                    ? nmod_poly_degree(nmod_poly_mat_entry(prime_matrix,i,j))
+                    : fq_nmod_poly_degree(fq_nmod_poly_mat_entry(poly_matrix,i,j),polys[0].ctx);
+                for (slong k=0;k<=degree;k++) {
+                    if (prime_matrix)
+                        fq_nmod_set_ui(coefficient,nmod_poly_get_coeff_ui(
+                            nmod_poly_mat_entry(prime_matrix,i,j),k),polys[0].ctx);
+                    else
+                        fq_nmod_poly_get_coeff(coefficient,
+                            fq_nmod_poly_mat_entry(poly_matrix,i,j),k,polys[0].ctx);
+                    if (!fq_nmod_is_zero(coefficient,polys[0].ctx))
+                        dr_mpoly_add_term_fast(&small_matrix[i][j],NULL,&k,coefficient);
+                }
+            }
+        }
+        fq_nmod_clear(coefficient,polys[0].ctx);
+        matrix=small_matrix;
+        univariate=0;
+    }
     dixon_info_log("  Determinant method: %s\n",dixon_det_method_name(method));
     if (univariate) {
         fq_nmod_poly_t det;
@@ -6588,6 +6623,13 @@ static void dixon_step4_resultant(unified_mpoly_struct *result,
             const char *name=par_names && par_names[0] ? par_names[0] : "x";
             dixon_info_log("  Restored extracted %s-content: %s^%ld\n",name,name,extracted_power);
         }
+    }
+    if (small_matrix) {
+        for (slong i=0;i<size;i++) {
+            for (slong j=0;j<size;j++) dr_mpoly_clear(&small_matrix[i][j]);
+            flint_free(small_matrix[i]);
+        }
+        flint_free(small_matrix);
     }
     dixon_maybe_print_step_method_time("Step 4",method,
         (double)(clock()-cpu_start)/CLOCKS_PER_SEC,get_wall_time()-wall_start);

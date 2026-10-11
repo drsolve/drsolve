@@ -1127,3 +1127,24 @@ test-scalar-screen: $(BUILD_DIR)/dixon_scalar_screen_test
 .PHONY: test-scalar-screen-cli
 test-scalar-screen-cli: $(DIXON_TARGET)
 	python3 $(SRC_DIR)/test/dixon_scalar_screen_cli_test.py ./$(DIXON_TARGET)
+
+.PHONY: test-quotient-back-substitution
+test-quotient-back-substitution: $(BUILD_DIR)/quotient_back_substitution_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH ./$(BUILD_DIR)/quotient_back_substitution_test
+
+$(BUILD_DIR)/quotient_back_substitution_test: $(SRC_DIR)/test/quotient_back_substitution_test.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/quotient_back_substitution_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-quotient-sift
+test-quotient-sift: $(BUILD_DIR)/quotient_sift_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH ./$(BUILD_DIR)/quotient_sift_test
+
+$(BUILD_DIR)/quotient_sift_test: $(SRC_DIR)/test/quotient_sift_test.c $(SRC_DIR)/quotient_solver.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/quotient_sift_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-sift-cli test-sift-sage
+test-sift-cli: $(DIXON_TARGET)
+	python3 $(SRC_DIR)/test/quotient_sift_cli_test.py ./$(DIXON_TARGET)
+
+test-sift-sage: $(DIXON_TARGET)
+	sage -python $(SRC_DIR)/test/quotient_sift_sage_test.py ./$(DIXON_TARGET)

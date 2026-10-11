@@ -2,8 +2,31 @@
 /* Compare the optimized relation spaces with independent full RREFs, and
  * the certified solver's complete point sets with exhaustive enumeration. */
 #define solve_by_quotient_closure test_solve_by_quotient_closure
+#define quotient_sift_resultant test_quotient_sift_resultant
 #include "../solver/quotient_solver.c"
 #undef solve_by_quotient_closure
+#undef quotient_sift_resultant
+
+static ulong relation_entry(const relations_t E, slong row, slong col)
+{
+    if (E->p[row]==col) return 1;
+    for (slong j=0;j<E->tail->c;j++)
+        if (E->f[j]==col) return nmod_mat_entry(E->tail,row,j);
+    return 0;
+}
+
+static void expand_relations(nmod_mat_t M, const relations_t E)
+{
+    matrix_init(M,E->r,E->c,E->mod.n);
+    for (slong i=0;i<E->r;i++) for (slong j=0;j<E->c;j++)
+        nmod_mat_entry(M,i,j)=relation_entry(E,i,j);
+}
+
+static int relations_equal_dense(const relations_t E, const nmod_mat_t M)
+{
+    nmod_mat_t dense; expand_relations(dense,E);
+    int equal=nmod_mat_equal(dense,M); nmod_mat_clear(dense); return equal;
+}
 
 static void check_seed(flint_rand_t state, ulong prime)
 {
@@ -18,14 +41,14 @@ static void check_seed(flint_rand_t state, ulong prime)
         closure_seed(&seeded,&prev);
         matrix_init(all,(n+1)*prev.E->r,nc,prime);
         for (slong i=0;i<prev.E->r;i++) for (slong j=0;j<pc;j++) {
-            ulong a=nmod_mat_entry(prev.E,i,j);
+            ulong a=relation_entry(prev.E,i,j);
             nmod_mat_entry(all,i*(n+1),j+offset)=a;
             for (slong v=0;v<n;v++)
                 nmod_mat_entry(all,i*(n+1)+v+1,seeded.shift[(j+offset)*n+v])=a;
         }
         insert_rows(&seeded,all);
         compact_rref(all,NULL);
-        assert(nmod_mat_equal(seeded.E,all));
+        assert(relations_equal_dense(seeded.E,all));
         nmod_mat_clear(all); closure_clear(&prev); closure_clear(&seeded);
     }
 }
@@ -45,9 +68,9 @@ static void check_batches(flint_rand_t state, ulong prime)
     matrix_init(reference,first->r+batch->r,nc,prime);
     nmod_mat_concat_vertical(reference,first,batch); compact_rref(reference,NULL);
     insert_rows(&cl,first); insert_rows(&cl,batch);
-    assert(nmod_mat_equal(cl.E,reference));
+    assert(relations_equal_dense(cl.E,reference));
     /* A dependent batch must leave the space unchanged. */
-    insert_rows(&cl,batch); assert(nmod_mat_equal(cl.E,reference));
+    insert_rows(&cl,batch); assert(relations_equal_dense(cl.E,reference));
     nmod_mat_clear(first); nmod_mat_clear(batch); nmod_mat_clear(reference); closure_clear(&cl);
 }
 
@@ -68,11 +91,136 @@ static void check_projected_input(flint_rand_t state, ulong prime)
         insert_rows(&sparse,initial); insert_rows(&dense,initial);
         insert_original_rows(&sparse,fs,5,ctx);
         original_rows(M,fs,5,ctx,&dense.basis,1,4); insert_rows(&dense,M);
-        assert(nmod_mat_equal(sparse.E,dense.E));
+        nmod_mat_t ref; expand_relations(ref,dense.E);
+        assert(relations_equal_dense(sparse.E,ref)); nmod_mat_clear(ref);
         nmod_mat_clear(initial); nmod_mat_clear(M);
         closure_clear(&sparse); closure_clear(&dense);
     }
     for (slong i=0;i<5;i++) nmod_mpoly_clear(fs+i,ctx);
+    nmod_mpoly_ctx_clear(ctx);
+}
+
+static void full_closure(nmod_mat_t reference, const closure_t *cl)
+{
+    slong nc=cl->basis.count;
+    ulong prime=reference->mod.n;
+    for (;;) {
+        slong *p=pivots(reference), nl=0;
+        for (slong i=0;i<reference->r;i++) if (cl->basis.degrees[p[i]]<cl->basis.degree) nl++;
+        nmod_mat_t all; matrix_init(all,reference->r+cl->basis.n*nl,nc,prime);
+        slong row=reference->r;
+        for (slong i=0;i<reference->r;i++) {
+            for (slong j=0;j<nc;j++) nmod_mat_entry(all,i,j)=nmod_mat_entry(reference,i,j);
+            if (cl->basis.degrees[p[i]]>=cl->basis.degree) continue;
+            for (slong v=0;v<cl->basis.n;v++,row++) for (slong j=0;j<nc;j++) {
+                ulong a=nmod_mat_entry(reference,i,j);
+                if (a) nmod_mat_entry(all,row,cl->shift[j*cl->basis.n+v])=a;
+            }
+        }
+        flint_free(p); compact_rref(all,NULL);
+        int done=all->r==reference->r;
+        nmod_mat_swap(reference,all); nmod_mat_clear(all);
+        if (done) break;
+    }
+}
+
+static void check_seeded_input(flint_rand_t state, ulong prime)
+{
+    nmod_mpoly_ctx_t ctx; nmod_mpoly_ctx_init(ctx,2,ORD_DEGLEX,prime);
+    const char *names[]={"x","y"};
+    nmod_mpoly_struct fs[3];
+    for (slong i=0;i<3;i++) nmod_mpoly_init(fs+i,ctx);
+    for (slong trial=0;trial<10;trial++) {
+        if (!trial) {
+            assert(!nmod_mpoly_set_str_pretty(fs,"x^2+y",names,ctx));
+            assert(!nmod_mpoly_set_str_pretty(fs+1,"x^2+x",names,ctx));
+            nmod_mpoly_zero(fs+2,ctx);
+        } else {
+            for (slong i=0;i<3;i++) nmod_mpoly_randtest_bound(fs+i,state,5,2,ctx);
+        }
+        closure_t prev,cl;
+        closure_init(&prev,2,2,prime); closure_init(&cl,2,3,prime);
+        insert_original_rows(&prev,fs,3,ctx);
+        if (trial%2==0) {
+            nmod_mat_t empty; matrix_init(empty,0,prev.basis.count,prime);
+            closure_run(&prev,empty,ctx); nmod_mat_clear(empty);
+            if (!trial) assert(!prev.original_only);
+        }
+        closure_seed(&cl,&prev);
+        assert(cl.processed_ready==prev.original_only);
+        nmod_mat_t seed,M,all;
+        expand_relations(seed,cl.E);
+        original_rows(M,fs,3,ctx,&cl.basis,1,3);
+        matrix_init(all,seed->r+M->r,cl.basis.count,prime);
+        nmod_mat_concat_vertical(all,seed,M); compact_rref(all,NULL);
+        insert_original_rows(&cl,fs,3,ctx);
+        assert(relations_equal_dense(cl.E,all));
+        full_closure(all,&cl);
+        nmod_mat_t empty; matrix_init(empty,0,cl.basis.count,prime);
+        closure_run(&cl,empty,ctx); nmod_mat_clear(empty);
+        assert(relations_equal_dense(cl.E,all));
+        nmod_mat_clear(seed); nmod_mat_clear(M); nmod_mat_clear(all);
+        closure_clear(&prev); closure_clear(&cl);
+    }
+    for (slong i=0;i<3;i++) nmod_mpoly_clear(fs+i,ctx);
+    nmod_mpoly_ctx_clear(ctx);
+}
+
+/* The only nonzero consistency relation occurs in the second variable,
+ * beyond the first 256 low monomials. Missing it would leave dimension 2. */
+static void check_late_consistency(void)
+{
+    const ulong prime=7;
+    nmod_mpoly_ctx_t ctx; nmod_mpoly_ctx_init(ctx,2,ORD_DEGLEX,prime);
+    const char *names[]={"x","y"};
+    nmod_mpoly_struct fs[2];
+    for (slong i=0;i<2;i++) {
+        nmod_mpoly_init(fs+i,ctx);
+        assert(!nmod_mpoly_set_str_pretty(fs+i,names[i],names,ctx));
+    }
+    closure_t cl; closure_init(&cl,2,24,prime);
+    ulong x[]={1,0}, top[]={0,24};
+    slong xc=basis_find(&cl.basis,x), tc=basis_find(&cl.basis,top), nc=cl.basis.count;
+    nmod_mat_t M; matrix_init(M,nc-2,nc,prime);
+    slong row=0;
+    for (slong j=0;j<nc-1;j++) if (j!=xc) {
+        nmod_mat_entry(M,row,j)=1;
+        if (j==tc) nmod_mat_entry(M,row,xc)=prime-1;
+        row++;
+    }
+    insert_rows(&cl,M); nmod_mat_clear(M);
+    quotient_result result={0}; nmod_poly_init(result.eliminant,prime);
+    quotient_close(&result,&cl,fs,2,ctx);
+    assert(result.certified && result.dimension==1);
+    assert(cl.rref_calls>=4);
+    for (slong i=0;i<2;i++) {
+        assert(nmod_mat_is_zero(result.operators+i));
+        nmod_mat_clear(result.operators+i); nmod_mpoly_clear(fs+i,ctx);
+    }
+    flint_free(result.operators); nmod_poly_clear(result.eliminant);
+    closure_clear(&cl); nmod_mpoly_ctx_clear(ctx);
+}
+
+/* Independent ambient closure: multiply every low-degree relation each
+ * round and recompute a full RREF, without processed-space shortcuts. */
+static void check_closure(flint_rand_t state, ulong prime)
+{
+    nmod_mpoly_ctx_t ctx; nmod_mpoly_ctx_init(ctx,3,ORD_DEGLEX,prime);
+    for (slong trial=0;trial<16;trial++) {
+        closure_t cl; closure_init(&cl,3,3,prime);
+        slong nc=cl.basis.count;
+        nmod_mat_t initial,reference;
+        matrix_init(initial,4+trial,nc,prime);
+        nmod_mat_randtest(initial,state);
+        /* Force low pivots and changing old tails as closure grows. */
+        for (slong i=0;i<initial->r;i++) for (slong j=0;j<nc;j++)
+            if (cl.basis.degrees[j]>1+trial%2) nmod_mat_entry(initial,i,j)=0;
+        nmod_mat_init_set(reference,initial); compact_rref(reference,NULL);
+        full_closure(reference,&cl);
+        closure_run(&cl,initial,ctx);
+        assert(relations_equal_dense(cl.E,reference));
+        nmod_mat_clear(initial); nmod_mat_clear(reference); closure_clear(&cl);
+    }
     nmod_mpoly_ctx_clear(ctx);
 }
 
@@ -144,7 +292,8 @@ int main(void)
     };
     for (slong p=0;p<6;p++) {
         check_seed(state,primes[p]); check_batches(state,primes[p]);
-        check_projected_input(state,primes[p]);
+        check_projected_input(state,primes[p]); check_closure(state,primes[p]);
+        check_seeded_input(state,primes[p]);
     }
     char *nilpotent[]={"x^2","y^2","x*y"};
     char *fibers[]={"x^2-x","y^2-y","x*y*(x-1)"};
@@ -169,7 +318,7 @@ int main(void)
         }
         check_points(polys,4,3,primes[p],NULL);
     }
-    check_limits(); flint_rand_clear(state); flint_cleanup();
+    check_late_consistency(); check_limits(); flint_rand_clear(state); flint_cleanup();
     puts("Quotient solver: relation-space and exhaustive point tests passed");
     return 0;
 }

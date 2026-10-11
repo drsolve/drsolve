@@ -47,11 +47,7 @@ static void print_short_usage(const char *prog_name)
     printf("OPTIONS:\n");
     printf("  -r \"[d1,d2,...,dn]\" random polynomial generation\n");
     printf("  -s  solving mode (auto-enables when no vars given)\n");
-    printf("  --quotient  Use certified quotient algebra over a machine-word prime field\n");
-    printf("  --solver auto|dixon|quotient  Auto uses Dixon; quotient is opt-in\n");
-    printf("  Finite-field Dixon with no remaining variables screens for inconsistency.\n");
-    printf("  Screening exit codes: 0 = certified no common zero, 2 = inconclusive; screening values: 1 = no common zero, 0 = inconclusive.\n");
-    printf("  -c, --comp, --complexity  complexity analysis mode\n");
+    printf("  -c  complexity analysis mode\n");
     printf("EXAMPLES:\n");
     printf("  Dixon resultant elimination:\n");
     printf("    %s \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
@@ -71,7 +67,9 @@ static void print_short_usage(const char *prog_name)
     printf("OTHER OPTIONS:\n");
     printf("  --method <n>      Determinant method selection (0:Expansion, 1:HNF, 2:Interpolation, 3:Sparse, 4:Bareiss, 5:Fdixon)\n");
     printf("  --step1, --step4  Override method <n> for specific algorithm steps\n");
-    printf("  --cache <num>     Minor DP live-entry limit (default: 1024; 0: plain expansion)\n");
+    printf("  --quotient  Use certified quotient algebra over a machine-word prime field\n");
+    printf("  --sift  Remove extraneous resultant factors using quotient algebra (prime fields)\n");
+    printf("  --solver auto|dixon|quotient  Auto uses Dixon with quotient back substitution\n");
     printf("  --threads <num>   Set number of threads for parallel computation\n");
     printf("  --dixon           Use Dixon resultant (default)\n");
     printf("  --macaulay        Use Macaulay resultant\n");
@@ -118,10 +116,11 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    -> `-s` / `--solve` is optional here; `--solve-rational-only` keeps only exact rational solutions\n");
     printf("    -> `--specialize-vars a=0,b=1` fixes variables before solving; in extension fields integers use the generator expansion (F_2^k: 2=t, 3=1+t, 4=t^2)\n");
     printf("    -> Random n+1 equations in n variables default to Dixon scalar consistency screening\n");
-    printf("    -> Solvers use Dixon by default; --quotient (or --solver quotient) opts into quotient algebra\n");
+    printf("    -> Auto starts with Dixon and tries quotient on overdetermined prime-field back substitution; --solver dixon disables this\n");
     printf("    -> --solver auto|dixon|quotient selects the solver; quotient requires at least as many equations as variables\n");
+    printf("    -> Add --sift to remove extraneous resultant factors using quotient algebra (prime fields)\n");
     printf("    -> No degree or memory budget by default; optional --quotient-max-degree <D> and --quotient-memory <MiB> (0 = unlimited)\n");
-    printf("    -> Limits return an incomplete-solve error, not a claim that no solutions exist\n");
+    printf("    -> Quotient limits cause AUTO to fall back to Dixon; explicit quotient returns an incomplete-solve error\n");
     printf("    -> `-v 2` matches the old debug / verbose solver output\n");
     printf("    -> `-v 3` also dumps small Step 1/2/3 matrices (<= 10 x 10)\n");
     printf("    -> In extension fields, 't' is the field generator; in Q and prime fields it is an ordinary variable\n");
@@ -338,6 +337,9 @@ static int validate_cli_options(int argc, char *argv[])
         {"approx-roots", no_argument, NULL, OPT_FLAG},
         {"root-precision", required_argument, NULL, OPT_FLAG},
         {"solve", no_argument, NULL, 's'},
+        {"sift", no_argument, NULL, OPT_FLAG},
+        {"no-sift", no_argument, NULL, OPT_FLAG},
+        {"sift-max-degree", required_argument, NULL, OPT_FLAG},
         {"quotient", no_argument, NULL, OPT_FLAG},
         {"solver", required_argument, NULL, OPT_FLAG},
         {"quotient-max-degree", required_argument, NULL, OPT_FLAG},
