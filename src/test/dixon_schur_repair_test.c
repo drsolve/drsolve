@@ -7,8 +7,8 @@
 static int lu_backend;
 static slong reserve_sigma = -1;
 
-static void check_repair(const nmod_mat_t values, slong target,
-                         const fq_nmod_ctx_t ctx, int expected, int degree_case)
+static void check_repair_mode(const nmod_mat_t values, slong target,
+                         const fq_nmod_ctx_t ctx, int expected, int degree_case, int complete)
 {
     slong nr = values->r, nc = values->c;
     unified_mpoly_struct ***matrix = flint_calloc(1, (size_t)nr * sizeof(*matrix));
@@ -50,10 +50,21 @@ static void check_repair(const nmod_mat_t values, slong target,
                : lu_backend == 2 ? nmod_mat_lu_recursive(perm, lu, 0)
                : nmod_mat_lu(perm, lu, 0);
     assert(rank < target);
-    int ok = dixon_repair_predicted_minor(matrix, nr, nc, rows, cols, target,
-                                          lu, perm, rank, ro, co, reserve_sigma, params, ctx);
+    slong completed = -1;
+    int ok = complete
+        ? dixon_complete_predicted_minor(matrix, nr, nc, rows, cols, target,
+            lu, perm, rank, ro, co, reserve_sigma, params, ctx, &completed)
+        : dixon_repair_predicted_minor(matrix, nr, nc, rows, cols, target,
+            lu, perm, rank, ro, co, reserve_sigma, params, ctx);
+    if (ok != expected) fprintf(stderr, "repair mismatch: shape=%ld/%ld target=%ld core=%ld complete=%d backend=%d expected=%d actual=%d\n", nr, nc, target, rank, complete, lu_backend, expected, ok);
     assert(ok == expected);
+    if (!ok) assert(completed == -1);
     if (ok) {
+        if (complete) {
+            assert(completed == nmod_mat_rank(values));
+            assert(completed <= target);
+            target = completed;
+        }
         for (slong i = 0; i < target; i++) {
             assert(rows[i] >= 0 && rows[i] < nr && cols[i] >= 0 && cols[i] < nc);
             for (slong j = 0; j < i; j++) {
@@ -85,6 +96,49 @@ static void check_repair(const nmod_mat_t values, slong target,
     flint_free(matrix);
     fq_nmod_clear(params[0], ctx);
     fq_nmod_clear(coeff, ctx);
+}
+
+static void check_repair(const nmod_mat_t values, slong target,
+                         const fq_nmod_ctx_t ctx, int expected, int degree_case)
+{
+    check_repair_mode(values, target, ctx, expected, degree_case, 0);
+}
+
+/* Completion must recover directions outside the old budget, or the actual
+ * rank after exhausting the complement. Exercise both packed LU layouts. */
+static void check_completion(const fq_nmod_ctx_t ctx)
+{
+    for (lu_backend = 1; lu_backend <= 2; lu_backend++) {
+        nmod_mat_t a, at;
+        nmod_mat_init(a, 150, 140, 65537);
+        nmod_mat_entry(a, 0, 0) = 1;
+        nmod_mat_entry(a, 149, 139) = 1;
+        check_repair_mode(a, 2, ctx, 1, 0, 1); /* Beyond 128 reserves. */
+        check_repair_mode(a, 4, ctx, 1, 0, 1); /* Full rank below upper bound. */
+        nmod_mat_init(at, 140, 150, 65537);
+        nmod_mat_transpose(at, a);
+        check_repair_mode(at, 4, ctx, 1, 0, 1);
+        nmod_mat_entry(a, 149, 139) = 0;
+        check_repair_mode(a, 4, ctx, 1, 0, 1); /* Zero Schur complement. */
+        nmod_mat_zero(a);
+        check_repair_mode(a, 4, ctx, 0, 0, 1); /* Zero core: general fallback. */
+        nmod_mat_clear(at); nmod_mat_clear(a);
+
+        nmod_mat_init(a, 270, 270, 65537);
+        nmod_mat_entry(a, 0, 0) = 1;
+        for (slong i = 130; i < 259; i++) nmod_mat_entry(a, i, i) = 1;
+        check_repair_mode(a, 130, ctx, 1, 0, 1); /* Deficiency > 128. */
+        nmod_mat_clear(a);
+
+        nmod_mat_init(a, 6, 6, 65537);
+        nmod_mat_entry(a, 1, 1) = 1; /* Nontrivial core row/column pivots. */
+        nmod_mat_entry(a, 4, 4) = 1;
+        check_repair_mode(a, 3, ctx, 1, 0, 1);
+        nmod_mat_entry(a, 2, 3) = nmod_mat_entry(a, 3, 2) = 1;
+        check_repair_mode(a, 2, ctx, 0, 0, 1); /* Bound violation preserves indices. */
+        nmod_mat_clear(a);
+    }
+    lu_backend = 0;
 }
 
 /* Compare each exchange sweep with the original sorted greedy selection on
@@ -399,6 +453,8 @@ int main(void)
         nmod_mat_mul(values, left, right);
         assert(nmod_mat_rank(values) == target);
         check_repair(values, target, ctx, 1, 0);
+        check_repair_mode(values, target, ctx, 1, 0, 1);
+        check_repair_mode(values, target + 2, ctx, 1, 0, 1);
         nmod_mat_clear(values); nmod_mat_clear(right); nmod_mat_clear(left);
     }
     /* The useful direction arrives after several expansions; one dimension
@@ -446,12 +502,13 @@ int main(void)
     nmod_mat_transpose(at, a);
     check_repair(at, 2, ctx, 1, 4); /* Same regression for a core column. */
     nmod_mat_clear(at); nmod_mat_clear(a);
+    check_completion(ctx);
     check_exchange_axes(state, ctx);
     check_large_repair_and_cache_limit(ctx);
     flint_rand_clear(state);
     fq_nmod_ctx_clear(ctx);
     fmpz_clear(prime);
     flint_cleanup();
-    puts("Schur repair: 111 cases passed");
+    puts("Schur repair and completion: all cases passed");
     return 0;
 }

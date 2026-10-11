@@ -4459,22 +4459,28 @@ static void dixon_refine_compressed_candidate(unified_mpoly_struct ***matrix,
    first s permuted rows and U's pivot columns.  Its L is stored below the
    first s diagonal entries (not below the original pivot columns).
    Grow the reserve rectangle geometrically, caching V, A^-1 B and S.  Only
-   the small Schur rectangle is refactored after growth.  A bounded unsuccessful
-   search leaves the caller's indices untouched for the general fallback. */
-static int dixon_repair_predicted_minor(unified_mpoly_struct ***matrix, slong nrows, slong ncols,
+   the Schur rectangle is refactored after growth. With completed_size == NULL,
+   preserve the bounded repair used by projected construction. Otherwise size
+   is the original rank upper bound: extend to all remaining directions, and
+   return the actual specialization rank if the upper bound is not attained.
+   No indices are changed on failure. */
+static int dixon_complete_predicted_minor(unified_mpoly_struct ***matrix, slong nrows, slong ncols,
                                         slong *rows, slong *cols, slong size, const nmod_mat_t lu,
                                         const slong *perm, slong s,
                                         const fq_index_degree_pair *row_order,
                                         const fq_index_degree_pair *col_order, slong sigma,
-                                        fq_nmod_t *params, const fq_nmod_ctx_t ctx)
+                                        fq_nmod_t *params, const fq_nmod_ctx_t ctx,
+                                        slong *completed_size)
 {
     slong delta = size - s;
-    if (s <= 0 || delta <= 0 || delta > 128) return 0;
-    slong budget = FLINT_MIN(32 * delta, 128);
+    if (s <= 0 || delta <= 0 || (!completed_size && delta > 128)) return 0;
+    slong budget = completed_size ? FLINT_MAX(nrows, ncols)
+                                  : 32 * FLINT_MIN(delta, 4);
     slong max_r = FLINT_MIN(nrows - s, budget);
     slong max_c = FLINT_MIN(ncols - s, budget);
     if (max_r < delta || max_c < delta) return 0;
     int success = 0;
+    slong result_size = size;
     int use_exchange = dixon_use_schur_exchange(size, nrows, ncols);
     slong *r0 = flint_malloc((size_t) s * sizeof(slong));
     slong *c0 = flint_malloc((size_t) s * sizeof(slong));
@@ -4530,7 +4536,8 @@ static int dixon_repair_predicted_minor(unified_mpoly_struct ***matrix, slong nr
     dixon_eval_cache_t cache;
     dixon_eval_cache_init(&cache, matrix, ncols, params, ctx);
     slong old_r = 0, old_c = 0;
-    slong nr = FLINT_MIN(2 * delta, max_r), nc = FLINT_MIN(2 * delta, max_c);
+    slong initial = 2 * FLINT_MIN(delta, 64);
+    slong nr = FLINT_MIN(initial, max_r), nc = FLINT_MIN(initial, max_c);
     for (;;) {
         if (nc > old_c) {
             nmod_mat_t b, y, new_x;
@@ -4576,29 +4583,45 @@ static int dixon_repair_predicted_minor(unified_mpoly_struct ***matrix, slong nr
         slong *sp = flint_malloc((size_t) nr * sizeof(slong));
         slong sr = nmod_mat_lu(sp, work, 0);
         dixon_debug_log("  Schur reserve: %ld x %ld, rank=%ld, needed=%ld\n", nr, nc, sr, delta);
-        if (sr >= delta) {
-            slong *chosen_r = flint_malloc((size_t) delta * sizeof(slong));
-            slong *chosen_c = flint_malloc((size_t) delta * sizeof(slong));
+        /* A violated model bound must not silently truncate the result. */
+        if (completed_size && sr > delta) {
+            dixon_debug_log("  Schur rank exceeds model upper bound; using general selector\n");
+            flint_free(sp);
+            nmod_mat_clear(work);
+            break;
+        }
+        int exhausted = nr == max_r && nc == max_c;
+        if (sr >= delta || (completed_size && exhausted)) {
+            slong added = FLINT_MIN(sr, delta);
+            result_size = s + added;
+            slong *chosen_r = flint_malloc((size_t) FLINT_MAX(added, 1) * sizeof(slong));
+            slong *chosen_c = flint_malloc((size_t) FLINT_MAX(added, 1) * sizeof(slong));
             next = 0;
-            for (slong i = 0; i < delta; i++) {
+            for (slong i = 0; i < added; i++) {
                 while (next < nc && nmod_mat_entry(work, i, next) == 0) next++;
                 chosen_r[i] = sp[i];
                 chosen_c[i] = next++;
             }
             memcpy(rows, r0, (size_t) s * sizeof(slong));
             memcpy(cols, c0, (size_t) s * sizeof(slong));
-            for (slong i = 0; i < delta; i++) {
+            for (slong i = 0; i < added; i++) {
                 rows[s + i] = rx[chosen_r[i]];
                 cols[s + i] = cx[chosen_c[i]];
             }
             if (use_exchange)
                 dixon_debug_log("  Degree-aware refinement backend: Schur-seeded exchange (rank=%ld, reserves=%ld/%ld)\n",
-                                size, nrows - size, ncols - size);
+                                result_size, nrows - result_size, ncols - result_size);
             if (use_exchange)
                 dixon_refine_schur_minor(&cache, nrows, ncols, rows, cols,
-                                         lower, upper, x, v, schur, delta, chosen_r, chosen_c);
+                                         lower, upper, x, v, schur, added, chosen_r, chosen_c);
             flint_free(chosen_c);
             flint_free(chosen_r);
+            if (completed_size) {
+                *completed_size = result_size;
+                dixon_debug_log("  Schur completion: rank=%ld, upper bound=%ld (%s)\n",
+                                result_size, size, result_size == size
+                                ? "upper bound reached" : "all remaining directions scanned");
+            }
             success = 1;
         }
         flint_free(sp);
@@ -4617,7 +4640,7 @@ static int dixon_repair_predicted_minor(unified_mpoly_struct ***matrix, slong nr
     nmod_mat_clear(lower);
     /* Release completion workspaces before allocating the streamed basis. */
     if (success && !use_exchange)
-        dixon_refine_streamed_minor(matrix, nrows, ncols, size, rows, cols, params, ctx);
+        dixon_refine_streamed_minor(matrix, nrows, ncols, result_size, rows, cols, params, ctx);
 cleanup_indices:
     flint_free(used_c);
     flint_free(used_r);
@@ -4627,6 +4650,19 @@ cleanup_indices:
     flint_free(c0);
     flint_free(r0);
     return success;
+}
+
+/* Projected construction requires the requested size, so keep its bounded
+ * all-or-nothing repair contract separate from Step 3 completion. */
+static int dixon_repair_predicted_minor(unified_mpoly_struct ***matrix, slong nrows, slong ncols,
+                                        slong *rows, slong *cols, slong size, const nmod_mat_t lu,
+                                        const slong *perm, slong s,
+                                        const fq_index_degree_pair *row_order,
+                                        const fq_index_degree_pair *col_order, slong sigma,
+                                        fq_nmod_t *params, const fq_nmod_ctx_t ctx)
+{
+    return dixon_complete_predicted_minor(matrix, nrows, ncols, rows, cols, size,
+        lu, perm, s, row_order, col_order, sigma, params, ctx, NULL);
 }
 
 static int dixon_build_predicted_mirror_indices(
@@ -5695,8 +5731,9 @@ void dixon_select_submatrix(unified_mpoly_struct ***full_matrix, slong nx_monoms
             init_evaluation_parameters(eval_params, 1, ctx, 0);
         }
         /* The degree model proposes a minor, not a rank certificate. Verify
-         * its specialization, try Schur repair, then fall back to the general
-         * selector if it cannot be certified. */
+         * its specialization and reuse its LU for Schur completion. Completion
+         * either reaches the original model bound or computes the full
+         * specialization rank; degenerate cores retain the general fallback. */
         clock_t prediction_cpu_start = clock();
         double prediction_wall_start = get_wall_time();
         fq_index_degree_pair *row_order =
@@ -5771,7 +5808,7 @@ void dixon_select_submatrix(unified_mpoly_struct ***full_matrix, slong nx_monoms
             dixon_debug_log("  Four-equation equal-degree correction (conjectural): "
                             "%ld -> %ld; verifying mirror envelope\n", predicted, target);
         int candidate_constructed = candidate_ok;
-        int schur_repaired = 0;
+        int schur_completed = 0;
         clock_t verification_cpu_start = clock();
         double verification_wall_start = get_wall_time();
         if (candidate_ok) {
@@ -5836,14 +5873,27 @@ void dixon_select_submatrix(unified_mpoly_struct ***full_matrix, slong nx_monoms
                     dixon_refine_compressed_candidate(full_matrix, nx_monoms, ndual_monoms,
                         row_idx_array, col_idx_array, candidate, predicted, eval_params, ctx);
                 }
-                if (target == predicted && rank < predicted && rank > 0 &&
-                    dixon_repair_predicted_minor(full_matrix, nx_monoms, ndual_monoms,
+                slong completed_size = 0;
+                if (rank < predicted && rank > 0 &&
+                    dixon_complete_predicted_minor(full_matrix, nx_monoms, ndual_monoms,
                         row_idx_array, col_idx_array, predicted, candidate, perm, rank,
-                        row_order, col_order, sigma, eval_params, ctx)) {
-                    num_rows = num_cols = predicted;
-                    schur_repaired = 1;
-                    dixon_debug_log("  Schur repair succeeded: base rank=%ld, added=%ld\n",
-                                    rank, predicted - rank);
+                        row_order, col_order, sigma, eval_params, ctx, &completed_size)) {
+                    num_rows = num_cols = completed_size;
+                    schur_completed = 1;
+                    dixon_debug_log("  Schur completion reused candidate LU: base rank=%ld, added=%ld\n",
+                                    rank, completed_size - rank);
+                    predicted = completed_size;
+                    if (g_dixon_step3_second_verification) {
+                        fq_nmod_t *verify = flint_malloc(sizeof(fq_nmod_t));
+                        init_evaluation_parameters(verify, 1, ctx, 1);
+                        slong verified = evaluate_selected_submatrix_rank_nmod(full_matrix,
+                            row_idx_array, col_idx_array, completed_size, verify, ctx);
+                        clear_evaluation_parameters(verify, 1, ctx);
+                        if (verified != completed_size) {
+                            candidate_ok = 0;
+                            dixon_debug_log("  Schur completion failed second verification; using general selector\n");
+                        }
+                    }
                 }
                 nmod_mat_clear(candidate);
                 flint_free(perm);
@@ -5853,7 +5903,7 @@ void dixon_select_submatrix(unified_mpoly_struct ***full_matrix, slong nx_monoms
                 rank = dixon_fq_candidate_rank(full_matrix, row_idx_array, col_idx_array,
                                                predicted, npars, eval_params, ctx);
             }
-            if (!schur_repaired) {
+            if (!schur_completed) {
                 if (rank == predicted) num_rows = num_cols = predicted;
                 else candidate_ok = 0;
             }
@@ -5898,7 +5948,7 @@ void dixon_select_submatrix(unified_mpoly_struct ***full_matrix, slong nx_monoms
         }
         if (candidate_ok) {
             dixon_debug_log("  Step 3 heuristic candidate accepted: %ld x %ld%s\n",
-                            predicted, predicted, schur_repaired ? " (Schur repair)" : "");
+                            predicted, predicted, schur_completed ? " (Schur completion)" : "");
             const char *reorder_env = getenv("DRSOLVE_PREDICT_REORDER");
             if (reorder_env == NULL || strcmp(reorder_env, "0") != 0)
                 reorder_fq_selected_minor_by_degree(full_matrix,
