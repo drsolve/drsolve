@@ -8,12 +8,18 @@ static void check(polynomial_solver_method_t method, slong limit,
                   int empty_only, const fq_nmod_ctx_t ctx)
 {
     char *polys[] = {"x+y", "y^2-1"};
+    int extension=fq_nmod_ctx_degree(ctx)>1;
+    if (extension) polys[1]="(y-t)*(y-t-1)";
     variable_info_t vars[] = {{"x", 1, 0}, {"y", 2, 1}};
     fq_nmod_t roots[3];
     for (slong i = 0; i < 3; i++) fq_nmod_init(roots[i], ctx);
     fq_nmod_zero(roots[0], ctx);
     fq_nmod_one(roots[1], ctx);
     fq_nmod_neg(roots[2], roots[1], ctx);
+    if (extension) {
+        fq_nmod_gen(roots[1],ctx); fq_nmod_neg(roots[1],roots[1],ctx);
+        fq_nmod_one(roots[2],ctx); fq_nmod_sub(roots[2],roots[1],roots[2],ctx);
+    }
     polynomial_solutions_t sols;
     polynomial_solutions_init(&sols, 2, ctx);
     sols.variable_names[0] = strdup("x");
@@ -48,7 +54,12 @@ static void check(polynomial_solver_method_t method, slong limit,
         fq_nmod_add(sum, sols.solution_sets[i][0][0], sols.solution_sets[i][1][0], ctx);
         fq_nmod_sqr(square, sols.solution_sets[i][1][0], ctx);
         assert(fq_nmod_is_zero(sum, ctx));
-        assert(fq_nmod_is_one(square, ctx));
+        if (extension) {
+            fq_nmod_gen(sum,ctx);
+            fq_nmod_sub(sum,sols.solution_sets[i][1][0],sum,ctx);
+            fq_nmod_one(square,ctx); fq_nmod_sub(square,sum,square,ctx);
+            fq_nmod_mul(square,square,sum,ctx); assert(fq_nmod_is_zero(square,ctx));
+        } else assert(fq_nmod_is_one(square, ctx));
     }
     if (!empty_only)
         assert(!fq_nmod_equal(sols.solution_sets[0][0][0], sols.solution_sets[1][0][0], ctx));
@@ -59,18 +70,19 @@ static void check(polynomial_solver_method_t method, slong limit,
 
 int main(void)
 {
-    fmpz_t prime;
-    fmpz_init_set_ui(prime, 101);
-    fq_nmod_ctx_t ctx;
-    fq_nmod_ctx_init(ctx, prime, 1, "t");
-    for (int empty = 0; empty <= 1; empty++) {
-        check(POLYNOMIAL_SOLVER_AUTO, 0, empty, ctx);
-        check(POLYNOMIAL_SOLVER_AUTO, 1, empty, ctx);
-        check(POLYNOMIAL_SOLVER_DIXON, 0, empty, ctx);
+    const ulong primes[]={101,2,3,5};
+    const slong degrees[]={1,8,2,2};
+    for (int i=0;i<4;i++) {
+        fq_nmod_ctx_t ctx; fq_nmod_ctx_init_ui(ctx,primes[i],degrees[i],"t");
+        for (int empty=0;empty<=1;empty++) {
+            check(POLYNOMIAL_SOLVER_AUTO,0,empty,ctx);
+            check(POLYNOMIAL_SOLVER_AUTO,1,empty,ctx);
+            check(POLYNOMIAL_SOLVER_DIXON,0,empty,ctx);
+        }
+        fq_nmod_ctx_clear(ctx);
     }
     polynomial_solver_set_method(POLYNOMIAL_SOLVER_AUTO);
-    polynomial_solver_set_quotient_limits(0, 0);
-    fq_nmod_ctx_clear(ctx); fmpz_clear(prime);
+    polynomial_solver_set_quotient_limits(0,0);
     puts("Quotient back-substitution tests passed");
     return 0;
 }

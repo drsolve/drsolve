@@ -16,70 +16,7 @@
 #include <stdint.h>
 #include <limits.h>
 
-typedef struct {
-    slong n, degree, count, capacity, slots;
-    ulong *exps;
-    slong *degrees, *lookup;
-} basis_t;
-
-static uint64_t code(const ulong *e, slong n)
-{
-    uint64_t h = UINT64_C(1469598103934665603);
-    for (slong i = 0; i < n; i++) { h ^= e[i]; h *= UINT64_C(1099511628211); }
-    return h;
-}
-
-static slong hash_slot(uint64_t key, slong slots)
-{
-    key ^= key>>30; key *= UINT64_C(0xbf58476d1ce4e5b9);
-    key ^= key>>27; key *= UINT64_C(0x94d049bb133111eb);
-    return (slong)((key^(key>>31)) & (uint64_t)(slots-1));
-}
-
-static void basis_enumerate(basis_t *b, ulong *e, slong pos, slong left, slong degree)
-{
-    if (pos==b->n-1) {
-        assert(b->count<b->capacity); e[pos]=left;
-        memcpy(b->exps+b->count*b->n,e,b->n*sizeof(ulong));
-        b->degrees[b->count++]=degree; return;
-    }
-    for (slong i=left;i>=0;i--) { e[pos]=i; basis_enumerate(b,e,pos+1,left-i,degree); }
-}
-
-static void basis_init(basis_t *b, slong n, slong degree)
-{
-    memset(b,0,sizeof(*b)); b->n=n; b->degree=degree;
-    slong count=1;
-    for (slong i=1;i<=degree;i++) count=count*(n+i)/i;
-    b->capacity=count;
-    b->exps=flint_malloc(count*n*sizeof(ulong)); b->degrees=flint_malloc(count*sizeof(slong));
-    ulong e[n]; memset(e,0,sizeof(e));
-    for (slong d=degree;d>=0;d--) basis_enumerate(b,e,0,d,d);
-    assert(b->count==count); b->slots=1;
-    while (b->slots<2*count) b->slots*=2;
-    b->lookup=flint_malloc(b->slots*sizeof(slong));
-    for (slong j=0;j<b->slots;j++) b->lookup[j]=-1;
-    for (slong j=0;j<count;j++) {
-        uint64_t k=code(b->exps+j*n,n); slong slot=hash_slot(k,b->slots);
-        while (b->lookup[slot]>=0) slot=(slot+1)&(b->slots-1);
-        b->lookup[slot]=j;
-    }
-}
-
-static slong basis_find(const basis_t *b, const ulong *e)
-{
-    uint64_t k=code(e,b->n); slong slot=hash_slot(k,b->slots);
-    while (b->lookup[slot]>=0) {
-        if (!memcmp(b->exps+b->lookup[slot]*b->n,e,b->n*sizeof(ulong))) return b->lookup[slot];
-        slot=(slot+1)&(b->slots-1);
-    }
-    return -1;
-}
-
-static void basis_clear(basis_t *b)
-{
-    flint_free(b->exps); flint_free(b->degrees); flint_free(b->lookup);
-}
+#include "quotient_basis.h"
 
 static void matrix_init(nmod_mat_t M, slong r, slong c, ulong p)
 {
@@ -630,17 +567,6 @@ static int extract_points(polynomial_solutions_t *sols, nmod_mat_struct *T,
     nmod_poly_factor_clear(roots); nmod_mat_clear(A); return ok;
 }
 
-static slong monomial_count_bounded(slong n, slong d, slong limit)
-{
-    slong count=1;
-    for(slong i=1;i<=d;i++) {
-        if(n>WORD_MAX-i || count>WORD_MAX/(n+i)) return 0;
-        count=count*(n+i)/i;
-        if(count>limit) return 0;
-    }
-    return count;
-}
-
 /* Conservative scratch-space allowance: full RREF, projections, closure
  * batches, all operators and recursive eigencharacter restrictions. Input
  * polynomial storage and FLINT's allocator overhead are additional. */
@@ -668,8 +594,8 @@ int solve_by_quotient_closure(char **polys, slong count,
         return 0;
     }
     if(fq_nmod_ctx_degree(sols->ctx)!=1) {
-        sols->error_message=strdup("Quotient closure currently supports machine-word prime fields only");
-        return 0;
+        return solve_by_quotient_closure_extension(polys, count, vars, n, sols,
+                                                    max_degree, memory_mb);
     }
     if(n<=0 || count<n) {
         sols->error_message=strdup("Quotient closure requires at least as many equations as variables, and at least one variable");

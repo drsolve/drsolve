@@ -3112,11 +3112,12 @@ static int generate_random_poly_strings_rational(
 
 /* Keep the parameter count independent of the resultant support: a vanished
  * parameter must not silently disable explicitly requested sifting. */
-static slong sift_parameter_count(const char *polys, const char *elim)
+static slong sift_parameter_count(const char *polys, const char *elim,
+                                   const char *generator)
 {
     slong m=0,n=0,ne=0,count=0;
     char **fs=split_string(polys,&m), **es=split_string(elim,&ne), **names=NULL;
-    collect_variables((const char **)fs,m,NULL,&names,&n);
+    collect_variables((const char **)fs,m,generator,&names,&n);
     for (slong i=0;i<n;i++) {
         int eliminated=0;
         for (slong j=0;j<ne;j++) if (!strcmp(names[i],es[j])) eliminated=1;
@@ -3126,10 +3127,59 @@ static slong sift_parameter_count(const char *polys, const char *elim)
     return count;
 }
 
-static char *sift_resultant_cli(const char *raw, const char *polys,
-                               const char *elim, ulong prime,
+static char *sift_resultant_extension_cli(const char *raw, const char *polys,
+                               const char *elim, const fq_nmod_ctx_t field,
                                slong degree, char **report, slong *terms_out)
 {
+    slong m=0,n=0,ne=0,used=0;
+    char **fs=split_string(polys,&m), **es=split_string(elim,&ne), **names=NULL;
+    collect_variables((const char **)fs,m,field->var,&names,&n);
+    char *answer=NULL;
+    if (!n) goto cleanup_names;
+    fq_nmod_mpoly_ctx_t ctx; fq_nmod_mpoly_ctx_init(ctx,n,ORD_DEGLEX,field);
+    fq_nmod_mpoly_t input, sifted, removed;
+    fq_nmod_mpoly_init(input,ctx); fq_nmod_mpoly_init(sifted,ctx); fq_nmod_mpoly_init(removed,ctx);
+    fq_nmod_mpoly_struct *original=flint_malloc(m*sizeof(*original));
+    for (slong i=0;i<m;i++) fq_nmod_mpoly_init(original+i,ctx);
+    int ok=!fq_nmod_mpoly_set_str_pretty(input,raw,(const char **)names,ctx);
+    if (ok) *terms_out=fq_nmod_mpoly_length(input,ctx);
+    for (slong i=0;i<m && ok;i++)
+        ok=!fq_nmod_mpoly_set_str_pretty(original+i,fs[i],(const char **)names,ctx);
+    for (slong i=0;i<n && ok;i++) for (slong j=0;j<ne;j++)
+        if (!strcmp(names[i],es[j]) && fq_nmod_mpoly_degree_si(input,i,ctx)>0) ok=0;
+    if (ok) ok=quotient_sift_resultant_extension(sifted,removed,input,original,m,ctx,degree,&used);
+    if (ok) {
+        char *filtered=fq_nmod_mpoly_get_str_pretty(sifted,(const char **)names,ctx);
+        char *factor=fq_nmod_mpoly_get_str_pretty(removed,(const char **)names,ctx);
+        answer=strdup(filtered);
+        *terms_out=fq_nmod_mpoly_length(sifted,ctx);
+        size_t len=strlen(factor)+320;
+        *report=malloc(len);
+        snprintf(*report,len,
+            "Quotient sift: certified removed multiplier = %s\n"
+            "Relation degree reached: %ld (limit %ld). "
+            "Unproved factors retained; minimality is not certified.\n",
+            factor,used,degree);
+        flint_free(filtered); flint_free(factor);
+    } else {
+        *report=strdup("Quotient sift: unavailable (parse or factorization failure); original resultant retained.\n");
+    }
+    for (slong i=0;i<m;i++) fq_nmod_mpoly_clear(original+i,ctx);
+    flint_free(original);
+    fq_nmod_mpoly_clear(input,ctx); fq_nmod_mpoly_clear(sifted,ctx); fq_nmod_mpoly_clear(removed,ctx);
+    fq_nmod_mpoly_ctx_clear(ctx);
+cleanup_names:
+    free_split_strings(names,n); free_split_strings(fs,m); free_split_strings(es,ne);
+    return answer;
+}
+
+static char *sift_resultant_cli(const char *raw, const char *polys,
+                               const char *elim, const fq_nmod_ctx_t field,
+                               slong degree, char **report, slong *terms_out)
+{
+    if (fq_nmod_ctx_degree(field)>1)
+        return sift_resultant_extension_cli(raw,polys,elim,field,degree,report,terms_out);
+    ulong prime=fq_nmod_ctx_prime(field);
     slong m=0,n=0,ne=0,used=0;
     char **fs=split_string(polys,&m), **es=split_string(elim,&ne), **names=NULL;
     collect_variables((const char **)fs,m,NULL,&names,&n);
@@ -4074,8 +4124,8 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         goto cleanup_fail;
     }
     if (solver_method == POLYNOMIAL_SOLVER_QUOTIENT &&
-        (rational_mode || large_prime_mode || power != 1)) {
-        fprintf(stderr, "Error: --quotient/--solver quotient currently supports machine-word prime fields only.\n");
+        (rational_mode || large_prime_mode)) {
+        fprintf(stderr, "Error: --quotient/--solver quotient requires a finite field of machine-word characteristic.\n");
         goto cleanup_fail;
     }
     if ((solver_method_explicit || quotient_limits_given) &&
@@ -4083,9 +4133,9 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         fprintf(stderr, "Error: quotient/solver options require polynomial system solver mode.\n");
         goto cleanup_fail;
     }
-    if (quotient_limits_given && (rational_mode || large_prime_mode || power != 1 ||
+    if (quotient_limits_given && (rational_mode || large_prime_mode ||
                                  solver_method == POLYNOMIAL_SOLVER_DIXON)) {
-        fprintf(stderr, "Error: quotient limits require --solver auto or quotient over a machine-word prime field.\n");
+        fprintf(stderr, "Error: quotient limits require --solver auto or quotient over a finite field of machine-word characteristic.\n");
         goto cleanup_fail;
     }
     if (complex_mode && !rational_mode) {
@@ -4477,14 +4527,14 @@ random_done:
     }
 
     int sift_supported = !solve_mode && !comp_mode && !ideal_mode &&
-                         !rational_mode && !large_prime_mode && power==1 &&
+                         !rational_mode && !large_prime_mode &&
                          !field_eq_mode && !field_eq_final_only_mode && vars_str;
     if ((sift_mode==1 || sift_limits_given) && !sift_supported) {
-        fprintf(stderr, "Error: sift options require ordinary resultant mode over a machine-word prime field (without ideal/field-equation reduction).\n");
+        fprintf(stderr, "Error: sift options require ordinary resultant mode over a finite field of machine-word characteristic (without ideal/field-equation reduction).\n");
         goto cleanup_fail;
     }
     if (sift_supported && sift_mode==1) {
-        slong parameters=sift_parameter_count(polys_str,vars_str);
+        slong parameters=sift_parameter_count(polys_str,vars_str,power>1?ctx->var:NULL);
         sift_active=parameters>=1;
     }
     if (sift_limits_given && !sift_active) {
@@ -4851,7 +4901,7 @@ random_done:
     if (sift_active && result && scalar_screen.status==DIXON_SCREEN_NOT_RUN) {
         slong sift_terms=dixon_get_last_resultant_term_count();
         char *filtered=sift_resultant_cli(result,polys_str,vars_str,
-            fq_nmod_ctx_prime(ctx),sift_degree,&sift_report,&sift_terms);
+            ctx,sift_degree,&sift_report,&sift_terms);
         if (filtered) { free(result); result=filtered; }
         if (!silent_mode) {
             if (sift_report) fputs(sift_report,stdout);

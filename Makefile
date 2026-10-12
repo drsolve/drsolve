@@ -177,6 +177,7 @@ MATH_SOURCES = $(SRC_DIR)/dixon/dixon_complexity.c \
                $(SRC_DIR)/solver/large_prime_system_solver.c \
                $(SRC_DIR)/solver/polynomial_system_solver.c \
                $(SRC_DIR)/solver/quotient_solver.c \
+               $(SRC_DIR)/solver/quotient_extension.c \
                $(SRC_DIR)/solver/rational_system_solver.c
 # Object files (in build directory)
 MATH_OBJECTS = $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(MATH_SOURCES))
@@ -1075,12 +1076,12 @@ $(BUILD_DIR)/pml_prime_step4_test: $(SRC_DIR)/test/pml_prime_step4_test.c $(DIXO
 
 $(BUILD_DIR)/determinant/fq_poly_mat_det.o $(BUILD_DIR)/poly_mat_interpolation_test: $(SRC_DIR)/determinant/poly_mat_eval_batch.h
 
-$(BUILD_DIR)/quotient_solver_test: $(SRC_DIR)/test/quotient_solver_test.c $(SRC_DIR)/solver/quotient_solver.c $(SRC_DIR)/quotient_solver.h $(DIXON_SHARED_LIB)
+$(BUILD_DIR)/quotient_solver_test: $(SRC_DIR)/test/quotient_solver_test.c $(SRC_DIR)/solver/quotient_solver.c $(SRC_DIR)/solver/quotient_basis.h $(SRC_DIR)/quotient_solver.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/quotient_solver_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-quotient
 test-quotient: $(BUILD_DIR)/quotient_solver_test
-	./$(BUILD_DIR)/quotient_solver_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH ./$(BUILD_DIR)/quotient_solver_test
 
 $(BUILD_DIR)/gf2n_sparse_mpoly_test: $(SRC_DIR)/test/gf2n_sparse_mpoly_test.c $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
@@ -1148,3 +1149,21 @@ test-sift-cli: $(DIXON_TARGET)
 
 test-sift-sage: $(DIXON_TARGET)
 	sage -python $(SRC_DIR)/test/quotient_sift_sage_test.py ./$(DIXON_TARGET)
+
+$(BUILD_DIR)/quotient_extension_test: $(SRC_DIR)/test/quotient_extension_test.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-quotient-extension
+test-quotient-extension: $(BUILD_DIR)/quotient_extension_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH ./$<
+
+.PHONY: test-quotient-extension-cli
+test-quotient-extension-cli: $(DIXON_TARGET)
+	python3 $(SRC_DIR)/test/quotient_extension_cli_test.py ./$(DIXON_TARGET)
+
+$(BUILD_DIR)/quotient_extension_sift_test: $(SRC_DIR)/test/quotient_extension_sift_test.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-quotient-extension-sift
+test-quotient-extension-sift: $(BUILD_DIR)/quotient_extension_sift_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH ./$<

@@ -649,6 +649,7 @@ set(MATH_SOURCES
   src/solver/large_prime_system_solver.c
   src/solver/polynomial_system_solver.c
   src/solver/quotient_solver.c
+  src/solver/quotient_extension.c
   src/solver/rational_system_solver.c
   ${MATH_INTERNAL_HEADERS}
 )
@@ -973,6 +974,33 @@ if(BUILD_TESTING)
     target_sources(quotient_solver_test PRIVATE ${MATH_SOURCES})
   endif()
   add_test(NAME drsolve_quotient COMMAND quotient_solver_test)
+  add_executable(quotient_extension_test src/test/quotient_extension_test.c)
+  drsolve_target_common(quotient_extension_test)
+  target_compile_options(quotient_extension_test PRIVATE -UNDEBUG)
+  if(TARGET drsolve_static)
+    target_link_libraries(quotient_extension_test PRIVATE drsolve_static)
+  elseif(TARGET drsolve_shared)
+    target_link_libraries(quotient_extension_test PRIVATE drsolve_shared)
+  else()
+    target_sources(quotient_extension_test PRIVATE ${MATH_SOURCES})
+  endif()
+  add_test(NAME drsolve_quotient_extension COMMAND quotient_extension_test)
+  add_executable(quotient_extension_sift_test src/test/quotient_extension_sift_test.c)
+  drsolve_target_common(quotient_extension_sift_test)
+  target_compile_options(quotient_extension_sift_test PRIVATE -UNDEBUG)
+  if(TARGET drsolve_static)
+    target_link_libraries(quotient_extension_sift_test PRIVATE drsolve_static)
+  elseif(TARGET drsolve_shared)
+    target_link_libraries(quotient_extension_sift_test PRIVATE drsolve_shared)
+  else()
+    target_sources(quotient_extension_sift_test PRIVATE ${MATH_SOURCES})
+  endif()
+  add_test(NAME drsolve_quotient_extension_sift COMMAND quotient_extension_sift_test)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME drsolve_quotient_extension_cli
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/quotient_extension_cli_test.py
+              $<TARGET_FILE:drsolve_exe>)
+  endif()
   add_executable(quotient_sift_test src/test/quotient_sift_test.c)
   drsolve_target_common(quotient_sift_test)
   target_compile_options(quotient_sift_test PRIVATE -UNDEBUG)

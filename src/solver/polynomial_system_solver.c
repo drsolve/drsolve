@@ -1886,7 +1886,6 @@ int solve_by_back_substitution_recursive_enhanced(char **original_polys, slong n
             
             /* Keep every reduced equation for the first AUTO attempt. */
             int try_quotient = solver_method == POLYNOMIAL_SOLVER_AUTO &&
-                               fq_nmod_ctx_degree(sols->ctx) == 1 &&
                                num_nonzero_polys > target_equations;
             if (try_quotient) {
                 combinations = realloc(combinations,

@@ -67,8 +67,8 @@ static void print_short_usage(const char *prog_name)
     printf("OTHER OPTIONS:\n");
     printf("  --method <n>      Determinant method selection (0:Expansion, 1:HNF, 2:Interpolation, 3:Sparse, 4:Bareiss, 5:Fdixon)\n");
     printf("  --step1, --step4  Override method <n> for specific algorithm steps\n");
-    printf("  --quotient  Use certified quotient algebra over a machine-word prime field\n");
-    printf("  --sift  Remove extraneous resultant factors using quotient algebra (prime fields)\n");
+    printf("  --quotient  Use certified quotient algebra over a finite field\n");
+    printf("  --sift  Remove extraneous resultant factors using quotient algebra (finite fields)\n");
     printf("  --solver auto|dixon|quotient  Auto uses Dixon with quotient back substitution\n");
     printf("  --threads <num>   Set number of threads for parallel computation\n");
     printf("  --dixon           Use Dixon resultant (default)\n");
@@ -116,9 +116,9 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    -> `-s` / `--solve` is optional here; `--solve-rational-only` keeps only exact rational solutions\n");
     printf("    -> `--specialize-vars a=0,b=1` fixes variables before solving; in extension fields integers use the generator expansion (F_2^k: 2=t, 3=1+t, 4=t^2)\n");
     printf("    -> Random n+1 equations in n variables default to Dixon scalar consistency screening\n");
-    printf("    -> Auto starts with Dixon and tries quotient on overdetermined prime-field back substitution; --solver dixon disables this\n");
+    printf("    -> Auto starts with Dixon and tries quotient on overdetermined finite-field back substitution; --solver dixon disables this\n");
     printf("    -> --solver auto|dixon|quotient selects the solver; quotient requires at least as many equations as variables\n");
-    printf("    -> Add --sift to remove extraneous resultant factors using quotient algebra (prime fields)\n");
+    printf("    -> Add --sift to remove extraneous resultant factors using quotient algebra (finite fields)\n");
     printf("    -> No degree or memory budget by default; optional --quotient-max-degree <D> and --quotient-memory <MiB> (0 = unlimited)\n");
     printf("    -> Quotient limits cause AUTO to fall back to Dixon; explicit quotient returns an incomplete-solve error\n");
     printf("    -> `-v 2` matches the old debug / verbose solver output\n");

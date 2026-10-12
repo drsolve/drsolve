@@ -64,7 +64,7 @@ Example:
 ```
 - Default output file: `out/solution_YYYYMMDD_HHMMSS.dr`
 
-Add `--sift` to enable quotient-based removal of extraneous resultant factors over prime fields, e.g. `./drsolve test.dr --sift`.
+Add `--sift` to enable quotient-based removal of extraneous resultant factors.
 
 #### Polynomial system solver
 ```bash
