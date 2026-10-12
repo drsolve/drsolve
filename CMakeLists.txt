@@ -615,6 +615,9 @@ set(MATH_INTERNAL_HEADERS
   src/dixon/dixon_gf2n_schur_template.h
   src/field/gf2n_mpoly_sparse.h
   src/mq_fq_coeffs.h
+  src/solver/quotient_byte.h
+  src/solver/quotient_gf2n.h
+  src/solver/quotient_gf2n_template.h
 )
 
 set(MATH_SOURCES

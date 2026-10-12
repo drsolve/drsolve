@@ -8,11 +8,13 @@
 #include <flint/fq_nmod_mpoly.h>
 #include <flint/fq_nmod_poly_factor.h>
 #include <flint/fq_nmod_mpoly_factor.h>
+#include "quotient_byte.h"
 
 typedef struct {
     field_ctx_t field;
     const void *arithmetic;
     const fq_nmod_ctx_struct *fq;
+    uint8_t byte_tables[256][32];
 } extension_t;
 
 #define FIELD(e) (e)->field.field_id, (e)->arithmetic
@@ -25,6 +27,10 @@ static void extension_init(extension_t *e, const fq_nmod_ctx_t fq)
         (const void *)&e->field.ctx.nmod_ctx :
         e->field.field_id==FIELD_ID_FQ_ZECH ?
         (const void *)e->field.ctx.zech_ctx : (const void *)e->field.ctx.fq_ctx;
+    if (e->field.field_id==FIELD_ID_GF24)
+        quotient_byte_tables(e->byte_tables,16,gf24_get_scalar_row);
+    else if (e->field.field_id==FIELD_ID_GF28)
+        quotient_byte_tables(e->byte_tables,256,gf28_get_scalar_row);
 }
 
 static field_elem_u *vector_init(slong n, const extension_t *e)
@@ -96,6 +102,12 @@ static void matrix_product(unified_mat_t C, const unified_mat_t A,
 typedef struct {
     basis_t basis;
     field_elem_u **rows;
+    /* Packed native tails for the elimination kernel. The unified rows are
+     * materialized only when a new pivot is stored, for the shared closure
+     * and algebra certificate. */
+    void **native_rows;
+    void *native_scratch;
+    unsigned char *processed;
     slong rank;
 } extension_closure_t;
 
@@ -103,18 +115,36 @@ static void extension_closure_init(extension_closure_t *cl, slong n, slong d)
 {
     basis_init(&cl->basis,n,d);
     cl->rows=flint_calloc(cl->basis.count,sizeof(*cl->rows)); cl->rank=0;
+    cl->native_rows=flint_calloc(cl->basis.count,sizeof(*cl->native_rows));
+    cl->native_scratch=NULL;
+    cl->processed=flint_calloc(cl->basis.count,1);
 }
 
 static void extension_closure_clear(extension_closure_t *cl, const extension_t *e)
 {
-    for (slong j=0;j<cl->basis.count;j++)
+    for (slong j=0;j<cl->basis.count;j++) {
         if (cl->rows[j]) vector_clear(cl->rows[j],cl->basis.count,e);
+        flint_free(cl->native_rows[j]);
+    }
+    flint_free(cl->native_rows); flint_free(cl->native_scratch);
+    flint_free(cl->processed);
     flint_free(cl->rows); basis_clear(&cl->basis);
 }
+
+#include "quotient_gf2n.h"
 
 static void insert_relation(extension_closure_t *cl, field_elem_u *row,
                             const extension_t *e)
 {
+    switch (e->field.field_id) {
+    case FIELD_ID_GF24: quotient_insert_gf24(cl,row,e); return;
+    case FIELD_ID_GF28: quotient_insert_gf28(cl,row,e); return;
+    case FIELD_ID_GF216: quotient_insert_gf216(cl,row,e); return;
+    case FIELD_ID_GF232: quotient_insert_gf232(cl,row,e); return;
+    case FIELD_ID_GF264: quotient_insert_gf264(cl,row,e); return;
+    case FIELD_ID_GF2128: quotient_insert_gf2128(cl,row,e); return;
+    default: break;
+    }
     slong N=cl->basis.count;
     field_elem_u a; field_init_elem(&a,FIELD(e));
     for (slong j=0;j<N;j++) if (!field_is_zero(row+j,FIELD(e))) {
@@ -134,7 +164,7 @@ static void insert_relation(extension_closure_t *cl, field_elem_u *row,
 static void extend_relations(extension_closure_t *cl, const extension_t *e)
 {
     slong N=cl->basis.count,n=cl->basis.n;
-    unsigned char *processed=flint_calloc(N,1);
+    unsigned char *processed=cl->processed;
     field_elem_u *row=vector_init(N,e);
     int more=1;
     while (more && cl->rank<N) {
@@ -153,7 +183,7 @@ static void extend_relations(extension_closure_t *cl, const extension_t *e)
             }
         }
     }
-    vector_clear(row,N,e); flint_free(processed);
+    vector_clear(row,N,e);
 }
 
 static void insert_generators(extension_closure_t *cl, fq_nmod_mpoly_struct *fs,
@@ -185,6 +215,52 @@ static void insert_generators(extension_closure_t *cl, fq_nmod_mpoly_struct *fs,
         flint_free(exps); vector_clear(cs,fs[i].length,e); basis_clear(&mult);
     }
     fq_nmod_clear(coeff,e->fq); vector_clear(row,N,e);
+}
+
+/* Reuse the preceding degree instead of rebuilding all Macaulay rows.
+ * Its relations and their variable multiples span every original multiple
+ * needed at the new degree. Distinct leading monomials can be installed
+ * directly: multiplication preserves the degree-lex order. Collisions must
+ * still be reduced, since their differences can yield new relations. */
+static void extension_closure_seed(extension_closure_t *cl,
+                         const extension_closure_t *prev, const extension_t *e)
+{
+    slong N=cl->basis.count,P=prev->basis.count,n=cl->basis.n,offset=N-P;
+    slong *shift=flint_malloc(P*n*sizeof(*shift));
+    for (slong j=0;j<P;j++) for (slong v=0;v<n;v++) {
+        ulong exp[n]; memcpy(exp,prev->basis.exps+j*n,sizeof(exp)); exp[v]++;
+        shift[j*n+v]=basis_find(&cl->basis,exp);
+        assert(shift[j*n+v]>=0);
+    }
+    slong *owner=flint_malloc(N*sizeof(*owner));
+    for (slong j=0;j<N;j++) owner[j]=-1;
+    for (slong j=0;j<P;j++) if (prev->rows[j]) {
+        cl->rows[j+offset]=vector_init(N,e);
+        vector_set(cl->rows[j+offset]+offset,prev->rows[j],P,e);
+        /* All variable multiples of this unchanged row are inserted below. */
+        cl->processed[j+offset]=1;
+        cl->rank++;
+    }
+    /* First install one row per new pivot, so duplicate multiples reduce
+     * against the entire known triangular block. */
+    for (slong j=0;j<P;j++) if (prev->rows[j]) for (slong v=0;v<n;v++) {
+        slong pivot=shift[j*n+v];
+        if (cl->rows[pivot]) continue;
+        field_elem_u *row=cl->rows[pivot]=vector_init(N,e);
+        for (slong k=j;k<P;k++)
+            field_set_elem(row+shift[k*n+v],prev->rows[j]+k,FIELD(e));
+        owner[pivot]=j*n+v; cl->rank++;
+    }
+    field_elem_u *row=vector_init(N,e);
+    for (slong j=0;j<P && cl->rank<N;j++) if (prev->rows[j])
+        for (slong v=0;v<n && cl->rank<N;v++) {
+            if (owner[shift[j*n+v]]==j*n+v) continue;
+            vector_zero(row,N,e);
+            for (slong k=j;k<P;k++)
+                field_set_elem(row+shift[k*n+v],prev->rows[j]+k,FIELD(e));
+            insert_relation(cl,row,e);
+        }
+    vector_clear(row,N,e); flint_free(owner); flint_free(shift);
 }
 
 static void act_monomial_extension(field_elem_u *out, const field_elem_u *one,
@@ -383,6 +459,8 @@ int solve_by_quotient_closure_extension(char **polys, slong count,
     slong *degrees=flint_malloc(count*sizeof(slong)),start=1,initialized=0;
     slong used=0,columns=0,dim=0;
     int success=0,certified=0;
+    extension_closure_t previous;
+    int have_previous=0;
     unified_mat_struct *operators=NULL;
     const char *reason="degree limit reached";
     fq_nmod_poly_t mu; fq_nmod_poly_init(mu,e.fq);
@@ -401,7 +479,10 @@ int solve_by_quotient_closure_extension(char **polys, slong count,
         if (fits!=1) { reason=fits<0?"matrix dimensions exceed addressable range":"memory budget reached"; break; }
         used=d;
         extension_closure_t cl; extension_closure_init(&cl,n,d);
-        insert_generators(&cl,fs,count,degrees,ctx,&e);
+        if (have_previous) {
+            extension_closure_seed(&cl,&previous,&e);
+            extension_closure_clear(&previous,&e); have_previous=0;
+        } else insert_generators(&cl,fs,count,degrees,ctx,&e);
         extend_relations(&cl,&e);
         dim=cl.basis.count-cl.rank;
         if (!dim) certified=1;
@@ -409,7 +490,8 @@ int solve_by_quotient_closure_extension(char **polys, slong count,
             operators=build_operators(&cl,fs,count,ctx,&e);
             certified=operators!=NULL;
         }
-        extension_closure_clear(&cl,&e);
+        if (certified) extension_closure_clear(&cl,&e);
+        else { previous=cl; have_previous=1; }
         if (d==WORD_MAX) { reason="degree exceeds integer range"; break; }
     }
     if (!certified) {
@@ -449,6 +531,7 @@ int solve_by_quotient_closure_extension(char **polys, slong count,
     snprintf(sols->resultant_steps[0],len,"Certified elimination polynomial in %s (minimal polynomial): %s",names[n-1],text);
     sols->num_resultant_steps=sols->resultant_steps_cap=1; flint_free(text);
  done:
+    if (have_previous) extension_closure_clear(&previous,&e);
     if (operators) { for (slong i=0;i<n;i++) unified_mat_clear(operators+i); flint_free(operators); }
     fq_nmod_poly_clear(mu,e.fq);
     for (slong i=0;i<initialized;i++) fq_nmod_mpoly_clear(fs+i,ctx);

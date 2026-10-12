@@ -3,6 +3,25 @@
 #include "fq_unified_interface.h"
 #include <flint/fq_nmod_mpoly.h>
 #include <assert.h>
+#include "solver/quotient_byte.h"
+
+static void check_byte_kernel(int order)
+{
+    uint8_t tables[256][32],source[264],actual[264],expected[264];
+    quotient_byte_tables(tables,order,order==16?gf24_get_scalar_row:gf28_get_scalar_row);
+    const slong lengths[]={0,1,15,16,17,31,32,33,63,64,65,97,256};
+    for (int a=0;a<order;a++) for (int offset=0;offset<4;offset++)
+        for (size_t k=0;k<sizeof(lengths)/sizeof(*lengths);k++) {
+            for (int j=0;j<264;j++) {
+                source[j]=(j*137+offset)%order;
+                actual[j]=expected[j]=(j*31+7)%order;
+            }
+            for (slong j=offset;j<offset+lengths[k];j++)
+                expected[j]^=order==16?gf24_mul(a,source[j]):gf28_mul(a,source[j]);
+            quotient_byte_addmul(actual+offset,source+offset,lengths[k],tables[a]);
+            assert(!memcmp(actual,expected,sizeof(actual)));
+        }
+}
 
 static variable_info_t vars[]={{"x",0,0},{"y",0,1}};
 static const char *names[]={"x","y"};
@@ -68,12 +87,17 @@ static void cases(const fq_nmod_ctx_t field, int exhaustive)
     char *empty[]={"x^2", "x^2-1", "y"};
     char *constant[]={"0", "t"};
     char *closure[]={"x^2+y", "x^2+x", "0"};
+    /* Degree growth, colliding shifted pivots, and mixed generator degrees. */
+    char *collisions[]={"x*y-1", "x^2-y"};
+    char *mixed[]={"x^3-t", "y^2-x"};
     check(linear,3,field,-1,NULL,exhaustive);
     check(nilpotent,3,field,1,"dimension 3,",exhaustive);
     check(fibers,3,field,4,"dimension 4,",exhaustive);
     check(empty,3,field,0,"dimension 0,",exhaustive);
     check(constant,2,field,0,"dimension 0,",exhaustive);
     check(closure,3,field,-1,NULL,exhaustive);
+    check(collisions,2,field,-1,"dimension 3,",exhaustive);
+    check(mixed,2,field,-1,"dimension 6,",exhaustive);
     char *positive[]={"x*y", "0"};
     for (int memory=0;memory<2;memory++) {
         polynomial_solutions_t sols; polynomial_solutions_init(&sols,2,field);
@@ -94,6 +118,21 @@ int main(void)
         fq_nmod_ctx_t field; fq_nmod_ctx_init_modulus(field,mod,"t");
         field_ctx_t native; field_ctx_init(&native,field);
         assert(native.field_id==FIELD_ID_GF24+i); field_ctx_clear(&native);
+        if (i<2) check_byte_kernel(i==0?16:256);
+        if (i==0) {
+            flint_rand_t random; flint_rand_init(random); flint_rand_set_seed(random,41,73);
+            for (int trial=0;trial<12;trial++) {
+                char strings[2][160],*polys[]={strings[0],strings[1]};
+                for (int j=0;j<2;j++)
+                    snprintf(strings[j],sizeof(strings[j]),
+                        "%s+(%lu*t+%lu)*x+(%lu*t+%lu)*y+%lu*t+%lu",
+                        j==0?"x^2+t*x*y":"y^2",
+                        n_randint(random,2),n_randint(random,2),n_randint(random,2),
+                        n_randint(random,2),n_randint(random,2),n_randint(random,2));
+                check(polys,2,field,-1,"dimension 4,",1);
+            }
+            flint_rand_clear(random);
+        }
         cases(field,i==0); fq_nmod_ctx_clear(field); nmod_poly_clear(mod);
     }
     /* Change GF(256)'s defining polynomial in the same process. */
