@@ -29,7 +29,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifdef _OPENMP
 #include <omp.h>
+#endif
 #include <flint/nmod_mat.h>
 #include <flint/nmod_vec.h>
 #include <flint/nmod_poly_mat.h>
@@ -45,6 +47,16 @@ typedef struct {
 typedef struct {slong r,c;uint32_t *data;} packed_matrix;
 typedef struct {nmod_mat_t x,y;slong *ystart,*yend;packed_matrix px,py;} linear_map;
 static slong N,M,K,L,threads,key_bits;
+/* Nested sample teams must not spawn another team. OpenMP is optional. */
+static slong quotient_recurrence_workers(void)
+{
+#ifdef _OPENMP
+    return omp_in_parallel() ? 1 : threads;
+#else
+    return 1;
+#endif
+}
+
 /* Packed exponent keys and subset masks must fit their machine words.
  * There is no table or per-equation-count implementation. */
 static int quotient_dimensions(slong n)
@@ -220,7 +232,7 @@ static void quotient_det(nmod_mat_t out,const grade *g,const linear_map *op,cons
 {
     double t=now();
     if(recurrence_kernel>=3){quotient_det_packed(out,g,op,q);return;}
-    slong masks=1L<<N,workers=omp_in_parallel()?1:threads;
+    slong masks=1L<<N,workers=quotient_recurrence_workers();
     nmod_mat_struct *state=flint_calloc(masks*(M+1),sizeof(*state));
     nmod_mat_init(state,1,1,prime);nmod_mat_entry(state,0,0)=1;
     for(slong k=1;k<=N;k++) {

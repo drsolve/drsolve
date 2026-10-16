@@ -150,7 +150,7 @@ static void packed_layer_batched(packed_matrix *state,const grade *g,
 }
 static void quotient_det_packed(nmod_mat_t result,const grade *g,const linear_map *full,const ulong *q)
 {
-    double start=now(),map_seconds=0;slong masks=1L<<N,workers=omp_in_parallel()?1:threads;
+    double start=now(),map_seconds=0;slong masks=1L<<N,workers=quotient_recurrence_workers();
     packed_matrix *state=flint_calloc(masks*(M+1),sizeof(*state));
     state[0]=(packed_matrix){1,1,flint_malloc(sizeof(uint32_t))};state[0].data[0]=1;
     for(slong k=1;k<=N;k++) {

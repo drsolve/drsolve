@@ -63,7 +63,11 @@ int main(int argc,char **argv)
     assert(recurrence_kernel>=0 && recurrence_kernel<=6);
     if(recurrence_kernel>=3)assert(packed_admitted());
     int interpolate=mode!=0;
-    flint_set_num_threads(1);omp_set_num_threads(threads);nmod_init(&mod,prime);
+    flint_set_num_threads(1);
+#ifdef _OPENMP
+    omp_set_num_threads(threads);
+#endif
+    nmod_init(&mod,prime);
     slong w=N+1;ulong *input=flint_calloc(N*w*w,sizeof(ulong));
     for(slong f=0;f<N;f++)for(slong i=0;i<w;i++)for(slong j=i;j<w;j++)assert(fscanf(in,"%lu",input+(f*w+i)*w+j)==1);
     nmod_poly_t reference,det;nmod_poly_init(reference,prime);nmod_poly_init(det,prime);

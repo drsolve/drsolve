@@ -212,6 +212,7 @@ jobs:
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DDRSOLVE_STATIC=ON \
+            -DDRSOLVE_ENABLE_OPENMP=OFF \
             -DCMAKE_C_FLAGS="-Dnmod_mat_nullspace=flint_nmod_mat_nullspace -Dfmpz_mat_nullspace=flint_fmpz_mat_nullspace -Dfmpz_mat_rank=flint_fmpz_mat_rank -Dfmpz_mat_solve=flint_fmpz_mat_solve" \
             -DFLINT_ROOT="$INSTALL_PREFIX" \
             -DPML_ROOT="$INSTALL_PREFIX"
