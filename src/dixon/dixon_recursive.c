@@ -2253,6 +2253,7 @@ static void fq_dixon_fast_resultant_common(unified_mpoly_struct *result,
     full_matrix.entries = NULL;
 
     cleanup_unified_workspace();
+    if(dixon_try_mq_quotient_resultant(result,polys,nvars,npars))return;
     fast_dixon_profile_reset(nvars);
     fast_dixon_subproblem_cache_reset_all();
 

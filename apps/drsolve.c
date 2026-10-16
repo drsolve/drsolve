@@ -118,6 +118,8 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    -> Random n+1 equations in n variables default to Dixon scalar consistency screening\n");
     printf("    -> Auto starts with Dixon and tries quotient on overdetermined finite-field back substitution; --solver dixon disables this\n");
     printf("    -> --solver auto|dixon|quotient selects the solver; quotient requires at least as many equations as variables\n");
+    printf("    -> Quotient uses the new Bezoutian method for supported square MQ systems; overdetermined systems use quotient closure\n");
+    printf("    -> --no-mq-quotient or explicit nonzero quotient limits retain quotient closure for square systems\n");
     printf("    -> Add --sift to remove extraneous resultant factors using quotient algebra (finite fields)\n");
     printf("    -> No degree or memory budget by default; optional --quotient-max-degree <D> and --quotient-memory <MiB> (0 = unlimited)\n");
     printf("    -> Quotient limits cause AUTO to fall back to Dixon; explicit quotient returns an incomplete-solve error\n");
@@ -284,6 +286,7 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    -> Available methods: 0.Minor expansion; 1.HNF; 2.Interpolation; 3.Sparse interpolation; 4.Bareiss; 5.Recursive Dixon construction; 6.Balanced split Laplace (experimental)\n");
     printf("    -> Finite-field elimination of two variables from three equations in three variables defaults to method 5; explicit method options take precedence\n");
     printf("    -> --method sets both step 1 and step 4 for backward compatibility\n");
+    printf("    -> --mq-quotient enables experimental Macaulay/Bezoutian quotient construction (prime-field square quadratic systems, dynamic dimensions); unsupported inputs fall back to Dixon\n");
     printf("    -> MQ direct indices for eligible projected shared DP are default on; --no-mq-step1-rank disables them\n");
     printf("    -> MQ shared-index Step 1 DP is default on when eligible; --no-mq-step1-shared disables it\n");
     printf("    -> --mq-step1-pencil enables experimental MQ degree recurrence (default off); --no-mq-step1-pencil disables it\n");
@@ -375,6 +378,8 @@ static int validate_cli_options(int argc, char *argv[])
         {"no-fast-ksy", no_argument, NULL, OPT_FLAG},
         {"step3-verify-second", no_argument, NULL, OPT_FLAG},
         {"no-step3-verify-second", no_argument, NULL, OPT_FLAG},
+        {"mq-quotient", no_argument, NULL, OPT_FLAG},
+        {"no-mq-quotient", no_argument, NULL, OPT_FLAG},
         {"mq-step1-rank", no_argument, NULL, OPT_FLAG},
         {"no-mq-step1-rank", no_argument, NULL, OPT_FLAG},
         {"mq-step1-shared", no_argument, NULL, OPT_FLAG},

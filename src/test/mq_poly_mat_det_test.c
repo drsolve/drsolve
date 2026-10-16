@@ -4,6 +4,25 @@
 #include <stdio.h>
 #include <flint/ulong_extras.h>
 
+static void check_coefficients(const nmod_poly_mat_t B,const slong *rd,const slong *cd,slong h,slong sigma)
+{
+    mq_coeff_mat a={0};assert(mq_coeff_mat_init(&a,B->r,rd,cd,sigma,B->modulus));
+    for(slong i=0;i<B->r;i++)for(slong j=0;j<B->c;j++) {
+        const nmod_poly_struct *p=nmod_poly_mat_entry(B,i,j);
+        assert(p->length<=FLINT_MAX(0,sigma-rd[i]-cd[j]+1));
+        for(slong d=0;d<p->length;d++)a.values[a.offset[i*B->r+j]+d]=p->coeffs[d];
+    }
+    nmod_poly_mat_t expected,actual;nmod_poly_mat_init(expected,h,h,B->modulus);
+    nmod_poly_mat_init(actual,h,h,B->modulus);
+    nmod_poly_one(nmod_poly_mat_entry(expected,0,0));nmod_poly_mat_set(actual,expected);
+    ulong ef=42,af=42;
+    int want=nmod_poly_mat_mq_schur(expected,&ef,B,rd,cd,h,sigma);
+    int got=nmod_poly_mat_mq_schur_coeffs(actual,&af,&a,h);
+    assert(want==got && ef==af && nmod_poly_mat_equal(expected,actual));
+    assert(!nmod_poly_mat_mq_schur_coeffs(actual,&af,&a,0));
+    nmod_poly_mat_clear(expected);nmod_poly_mat_clear(actual);mq_coeff_mat_clear(&a);
+}
+
 /* Complement [[a(t),b],[c,0]]: nonconstant E with constant nonzero det.
  * This checks exact scaling/sign, including characteristic two, as well as
  * safe rejection without corrupting the caller's fallback input/output. */
@@ -34,6 +53,7 @@ static void check_degree_blocks(ulong prime)
         for(slong j=0;j<n;j++)nmod_poly_swap(nmod_poly_mat_entry(B,j,i),nmod_poly_mat_entry(B,j,c));
         tmp=rd[i];rd[i]=rd[r];rd[r]=tmp;tmp=cd[i];cd[i]=cd[c];cd[c]=tmp;
     }
+    check_coefficients(B,rd,cd,h,4);
     nmod_poly_mat_set(saved,B);
     nmod_poly_t expected,got,factor_poly;
     nmod_poly_init(expected,prime);nmod_poly_init(got,prime);nmod_poly_init(factor_poly,prime);
@@ -76,6 +96,7 @@ int main(void)
             }
         nmod_poly_one(nmod_poly_mat_entry(B, 1, 2));
         nmod_poly_one(nmod_poly_mat_entry(B, 2, 1));
+        check_coefficients(B,d,d,1,3);
         nmod_poly_mat_set(saved, B);
         nmod_poly_t expected, got;
         nmod_poly_init(expected, p);
@@ -88,6 +109,7 @@ int main(void)
         assert(nmod_poly_mat_equal(B, saved));
         assert(factor == p - 1);
         nmod_poly_zero(nmod_poly_mat_entry(B, 2, 1));
+        check_coefficients(B,d,d,1,3);
         nmod_poly_mat_set(saved, B);
         nmod_poly_one(nmod_poly_mat_entry(core, 0, 0));
         factor = 42;
@@ -105,6 +127,7 @@ int main(void)
         nmod_poly_set_coeff_ui(nmod_poly_mat_entry(B, 1, 1), 1, 1);
         nmod_poly_mat_det(expected, B);
         assert(nmod_poly_degree(expected) == 1);
+        check_coefficients(B,d,d,1,3);
         nmod_poly_mat_set(saved, B);
         assert(!nmod_poly_mat_mq_schur(core, &factor, B, d, d, 1, 3));
         assert(nmod_poly_mat_equal(B, saved) && factor == 42);
@@ -119,6 +142,7 @@ int main(void)
         nmod_poly_one(nmod_poly_mat_entry(B, 0, 2));
         nmod_poly_one(nmod_poly_mat_entry(B, 2, 1));
         nmod_poly_set_coeff_ui(nmod_poly_mat_entry(B, 1, 0), 1, 1);
+        check_coefficients(B,d,d,1,3);
         nmod_poly_mat_set(saved, B);
         nmod_poly_mat_det(expected, B);
         assert(!nmod_poly_mat_mq_schur(core, &factor, B, d, d, 1, 3));
@@ -129,6 +153,7 @@ int main(void)
         /* A genuinely deficient full layer cannot be repaired. Preserve all
          * caller-owned outputs on this failure and on degree violations. */
         nmod_poly_zero(nmod_poly_mat_entry(B, 2, 1));
+        check_coefficients(B,d,d,1,3);
         nmod_poly_mat_set(saved, B);
         nmod_poly_one(nmod_poly_mat_entry(core, 0, 0)); factor = 42;
         assert(!nmod_poly_mat_mq_schur_repair(core, &factor, B, d, d, 1, 3));

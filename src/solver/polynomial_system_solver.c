@@ -7,6 +7,11 @@ static int solver_internal_trace_enabled = 0;
 static const slong solver_candidate_print_limit = 10;
 static polynomial_solver_method_t solver_method = POLYNOMIAL_SOLVER_AUTO;
 static slong quotient_max_degree = 0, quotient_memory_mb = 0;
+static int quotient_mq_enabled = 1;
+
+void polynomial_solver_set_quotient_mq(int enabled) {
+    quotient_mq_enabled = !!enabled;
+}
 
 void polynomial_solver_set_method(polynomial_solver_method_t method) {
     solver_method = method;
@@ -2416,10 +2421,51 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
     return backtrack_success;
 }
 
+/* The new Bezoutian backend handles prime-field square quadrics. Keep
+ * explicit closure limits and unsupported inputs on the closure solver.
+ * The existing bivariate solver has its own resultant dispatch. */
+static int quotient_square_mq(char **polys, slong count,
+                              variable_info_t *vars, slong n,
+                              const fq_nmod_ctx_t field)
+{
+    if (!quotient_mq_enabled || quotient_max_degree || quotient_memory_mb ||
+        count != n || n < 3 || n >= FLINT_BITS-1 ||
+        fq_nmod_ctx_degree(field) != 1 ||
+        fq_nmod_ctx_prime(field) <= (ulong)(n+1) ||
+        g_field_equation_reduction || g_field_equation_final_only) return 0;
+    slong bits=1;
+    while ((UWORD(1)<<bits) <= (ulong)((n+1)/2)) bits++;
+    if (bits*n > 64) return 0;
+    nmod_mpoly_ctx_t ctx;
+    nmod_mpoly_ctx_init(ctx,n,ORD_DEGLEX,fq_nmod_ctx_prime(field));
+    nmod_mpoly_t f;nmod_mpoly_init(f,ctx);
+    const char **names=flint_malloc(n*sizeof(char *));
+    for (slong i=0;i<n;i++) names[i]=vars[i].name;
+    int eligible=1;
+    for (slong i=0;i<count;i++) {
+        if (nmod_mpoly_set_str_pretty(f,polys[i],names,ctx) ||
+            !nmod_mpoly_total_degree_fits_si(f,ctx) ||
+            nmod_mpoly_total_degree_si(f,ctx)!=2) {eligible=0;break;}
+    }
+    flint_free(names);nmod_mpoly_clear(f,ctx);nmod_mpoly_ctx_clear(ctx);
+    return eligible;
+}
+
 static int solve_selected(char **polys, slong count, variable_info_t *vars,
                           slong n, polynomial_solutions_t *sols)
 {
     int use_quotient = solver_method == POLYNOMIAL_SOLVER_QUOTIENT;
+    if (use_quotient && quotient_square_mq(polys,count,vars,n,sols->ctx)) {
+        int saved_mq=g_dixon_mq_quotient;
+        polynomial_solver_method_t saved_method=solver_method;
+        g_dixon_mq_quotient=1;
+        /* Reuse root extraction and overdetermined quotient back substitution. */
+        solver_method=POLYNOMIAL_SOLVER_AUTO;
+        solver_progress("Solver: Macaulay quotient / Bezoutian (%ld equations, %ld variables)",count,n);
+        int ok=solve_by_elimination_enhanced(polys,count,vars,n,sols);
+        solver_method=saved_method;g_dixon_mq_quotient=saved_mq;
+        return ok;
+    }
     if (use_quotient) {
         solver_progress("Solver: quotient algebra (%ld equations, %ld variables)", count, n);
         int ok = solve_by_quotient_closure(polys, count, vars, n, sols,

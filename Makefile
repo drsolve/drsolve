@@ -158,6 +158,7 @@ MATH_SOURCES = $(SRC_DIR)/dixon/dixon_complexity.c \
                $(SRC_DIR)/determinant/fq_multivariate_interpolation.c \
                $(SRC_DIR)/determinant/fq_poly_mat_det.c \
                $(SRC_DIR)/determinant/mq_poly_mat_det.c \
+               $(SRC_DIR)/determinant/mq_quotient.c \
                $(SRC_DIR)/determinant/mq_simplex_det.c \
                $(SRC_DIR)/determinant/mq_pencil_det.c \
                $(SRC_DIR)/determinant/fq_sparse_interpolation.c \
@@ -1029,9 +1030,9 @@ test-mq-direct-core: $(BUILD_DIR)/mq_direct_core_test
 	./$(BUILD_DIR)/mq_direct_core_test 4 1 0 12345 2
 
 # Shared-support production headers.
-$(BUILD_DIR)/determinant/fq_mpoly_mat_det.o: $(SRC_DIR)/determinant/mq_shared_layout.h $(SRC_DIR)/determinant/mq_rank_layout.h
+$(BUILD_DIR)/determinant/fq_mpoly_mat_det.o: $(SRC_DIR)/determinant/mq_shared_layout.h $(SRC_DIR)/determinant/mq_shared_coeff_template.h $(SRC_DIR)/determinant/mq_rank_layout.h
 
-$(BUILD_DIR)/mq_rank_kernel_test: $(SRC_DIR)/test/mq_rank_kernel_test.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c $(SRC_DIR)/determinant/mq_shared_layout.h $(SRC_DIR)/determinant/mq_rank_layout.h $(DIXON_SHARED_LIB)
+$(BUILD_DIR)/mq_rank_kernel_test: $(SRC_DIR)/test/mq_rank_kernel_test.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c $(SRC_DIR)/determinant/mq_shared_layout.h $(SRC_DIR)/determinant/mq_shared_coeff_template.h $(SRC_DIR)/determinant/mq_rank_layout.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_rank_kernel_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-mq-rank
@@ -1167,3 +1168,37 @@ $(BUILD_DIR)/quotient_extension_sift_test: $(SRC_DIR)/test/quotient_extension_si
 .PHONY: test-quotient-extension-sift
 test-quotient-extension-sift: $(BUILD_DIR)/quotient_extension_sift_test
 	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH ./$<
+
+# Coefficient-panel direct core and its comparison experiment.
+$(BUILD_DIR)/determinant/mq_poly_mat_det.o: $(SRC_DIR)/determinant/mq_coeff_schur.h
+$(BUILD_DIR)/mq_poly_mat_det_test: $(SRC_DIR)/determinant/mq_coeff_schur.h
+$(BUILD_DIR)/mq_shared_core_test: $(SRC_DIR)/test/mq_shared_core_test.c $(SRC_DIR)/test/mq_direct_core_test.c $(SRC_DIR)/determinant/mq_coeff_schur.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_shared_core_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/mq_core_interpolation_test: $(SRC_DIR)/test/mq_core_interpolation_test.c $(SRC_DIR)/test/mq_shared_core_test.c $(SRC_DIR)/test/mq_direct_core_test.c $(SRC_DIR)/determinant/mq_coeff_schur.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+# Standalone pending-root DAG experiment; the hook is absent in production.
+$(BUILD_DIR)/mq_dag_backend.o: $(SRC_DIR)/determinant/fq_mpoly_mat_det.c $(SRC_DIR)/determinant/mq_shared_coeff_template.h $(SRC_DIR)/test/mq_dag_hook.h
+	$(CC) $(ALL_CFLAGS) -DDRSOLVE_MQ_DAG_TEST -include $(SRC_DIR)/test/mq_dag_hook.h -c -o $@ $<
+
+$(BUILD_DIR)/mq_dag_core_test: $(SRC_DIR)/test/mq_dag_core_test.c $(SRC_DIR)/test/mq_dag_solve.h $(SRC_DIR)/test/mq_shared_core_test.c $(SRC_DIR)/test/mq_direct_core_test.c $(BUILD_DIR)/mq_dag_backend.o $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< $(BUILD_DIR)/mq_dag_backend.o -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+$(BUILD_DIR)/mq_quotient_bezout_test: $(SRC_DIR)/test/mq_quotient_bezout_test.c $(SRC_DIR)/determinant/mq_quotient_impl.h $(SRC_DIR)/determinant/mq_quotient_normal_forms.h $(SRC_DIR)/determinant/mq_quotient_accumulate.h $(SRC_DIR)/determinant/mq_quotient_packed.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+$(BUILD_DIR)/mq_quotient_api_test: $(SRC_DIR)/test/mq_quotient_api_test.c $(SRC_DIR)/mq_quotient.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-mq-quotient
+test-mq-quotient: $(BUILD_DIR)/mq_quotient_api_test drsolve-dynamic
+	LD_LIBRARY_PATH=.:/usr/local/lib ./$(BUILD_DIR)/mq_quotient_api_test
+	python3 $(SRC_DIR)/test/mq_quotient_cli_test.py
+
+
+$(BUILD_DIR)/mq_overdetermined_rank_test: $(SRC_DIR)/test/mq_overdetermined_rank_test.c $(SRC_DIR)/determinant/mq_quotient_impl.h $(SRC_DIR)/determinant/mq_quotient_normal_forms.h $(SRC_DIR)/determinant/mq_quotient_accumulate.h $(SRC_DIR)/determinant/mq_quotient_packed.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+
+$(BUILD_DIR)/mq_quotient_extra_equation_test: $(SRC_DIR)/test/mq_quotient_extra_equation_test.c $(SRC_DIR)/determinant/mq_quotient_impl.h $(SRC_DIR)/determinant/mq_quotient_normal_forms.h $(SRC_DIR)/determinant/mq_quotient_accumulate.h $(SRC_DIR)/determinant/mq_quotient_packed.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)

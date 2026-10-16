@@ -364,143 +364,39 @@ static int mq_shared_admit(nmod_mpoly_t **matrix, slong n,
     return mq_shared_admit_coeffs(matrix, n, ctx, choose, sizeof(ulong));
 }
 
-static void mq_shared_pack(nmod_mpoly_t out, const ulong *coeffs,
-                           const mq_shared_support *s, const nmod_mpoly_ctx_t ctx)
-{
-    flint_bitcnt_t bits = mpoly_fix_bits(s->bits, ctx->minfo);
-    slong words = mpoly_words_per_exp(bits, ctx->minfo);
-    nmod_mpoly_fit_length_reset_bits(out, s->count, bits, ctx);
-    slong len = 0;
-    for (size_t i = 0; i < s->count; i++) if (coeffs[i]) {
-        out->coeffs[len] = coeffs[i];
-        memcpy(out->exps+len*words, s->keys+i*s->words, s->words*sizeof(ulong));
-        len++;
-    }
-    _nmod_mpoly_set_length(out, len, ctx);
-    if (!s->sorted) nmod_mpoly_sort_terms(out, ctx);
-}
-
 #include "mq_rank_layout.h"
 
-/* Shared support and coefficients for all layers, including the root.
- * Preflight proves the degree/packing invariants and bounds owned workspace. */
+/* Admission bounds n and the variable count before this predicate is used.
+ * A degree <= 2 row has at most (nv+1)(nv+2)/2 distinct shifts, each injective
+ * on the previous support. At most n children contribute to one minor.
+ * All source coefficients and signed factors are canonical residues, so this
+ * conservative bound certifies the entire sum, not only one multiplication. */
+static int mq_shared_narrow_safe(slong n, ulong prime)
+{
+    if (FLINT_BITS != 64 || n < 4 || n > (FLINT_BITS-1)/2 || prime < 2) return 0;
+    ulong nv = 2*n-1, largest = prime-1;
+    ulong products = (ulong)n*(nv+1)*(nv+2)/2;
+    return largest <= (UINT32_MAX/products)/largest;
+}
+
+#define MQ_SHARED_COEFF ulong
+#define MQ_SHARED_PACK mq_shared_pack_word
+#define MQ_SHARED_DET mq_shared_det_word
+#define MQ_SHARED_NARROW 0
+#include "mq_shared_coeff_template.h"
+
+#define MQ_SHARED_COEFF uint32_t
+#define MQ_SHARED_PACK mq_shared_pack_u32
+#define MQ_SHARED_DET mq_shared_det_u32
+#define MQ_SHARED_NARROW 1
+#include "mq_shared_coeff_template.h"
+
 static int mq_shared_det(nmod_mpoly_t result, nmod_mpoly_t **matrix, slong n,
                           const nmod_mpoly_ctx_t ctx, int parallel,
                           const mq_det_filter *filter, ulong choose[FLINT_BITS][FLINT_BITS])
 {
     if (!mq_shared_admit(matrix, n, ctx, choose)) return 0;
-#ifdef DRSOLVE_MQ_LAYOUT_TEST
-    mq_shared_test_used++;
-#endif
-    if (g_dixon_verbose_level >= 2) {
-        if (DRSOLVE_MQ_SHARED_WORKSPACE_BYTES == SIZE_MAX)
-            printf("  MQ shared-index DP: size=%ld, no fixed workspace cap\n", n);
-        else
-            printf("  MQ shared-index DP: size=%ld, workspace cap=%zu MiB\n", n,
-                   (size_t)DRSOLVE_MQ_SHARED_WORKSPACE_BYTES/(1024*1024));
-    }
-    mq_shared_support prev; mq_shared_support_init(&prev, ctx, n+1);
-    ulong *values = flint_malloc(sizeof(ulong)); values[0] = 1;
-    for (slong k = 1; k <= n; k++) {
-        const mq_det_filter *f = filter && k > filter->safe_linear_layers ? filter : NULL;
-        slong count = k == n ? n : (slong)choose[n][k];
-        mq_shared_support shifts, next;
-        mq_shared_row(&shifts, matrix[n-k], n, &prev, ctx);
-#ifdef DRSOLVE_MQ_LAYOUT_TEST
-        double plan_start = omp_get_wtime();
-#endif
-        uint32_t *map = NULL;
-        size_t previous_count = k == 1 ? 1 : choose[n][k-1];
-        int ranked = mq_rank_enabled() && mq_rank_next(&next, &map, &prev, &shifts,
-                         filter, ctx, n, k, count, previous_count, parallel);
-        if (ranked && g_dixon_verbose_level >= 2)
-            printf("  MQ direct-index layer %ld: %zu monomials\n", k, next.count);
-        if (!ranked) map = mq_shared_next(&next, &prev, &shifts, f, ctx, 1, parallel);
-#ifdef DRSOLVE_MQ_LAYOUT_TEST
-        mq_shared_test_rank_layers += ranked;
-#endif
-#ifdef DRSOLVE_MQ_LAYOUT_TEST
-        if (mq_shared_variant() & 4)
-            mq_shared_order(&next, map, shifts.count*prev.count, parallel);
-        mq_shared_test_plan_seconds += omp_get_wtime()-plan_start;
-        double arithmetic_start = omp_get_wtime();
-#endif
-        if (!next.count) {
-            flint_free(map); flint_free(values);
-            mq_shared_support_clear(&prev); mq_shared_support_clear(&shifts);
-            mq_shared_support_clear(&next); nmod_mpoly_zero(result, ctx);
-            return 1;
-        }
-        ulong *factors = flint_calloc(n*shifts.count, sizeof(ulong));
-        nmod_mpoly_t tmp; nmod_mpoly_init(tmp, ctx);
-        for (slong c = 0; c < n; c++) {
-            int packed = nmod_mpoly_repack_bits(tmp, matrix[n-k][c], mpoly_fix_bits(prev.bits, ctx->minfo), ctx);
-            FLINT_ASSERT(packed); (void)packed;
-            for (slong t = 0; t < tmp->length; t++) {
-                const ulong *key = tmp->exps+t*prev.words;
-                uint32_t id = mq_shared_find(&shifts, key);
-                FLINT_ASSERT(id != UINT32_MAX); factors[c*shifts.count+id] = tmp->coeffs[t];
-            }
-        }
-        nmod_mpoly_clear(tmp, ctx);
-        ulong *output = flint_calloc((size_t)count*next.count, sizeof(ulong));
-        /* Each shift is injective: one output receives at most k*#shifts
-         * products, not #child-monomials times that number. Negative factors
-         * are represented by their canonical residues. Division checks avoid
-         * overflow in the proof itself, including full-word primes. */
-        ulong contributions = (k == n ? 1 : k)*shifts.count;
-        ulong largest = ctx->mod.n-1;
-        int lazy = contributions &&
-                   largest <= (UWORD_MAX/contributions)/largest;
-        #pragma omp parallel for if(parallel) schedule(static)
-        for (slong index = 0; index < count; index++) {
-            slong cols[FLINT_BITS], col = n-1;
-            ulong rank = index, prefix[FLINT_BITS], suffix[FLINT_BITS];
-            for (slong j = k == n ? 0 : k; j > 0; j--) {
-                while (choose[col][j] > rank) col--;
-                cols[j-1] = col; rank -= choose[col][j]; col--;
-            }
-            prefix[0] = 0;
-            for (slong j = 0; k != n && j < k; j++) prefix[j+1] = prefix[j]+choose[cols[j]][j+1];
-            suffix[k] = 0;
-            for (slong j = k-1; k != n && j > 0; j--) suffix[j] = suffix[j+1]+choose[cols[j]][j];
-            if (k == n) { cols[0] = index; prefix[0] = n-1-index; suffix[1] = 0; }
-            ulong *dest = output+(size_t)index*next.count;
-            for (slong j = 0; j < (k == n ? 1 : k); j++) {
-                const ulong *source = values+(prefix[j]+suffix[j+1])*prev.count;
-                for (size_t a = 0; a < shifts.count; a++) {
-                    ulong scalar = factors[cols[j]*shifts.count+a];
-                    if ((k == n ? index : j) & 1) scalar = nmod_neg(scalar, ctx->mod);
-                    if (!scalar) continue;
-                    const uint32_t *indices = map+a*prev.count;
-                    if (lazy) {
-                        for (size_t b = 0; b < prev.count; b++) if (indices[b] != UINT32_MAX)
-                            dest[indices[b]] += scalar*source[b];
-                    } else {
-                        for (size_t b = 0; b < prev.count; b++) if (indices[b] != UINT32_MAX) {
-                            ulong product = nmod_mul(scalar, source[b], ctx->mod);
-                            dest[indices[b]] = nmod_add(dest[indices[b]], product, ctx->mod);
-                        }
-                    }
-                }
-            }
-            if (lazy) for (size_t i = 0; i < next.count; i++)
-                NMOD_RED(dest[i], dest[i], ctx->mod);
-        }
-        if (k == n) {
-            #pragma omp parallel for if(parallel) schedule(static)
-            for (size_t i = 0; i < next.count; i++)
-                for (slong j = 1; j < n; j++)
-                    output[i] = nmod_add(output[i], output[j*next.count+i], ctx->mod);
-            mq_shared_pack(result, output, &next, ctx);
-        }
-        flint_free(map); flint_free(factors); flint_free(values);
-#ifdef DRSOLVE_MQ_LAYOUT_TEST
-        mq_shared_test_arithmetic_seconds += omp_get_wtime()-arithmetic_start;
-#endif
-        mq_shared_support_clear(&prev); mq_shared_support_clear(&shifts);
-        prev = next; values = output;
-        if (k == n) { flint_free(values); mq_shared_support_clear(&prev); return 1; }
-    }
-    return 0;
+    if (mq_shared_narrow_safe(n, ctx->mod.n))
+        return mq_shared_det_u32(result, matrix, n, ctx, parallel, filter, choose);
+    return mq_shared_det_word(result, matrix, n, ctx, parallel, filter, choose);
 }

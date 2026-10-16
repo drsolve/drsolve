@@ -298,3 +298,5 @@ int nmod_poly_mat_mq_schur_repair(nmod_poly_mat_t core, ulong *factor,
     flint_free(cols); flint_free(rows);
     return ok;
 }
+
+#include "mq_coeff_schur.h"

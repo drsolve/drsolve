@@ -10,20 +10,28 @@
 #include "../determinant/mq_poly_mat_det.c"
 #include "mq_pencil_det.h"
 
-typedef struct {
+typedef struct panel_source panel_source;
+struct panel_source {
     unified_mpoly_struct **matrix;
     slong n,size,sigma;
     slong *rx,*cx,*rd,*cd;
     int pencil,fail_at;
     slong calls,terms,slots;
     double generation,packing;
-} panel_source;
+    void *data;
+    int (*read)(nmod_poly_mat_t, panel_source *, const slong *, slong, const slong *, slong);
+};
 
 static int fetch_panel(nmod_poly_mat_t out,panel_source *s,const slong *rows,
                        slong nr,const slong *cols,slong nc)
 {
     if(++s->calls==s->fail_at)return 0;
     double start=get_wall_time();
+    if(s->read) {
+        int ok=s->read(out,s,rows,nr,cols,nc);
+        s->packing+=get_wall_time()-start;
+        return ok;
+    }
     slong m=s->n-1;
     slong *rx=flint_malloc(nr*m*sizeof(slong)),*cx=flint_malloc(nc*m*sizeof(slong));
     for(slong i=0;i<nr;i++)memcpy(rx+i*m,s->rx+rows[i]*m,m*sizeof(slong));

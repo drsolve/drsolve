@@ -8,6 +8,25 @@
 extern "C" {
 #endif
 
+/* Degree-bounded coefficient storage; weights are borrowed until clear.
+ * Entry (r,c) owns max(0,sigma-rd[r]-cd[c]+1) consecutive coefficients.
+ * Construction rejects invalid bounds and preserves the destination on failure. */
+typedef struct {
+    slong n, sigma;
+    ulong prime;
+    const slong *rd, *cd;
+    size_t *offset, slots;
+    ulong *values;
+} mq_coeff_mat;
+int mq_coeff_mat_init(mq_coeff_mat *out, slong n, const slong *rd,
+                      const slong *cd, slong sigma, ulong prime);
+void mq_coeff_mat_clear(mq_coeff_mat *mat);
+/* Same determinant identity and failure contract as mq_schur below. Input
+ * coefficients are canonical residues; no polynomial candidate is built. */
+int nmod_poly_mat_mq_schur_coeffs(nmod_poly_mat_t core, ulong *factor,
+                                 const mq_coeff_mat *mat, slong h);
+
+
 /* Blocked prime-field MQ compression. B has its h retained indices first
  * on BOTH axes; the remaining complementary block must have degree budget 0.
  * core is an initialized h by h matrix over B's prime field and must not

@@ -8,6 +8,7 @@
 
 #include "dixon_flint.h"
 #include "mq_poly_mat_det.h"
+#include "mq_quotient.h"
 #include "mq_simplex_det.h"
 #include "mq_pencil_det.h"
 
@@ -53,6 +54,7 @@ int g_dixon_mq_step1_rank = 1;
 int g_dixon_mq_step1_simplex = 0;
 int g_dixon_mq_step1_pencil = 0;
 int g_dixon_mq_step4_schur = 1;
+int g_dixon_mq_quotient = 0;
 int g_dixon_step3_second_verification = 0;
 slong g_dixon_det_cache_limit = 1024;
 
@@ -5271,6 +5273,9 @@ typedef struct {
     slong size, h, sigma;
     slong *rows, *cols, *rd, *cd;
     int odd;
+    int core_ready;
+    ulong core_factor;
+    slong core_bound;
 } dixon_mq_step4_profile;
 
 typedef struct {
@@ -6639,7 +6644,7 @@ static void dixon_step4_resultant(unified_mpoly_struct *result,
     if (univariate) {
         fq_nmod_poly_t det;
         fq_nmod_poly_init(det,polys[0].ctx);
-        if (g_dixon_mq_step4_schur && !mq_profile->size)
+        if (g_dixon_mq_step4_schur && !mq_profile->size && !mq_profile->core_ready)
             dixon_info_log("  Step 4 Schur: no eligible complement profile; using original determinant backend\n");
         if (prime_matrix) dixon_mq_native_det(det,prime_matrix,mq_profile,polys[0].ctx);
         else if (!dixon_mq_step4_try(det,poly_matrix,mq_profile,polys[0].ctx))
@@ -6695,10 +6700,34 @@ void dixon_compute_dense_resultant(unified_mpoly_struct *result,
                          extracted_power,NULL,recursive,par_names);
 }
 
+int dixon_try_mq_quotient_resultant(unified_mpoly_struct *result,
+    const unified_mpoly_struct *polys,slong nvars,slong npars)
+{
+    if(!g_dixon_mq_quotient)return 0;
+    mq_quotient_stats stats;
+    int workers=1;
+#ifdef _OPENMP
+    workers=omp_get_max_threads();
+#endif
+    dixon_info_log("\nExperimental Macaulay quotient / Bezoutian method\n");
+    int ok=dr_mq_quotient_resultant(result,polys,nvars,npars,workers,&stats);
+    if(!ok) {
+        dixon_info_log("  MQ quotient fallback: %s; using Dixon path\n",stats.reason);
+        return 0;
+    }
+    dixon_info_log("  Core: %ld x %ld, evaluation points: %ld\n",stats.core_size,stats.core_size,stats.samples);
+    if(g_dixon_show_step_timing)
+        dixon_info_log("  Shared decomposition %.6fs, evaluations %.6fs, interpolation %.6fs, determinant %.6fs (wall)\n",
+            stats.leading,stats.evaluation,stats.interpolation,stats.determinant);
+    dixon_maybe_print_step_time("MQ quotient resultant",stats.total);
+    return 1;
+}
+
 void fq_dixon_resultant(unified_mpoly_struct *result, unified_mpoly_struct *polys, slong nvars,
                         slong npars)
 {
     cleanup_unified_workspace();
+    if(dixon_try_mq_quotient_resultant(result,polys,nvars,npars))return;
     dixon_info_log("\nStep 1: Build Dixon polynomial\n");
     clock_t step1_cpu_start = clock();
     double step1_wall_start = get_wall_time();
@@ -6852,6 +6881,7 @@ void fq_dixon_resultant_with_names(unified_mpoly_struct *result, unified_mpoly_s
                                    const char *gen_name)
 {
     cleanup_unified_workspace();
+    if(dixon_try_mq_quotient_resultant(result,polys,nvars,npars))return;
     
     dixon_info_log("\nStep 1: Build Dixon polynomial\n");
     clock_t step1_cpu_start = clock();

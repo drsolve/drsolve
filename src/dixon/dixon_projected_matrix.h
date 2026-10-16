@@ -13,8 +13,8 @@ static int dixon_step2_test_direct_calls;
 static void dixon_mq_native_det(fq_nmod_poly_t out, nmod_poly_mat_t matrix,
                               const dixon_mq_step4_profile *p, const fq_nmod_ctx_t ctx)
 {
-    ulong prime=fq_nmod_ctx_prime(ctx), factor=1;
-    slong interpolation_bound = -1;
+    ulong prime=fq_nmod_ctx_prime(ctx), factor=p->core_ready ? p->core_factor : 1;
+    slong interpolation_bound = p->core_ready ? p->core_bound : -1;
     if(p->size && p->size==matrix->r && matrix->r==matrix->c) {
         double start=get_wall_time();
         slong n=matrix->r;

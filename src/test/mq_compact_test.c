@@ -3,6 +3,8 @@
 #include "dixon_mq_filter_test.c"
 #undef main
 
+static int direct_core_cases;
+
 static void same_polynomial(const unified_mpoly_struct *a, const unified_mpoly_struct *b)
 {
     nmod_mpoly_ctx_t ctx; nmod_mpoly_ctx_init(ctx,a->nvars+a->npars,ORD_LEX,fq_nmod_ctx_prime(a->ctx));
@@ -25,7 +27,22 @@ static void same_matrix(fq_mq_compact *compact, unified_mpoly_struct *legacy, sl
     dixon_mq_step4_profile a={0},b={0};
     extract_fq_coefficient_matrix_from_dixon_impl(&unused,NULL,NULL,NULL,&size,&content,
         &owned,n,1,NULL,NULL,NULL,degrees,n+1,1,&a,&expected,&owned);
+    /* Check direct core against the conventional matrix's determinant,
+     * preserving content and signs under both coefficient reorder modes. */
+    dixon_mq_step4_profile direct={0};nmod_poly_mat_t small;
+    slong power=0;
+    if(dixon_compact_core(small,&power,compact,degrees,&direct)) {
+        direct_core_cases++;
+        nmod_poly_t x,y;nmod_poly_init(x,compact->prime);nmod_poly_init(y,compact->prime);
+        nmod_poly_mat_det(x,expected);nmod_poly_mat_det(y,small);
+        nmod_poly_scalar_mul_nmod(y,y,direct.core_factor);
+        assert(power==content && nmod_poly_equal(x,y));
+        nmod_poly_clear(x);nmod_poly_clear(y);nmod_poly_mat_clear(small);
+        dixon_mq_step4_profile_clear(&direct);
+    }
+    setenv("DRSOLVE_MQ_DIRECT_CORE","0",1);
     dixon_extract_compact_matrix(actual,&cs,&cc,compact,degrees,&b,NULL);
+    unsetenv("DRSOLVE_MQ_DIRECT_CORE");
     assert(!compact->nvars && !compact->terms && !compact->rows && !compact->offset);
     assert(size==cs && content==cc);
     assert(nmod_poly_mat_equal(expected,actual));
@@ -78,6 +95,18 @@ int main(void)
                 fq_mq_compact_materialize(&expanded, &compact, ctx);
                 same_polynomial(&old, &expanded);
                 dr_mpoly_clear(&expanded);
+                /* Independent row/column t-valuations must be removed and
+                 * restored exactly by the direct route, not lost in its factor. */
+                fq_mq_compact shifted={0};
+                assert(compute_fq_det_mq_compact(&shifted,m,n+1,compact.rows,compact.nrows,compact.cols,compact.ncols));
+                for(slong r=0;r<shifted.nrows;r++)for(slong t=shifted.offset[r];t<shifted.offset[r+1];t++) {
+                    shifted.terms[t].degree+=1+r%2+shifted.terms[t].column%3;
+                    shifted.degree=FLINT_MAX(shifted.degree,shifted.terms[t].degree);
+                }
+                unified_mpoly_struct shifted_poly={0};
+                fq_mq_compact_materialize(&shifted_poly,&shifted,ctx);
+                same_matrix(&shifted,&shifted_poly,n,threads==4);
+                dr_mpoly_clear(&shifted_poly);
                 same_matrix(&compact,&old,n,threads==4); native++;
             } else { same_polynomial(&old,&placeholder); repaired++; }
             dr_mpoly_clear(&old);
@@ -115,7 +144,7 @@ int main(void)
         dr_mpoly_clear(&expanded);
     }
     fq_nmod_ctx_clear(ctx);
-    assert(native>0 && fallback>0);
+    assert(native>0 && fallback>0 && direct_core_cases>0);
     printf("Compact MQ: %d native matrices/profiles, %d repaired, %d rejected; rectangular and singular fallback PASS\n",native,repaired,fallback);
     flint_rand_clear(rng); flint_cleanup_master();
     return 0;

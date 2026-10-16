@@ -97,6 +97,9 @@ extern int g_dixon_mq_step1_rank;
 extern int g_dixon_mq_step1_simplex;
 extern int g_dixon_mq_step1_pencil;
 extern int g_dixon_mq_step4_schur;
+extern int g_dixon_mq_quotient;
+int dixon_try_mq_quotient_resultant(unified_mpoly_struct *result,
+    const unified_mpoly_struct *polys, slong nvars, slong npars);
 extern int g_dixon_step3_second_verification;
 /* Method 0: live DP polynomial entry cap; 0 selects plain expansion. */
 extern slong g_dixon_det_cache_limit;

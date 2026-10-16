@@ -3263,6 +3263,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int determinant_method_explicit = 0;
     int fast_ksy_precondition = 0;
     long fast_ksy_constant_col = 0;
+    int mq_quotient = 0, quotient_mq_enabled = 1;
     int mq_step1_filter = 1;
     int mq_step1_shared = 1;
     int mq_step1_rank = 1;
@@ -3544,6 +3545,10 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             i++;
         } else if (strcmp(argv[i], "--no-fast-ksy") == 0) {
             fast_ksy_precondition = 0;
+        } else if (strcmp(argv[i], "--mq-quotient") == 0) {
+            mq_quotient = 1; quotient_mq_enabled = 1;
+        } else if (strcmp(argv[i], "--no-mq-quotient") == 0) {
+            mq_quotient = 0; quotient_mq_enabled = 0;
         } else if (strcmp(argv[i], "--mq-step1-rank") == 0) {
             mq_step1_rank = 1;
         } else if (strcmp(argv[i], "--no-mq-step1-rank") == 0) {
@@ -4470,7 +4475,7 @@ random_done:
         }
     }
 
-    if (!comp_mode && !solve_mode && !ideal_str &&
+    if (!comp_mode && !solve_mode && !ideal_str && !mq_quotient &&
         !resultant_method_explicit && !determinant_method_explicit &&
         polys_str && vars_str) {
         int poly_count = count_comma_separated_items(polys_str);
@@ -4576,6 +4581,7 @@ random_done:
     g_rational_root_scan_mode = rational_root_scan_mode;
     g_dixon_fast_use_ksy_precondition = fast_ksy_precondition;
     g_dixon_fast_ksy_constant_col = fast_ksy_constant_col;
+    g_dixon_mq_quotient = mq_quotient;
     g_dixon_mq_step1_filter = mq_step1_filter;
     g_dixon_mq_step1_shared = mq_step1_shared;
     g_dixon_mq_step1_rank = mq_step1_rank;
@@ -4787,6 +4793,7 @@ random_done:
             polynomial_solver_set_realtime_progress(enable_solver_realtime_progress);
             polynomial_solver_set_internal_trace(solve_verbose_mode);
             polynomial_solver_set_method(solver_method);
+            polynomial_solver_set_quotient_mq(quotient_mq_enabled);
             polynomial_solver_set_quotient_limits(quotient_degree, quotient_memory);
 
             if (suppress_solver_stdout) {

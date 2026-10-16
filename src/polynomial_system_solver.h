@@ -93,6 +93,8 @@ typedef enum {
 void polynomial_solver_set_method(polynomial_solver_method_t method);
 /* Both limits default to 0 (unlimited); positive values opt into a budget. */
 void polynomial_solver_set_quotient_limits(slong max_degree, slong memory_mb);
+/* Enable square-MQ Bezoutian dispatch for the quotient solver (default on). */
+void polynomial_solver_set_quotient_mq(int enabled);
 
 void polynomial_solutions_init(polynomial_solutions_t *sols, slong num_vars, 
                                const fq_nmod_ctx_t ctx);

@@ -255,6 +255,66 @@ static void check_shared_admission(void)
     }
 }
 
+/* Compare complete polynomial outputs across both coefficient widths, near
+ * the uint32 accumulation bound as well as over small and full-word primes. */
+static void check_shared_coefficients(flint_rand_t state)
+{
+    ulong primes[] = {2, 3, 37, 257, 5449, 5471, 65537, 536870923,
+                     UWORD(18446744073709551557)};
+    assert(mq_shared_narrow_safe(4, 5449));
+    assert(!mq_shared_narrow_safe(4, 5471));
+    assert(!mq_shared_narrow_safe(4, 0));
+    assert(!mq_shared_narrow_safe(4, 1));
+    assert(!mq_shared_narrow_safe(3, 37));
+    for (size_t pi = 0; pi < sizeof(primes)/sizeof(*primes); pi++) {
+        const slong n = 4, nv = 7;
+        nmod_mpoly_ctx_t ctx;
+        nmod_mpoly_ctx_init(ctx, nv, ORD_LEX, primes[pi]);
+        nmod_mpoly_t **a = flint_malloc(n*sizeof(*a));
+        ulong choose[FLINT_BITS][FLINT_BITS] = {{0}}, e[7] = {0};
+        for (slong i = 0; i <= n; i++) {
+            choose[i][0] = 1;
+            for (slong j = 1; j <= i; j++) choose[i][j] = choose[i-1][j-1]+choose[i-1][j];
+        }
+        for (slong r = 0; r < n; r++) {
+            a[r] = flint_malloc(n*sizeof(**a));
+            for (slong c = 0; c < n; c++) {
+                nmod_mpoly_init(a[r][c], ctx);
+                for (slong i = -1; i < nv; i++) {
+                    if (i >= 0) e[i]++;
+                    for (slong j = -1; j < (r == 0 ? nv : 0); j++) {
+                        if (j >= 0) e[j]++;
+                        ulong coeff = (c == 0) ? primes[pi]-1 : n_randint(state, primes[pi]);
+                        nmod_mpoly_push_term_ui_ui(a[r][c], coeff, e, ctx);
+                        if (j >= 0) e[j]--;
+                    }
+                    if (i >= 0) e[i]--;
+                }
+                nmod_mpoly_sort_terms(a[r][c], ctx);
+                nmod_mpoly_combine_like_terms(a[r][c], ctx);
+            }
+        }
+        assert(mq_shared_admit(a, n, ctx, choose));
+        nmod_mpoly_t reference, actual;
+        nmod_mpoly_init(reference, ctx); nmod_mpoly_init(actual, ctx);
+        assert(mq_shared_det_word(reference, a, n, ctx, 0, NULL, choose));
+        for (int parallel = 0; parallel <= 1; parallel++) {
+            assert(mq_shared_det(actual, a, n, ctx, parallel, NULL, choose));
+            assert(nmod_mpoly_equal(actual, reference, ctx));
+            if (mq_shared_narrow_safe(n, primes[pi])) {
+                assert(mq_shared_det_u32(actual, a, n, ctx, parallel, NULL, choose));
+                assert(nmod_mpoly_equal(actual, reference, ctx));
+            }
+        }
+        nmod_mpoly_clear(actual, ctx); nmod_mpoly_clear(reference, ctx);
+        for (slong r = 0; r < n; r++) {
+            for (slong c = 0; c < n; c++) nmod_mpoly_clear(a[r][c], ctx);
+            flint_free(a[r]);
+        }
+        flint_free(a); nmod_mpoly_ctx_clear(ctx);
+    }
+}
+
 int main(void)
 {
     flint_rand_t state;
@@ -264,6 +324,7 @@ int main(void)
         for (slong i = 0; i < 6; i++) check_packing(state, axes[i], order);
     check_layer_certificate();
     check_shared_admission();
+    check_shared_coefficients(state);
     check_shared_shards();
     for(slong n=3;n<=9;n+=2) { check_linear_kernel(state,n,2);check_linear_kernel(state,n,65537); }
     flint_rand_clear(state); flint_cleanup_master();
