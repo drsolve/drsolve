@@ -3,7 +3,7 @@
  * the certified solver's complete point sets with exhaustive enumeration. */
 #define solve_by_quotient_closure test_solve_by_quotient_closure
 #define quotient_sift_resultant test_quotient_sift_resultant
-#include "../solver/quotient_solver.c"
+#include "../../solver/quotient_solver.c"
 #undef solve_by_quotient_closure
 #undef quotient_sift_resultant
 

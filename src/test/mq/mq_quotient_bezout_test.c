@@ -1,4 +1,4 @@
-#include "../determinant/mq_quotient_impl.h"
+#include "../../determinant/mq_quotient_impl.h"
 /* Exercise tile boundaries, signs, zeros and the IFMA product-width guard
  * against FLINT's independent modular matrix multiplication. */
 static void check_packed_tiles(void)

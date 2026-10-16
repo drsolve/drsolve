@@ -150,8 +150,8 @@ MATH_SOURCES = $(SRC_DIR)/dixon/dixon_complexity.c \
                $(SRC_DIR)/dixon/dixon_recursive.c \
                $(SRC_DIR)/dixon/dixon_flint.c \
                $(SRC_DIR)/dixon/dixon_interface_flint.c \
-               $(SRC_DIR)/test/dixon_test.c \
-               $(SRC_DIR)/test/polynomial_system_solver_test.c \
+               $(SRC_DIR)/test/dixon/dixon_test.c \
+               $(SRC_DIR)/test/solver/polynomial_system_solver_test.c \
                $(SRC_DIR)/dixon/dixon_with_ideal_reduction.c \
                $(SRC_DIR)/determinant/fq_mat_det.c \
                $(SRC_DIR)/determinant/fq_mpoly_mat_det.c \
@@ -414,13 +414,13 @@ uninstall:
 	@echo "=== Uninstall complete ==="
 
 COMPONENT_TEST_SOURCES = $(SRC_DIR)/test/component_tests.c \
-                         $(SRC_DIR)/test/unified_mpoly_det_test.c \
-                         $(SRC_DIR)/test/fq_nmod_roots_test.c \
-                         $(SRC_DIR)/test/rational_system_solver_test.c \
-                         $(SRC_DIR)/test/dixon_complexity_test.c \
-                         $(SRC_DIR)/test/dixon_ideal_test.c \
-                         $(SRC_DIR)/test/resultant_ideal_test.c \
-                         $(SRC_DIR)/test/fq_sparse_interpolation_test.c
+                         $(SRC_DIR)/test/matrix/unified_mpoly_det_test.c \
+                         $(SRC_DIR)/test/solver/fq_nmod_roots_test.c \
+                         $(SRC_DIR)/test/solver/rational_system_solver_test.c \
+                         $(SRC_DIR)/test/dixon/dixon_complexity_test.c \
+                         $(SRC_DIR)/test/dixon/dixon_ideal_test.c \
+                         $(SRC_DIR)/test/dixon/resultant_ideal_test.c \
+                         $(SRC_DIR)/test/matrix/fq_sparse_interpolation_test.c
 
 .PHONY: test-components
 test-components: $(BUILD_DIR)/component_tests
@@ -435,8 +435,8 @@ $(BUILD_DIR)/component_tests: $(COMPONENT_TEST_SOURCES) $(DIXON_SHARED_LIB)
 test-kernel-certificate: $(BUILD_DIR)/pml_kernel_certificate_test
 	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/pml_kernel_certificate_test
 
-$(BUILD_DIR)/pml_kernel_certificate_test: $(SRC_DIR)/test/pml_kernel_certificate_test.c $(PML_SOURCE_DIR)/src/nmod_poly_mat_extra/kernel.c $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/pml_kernel_certificate_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/pml_kernel_certificate_test: $(SRC_DIR)/test/matrix/pml_kernel_certificate_test.c $(PML_SOURCE_DIR)/src/nmod_poly_mat_extra/kernel.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/matrix/pml_kernel_certificate_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-schur-repair
 test-schur-repair: $(BUILD_DIR)/dixon_schur_repair_test
@@ -446,37 +446,37 @@ test-schur-repair: $(BUILD_DIR)/dixon_schur_repair_test
 test-dixon-recursive-native: $(BUILD_DIR)/dixon_recursive_native_test
 	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=4 ./$(BUILD_DIR)/dixon_recursive_native_test
 
-$(BUILD_DIR)/dixon_recursive_native_test: $(SRC_DIR)/test/dixon_recursive_native_test.c $(SRC_DIR)/dixon/dixon_recursive.c $(SRC_DIR)/dixon/dixon_native.h $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon_recursive_native_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/dixon_recursive_native_test: $(SRC_DIR)/test/dixon/dixon_recursive_native_test.c $(SRC_DIR)/dixon/dixon_recursive.c $(SRC_DIR)/dixon/dixon_native.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon/dixon_recursive_native_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-poly-mat-interpolation
 test-poly-mat-interpolation: $(BUILD_DIR)/poly_mat_interpolation_test
 	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=4 ./$(BUILD_DIR)/poly_mat_interpolation_test
 	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=4 DRSOLVE_INTERP_EVAL=batch ./$(BUILD_DIR)/poly_mat_interpolation_test
 
-$(BUILD_DIR)/poly_mat_interpolation_test: $(SRC_DIR)/test/poly_mat_interpolation_test.c $(SRC_DIR)/determinant/fq_poly_mat_det.c $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/poly_mat_interpolation_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/poly_mat_interpolation_test: $(SRC_DIR)/test/matrix/poly_mat_interpolation_test.c $(SRC_DIR)/determinant/fq_poly_mat_det.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/matrix/poly_mat_interpolation_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
-$(BUILD_DIR)/dixon_schur_repair_test: $(SRC_DIR)/test/dixon_schur_repair_test.c $(SRC_DIR)/dixon/dixon_flint.c $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon_schur_repair_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/dixon_schur_repair_test: $(SRC_DIR)/test/dixon/dixon_schur_repair_test.c $(SRC_DIR)/dixon/dixon_flint.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon/dixon_schur_repair_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-mq-filter
 test-mq-filter: $(BUILD_DIR)/dixon_mq_filter_test $(BUILD_DIR)/mq_filter_kernel_test
 	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/dixon_mq_filter_test
 	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/mq_filter_kernel_test
 
-$(BUILD_DIR)/dixon_mq_filter_test: $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/fq_mpoly_mat_det.h $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon_mq_filter_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/dixon_mq_filter_test: $(SRC_DIR)/test/dixon/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/fq_mpoly_mat_det.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon/dixon_mq_filter_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
-$(BUILD_DIR)/mq_filter_kernel_test: $(SRC_DIR)/test/mq_filter_kernel_test.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c $(SRC_DIR)/test/mq_sum_experiment.h $(SRC_DIR)/fq_mpoly_mat_det.h $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_filter_kernel_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/mq_filter_kernel_test: $(SRC_DIR)/test/mq/mq_filter_kernel_test.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c $(SRC_DIR)/test/mq/mq_sum_experiment.h $(SRC_DIR)/fq_mpoly_mat_det.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq/mq_filter_kernel_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-minor-dp
 test-minor-dp: $(BUILD_DIR)/det_minor_dp_test
 	./$(BUILD_DIR)/det_minor_dp_test
 
 # Observe actual backend scheduling only in the test executable.
-DET_MINOR_TEST_SOURCES = src/test/det_minor_dp.c $(SRC_DIR)/determinant/unified_mpoly_det.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c
+DET_MINOR_TEST_SOURCES = src/test/matrix/det_minor_dp.c $(SRC_DIR)/determinant/unified_mpoly_det.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c
 
 $(BUILD_DIR)/det_minor_dp_test: $(DET_MINOR_TEST_SOURCES) $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -DDRSOLVE_DET_TESTING -o $@ $(DET_MINOR_TEST_SOURCES) -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
@@ -1000,14 +1000,14 @@ test-mq-step4: $(BUILD_DIR)/mq_poly_mat_det_test $(BUILD_DIR)/dixon_mq_step4_tes
 	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/mq_poly_mat_det_test
 	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/dixon_mq_step4_test
 
-$(BUILD_DIR)/mq_poly_mat_det_test: $(SRC_DIR)/test/mq_poly_mat_det_test.c $(SRC_DIR)/determinant/mq_poly_mat_det.c $(SRC_DIR)/mq_poly_mat_det.h
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_poly_mat_det_test.c $(SRC_DIR)/determinant/mq_poly_mat_det.c $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/mq_poly_mat_det_test: $(SRC_DIR)/test/mq/mq_poly_mat_det_test.c $(SRC_DIR)/determinant/mq_poly_mat_det.c $(SRC_DIR)/mq_poly_mat_det.h
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq/mq_poly_mat_det_test.c $(SRC_DIR)/determinant/mq_poly_mat_det.c $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
-$(BUILD_DIR)/dixon_mq_step4_test: $(SRC_DIR)/test/dixon_mq_step4_test.c $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/mq_poly_mat_det.h $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon_mq_step4_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/dixon_mq_step4_test: $(SRC_DIR)/test/dixon/dixon_mq_step4_test.c $(SRC_DIR)/test/dixon/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/mq_poly_mat_det.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon/dixon_mq_step4_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
-$(BUILD_DIR)/mq_pencil_test: $(SRC_DIR)/test/mq_pencil_test.c $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/mq_pencil_det.h $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_pencil_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/mq_pencil_test: $(SRC_DIR)/test/mq/mq_pencil_test.c $(SRC_DIR)/test/dixon/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/mq_pencil_det.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq/mq_pencil_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-mq-pencil
 test-mq-pencil: $(BUILD_DIR)/mq_pencil_test
@@ -1018,8 +1018,8 @@ test-mq-pencil: $(BUILD_DIR)/mq_pencil_test
 	./$(BUILD_DIR)/mq_pencil_test 5 65537 4
 	./$(BUILD_DIR)/mq_pencil_test 6 101 4
 
-$(BUILD_DIR)/mq_direct_core_test: $(SRC_DIR)/test/mq_direct_core_test.c $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/determinant/mq_poly_mat_det.c $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_direct_core_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/mq_direct_core_test: $(SRC_DIR)/test/mq/mq_direct_core_test.c $(SRC_DIR)/test/dixon/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/determinant/mq_poly_mat_det.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq/mq_direct_core_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-mq-direct-core
 test-mq-direct-core: $(BUILD_DIR)/mq_direct_core_test
@@ -1032,8 +1032,8 @@ test-mq-direct-core: $(BUILD_DIR)/mq_direct_core_test
 # Shared-support production headers.
 $(BUILD_DIR)/determinant/fq_mpoly_mat_det.o: $(SRC_DIR)/determinant/mq_shared_layout.h $(SRC_DIR)/determinant/mq_shared_coeff_template.h $(SRC_DIR)/determinant/mq_rank_layout.h
 
-$(BUILD_DIR)/mq_rank_kernel_test: $(SRC_DIR)/test/mq_rank_kernel_test.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c $(SRC_DIR)/determinant/mq_shared_layout.h $(SRC_DIR)/determinant/mq_shared_coeff_template.h $(SRC_DIR)/determinant/mq_rank_layout.h $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_rank_kernel_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/mq_rank_kernel_test: $(SRC_DIR)/test/mq/mq_rank_kernel_test.c $(SRC_DIR)/determinant/fq_mpoly_mat_det.c $(SRC_DIR)/determinant/mq_shared_layout.h $(SRC_DIR)/determinant/mq_shared_coeff_template.h $(SRC_DIR)/determinant/mq_rank_layout.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq/mq_rank_kernel_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-mq-rank
 test-mq-rank: $(BUILD_DIR)/mq_rank_kernel_test
@@ -1042,8 +1042,8 @@ test-mq-rank: $(BUILD_DIR)/mq_rank_kernel_test
 # Verified MQ projection can construct the final univariate matrix directly.
 $(BUILD_DIR)/dixon/dixon_flint.o: $(SRC_DIR)/dixon/dixon_projected_matrix.h
 
-$(BUILD_DIR)/dixon_projected_matrix_test: $(SRC_DIR)/test/dixon_projected_matrix_test.c $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/dixon/dixon_projected_matrix.h $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon_projected_matrix_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/dixon_projected_matrix_test: $(SRC_DIR)/test/dixon/dixon_projected_matrix_test.c $(SRC_DIR)/test/dixon/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/dixon/dixon_projected_matrix.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon/dixon_projected_matrix_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-dixon-projected-matrix
 test-dixon-projected-matrix: $(BUILD_DIR)/dixon_projected_matrix_test
@@ -1052,8 +1052,8 @@ test-dixon-projected-matrix: $(BUILD_DIR)/dixon_projected_matrix_test
 $(BUILD_DIR)/dixon/dixon_flint.o: $(SRC_DIR)/dixon/dixon_compact_matrix.h $(SRC_DIR)/mq_compact.h
 $(BUILD_DIR)/determinant/fq_mpoly_mat_det.o: $(SRC_DIR)/determinant/mq_compact_output.h $(SRC_DIR)/mq_compact.h
 
-$(BUILD_DIR)/mq_compact_test: $(SRC_DIR)/test/mq_compact_test.c $(SRC_DIR)/test/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/dixon/dixon_compact_matrix.h $(SRC_DIR)/mq_compact.h $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_compact_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/mq_compact_test: $(SRC_DIR)/test/mq/mq_compact_test.c $(SRC_DIR)/test/dixon/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/dixon/dixon_compact_matrix.h $(SRC_DIR)/mq_compact.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq/mq_compact_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-mq-compact
 test-mq-compact: $(BUILD_DIR)/mq_compact_test
@@ -1062,7 +1062,7 @@ test-mq-compact: $(BUILD_DIR)/mq_compact_test
 # Track local and FLINT-facing interface changes in incremental builds.
 -include $(MATH_OBJECTS:.o=.d)
 
-$(BUILD_DIR)/dr_mpoly_test: $(SRC_DIR)/test/dr_mpoly_test.c $(DIXON_SHARED_LIB)
+$(BUILD_DIR)/dr_mpoly_test: $(SRC_DIR)/test/field/dr_mpoly_test.c $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 .PHONY: test-native-mpoly
 test-native-mpoly: $(BUILD_DIR)/dr_mpoly_test
@@ -1072,25 +1072,25 @@ test-native-mpoly: $(BUILD_DIR)/dr_mpoly_test
 test-prime-step4: $(BUILD_DIR)/pml_prime_step4_test
 	OMP_NUM_THREADS=1 DRSOLVE_PML_MUL=ntt DRSOLVE_PML_DET_ROW_ORDER=degree ./$(BUILD_DIR)/pml_prime_step4_test
 
-$(BUILD_DIR)/pml_prime_step4_test: $(SRC_DIR)/test/pml_prime_step4_test.c $(DIXON_SHARED_LIB)
+$(BUILD_DIR)/pml_prime_step4_test: $(SRC_DIR)/test/matrix/pml_prime_step4_test.c $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 $(BUILD_DIR)/determinant/fq_poly_mat_det.o $(BUILD_DIR)/poly_mat_interpolation_test: $(SRC_DIR)/determinant/poly_mat_eval_batch.h
 
-$(BUILD_DIR)/quotient_solver_test: $(SRC_DIR)/test/quotient_solver_test.c $(SRC_DIR)/solver/quotient_solver.c $(SRC_DIR)/solver/quotient_basis.h $(SRC_DIR)/quotient_solver.h $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/quotient_solver_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/quotient_solver_test: $(SRC_DIR)/test/solver/quotient_solver_test.c $(SRC_DIR)/solver/quotient_solver.c $(SRC_DIR)/solver/quotient_basis.h $(SRC_DIR)/quotient_solver.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/solver/quotient_solver_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-quotient
 test-quotient: $(BUILD_DIR)/quotient_solver_test
 	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH ./$(BUILD_DIR)/quotient_solver_test
 
-$(BUILD_DIR)/gf2n_sparse_mpoly_test: $(SRC_DIR)/test/gf2n_sparse_mpoly_test.c $(DIXON_SHARED_LIB)
+$(BUILD_DIR)/gf2n_sparse_mpoly_test: $(SRC_DIR)/test/field/gf2n_sparse_mpoly_test.c $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 .PHONY: test-gf2n-sparse
 test-gf2n-sparse: $(BUILD_DIR)/gf2n_sparse_mpoly_test
 	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/gf2n_sparse_mpoly_test
 
-$(BUILD_DIR)/byte_poly_mat_det_test: $(SRC_DIR)/test/byte_poly_mat_det_test.c $(DIXON_SHARED_LIB)
+$(BUILD_DIR)/byte_poly_mat_det_test: $(SRC_DIR)/test/matrix/byte_poly_mat_det_test.c $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 .PHONY: test-byte-poly-det
 test-byte-poly-det: $(BUILD_DIR)/byte_poly_mat_det_test
@@ -1102,24 +1102,24 @@ $(BUILD_DIR)/det_minor_dp_test: $(SRC_DIR)/determinant/gf28_minor_dp.h
 test-mq-gf2n: $(BUILD_DIR)/mq_gf2n_test
 	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/mq_gf2n_test
 
-$(BUILD_DIR)/mq_gf2n_test: $(SRC_DIR)/test/mq_gf2n_test.c $(SRC_DIR)/dixon/dixon_flint.c $(wildcard $(SRC_DIR)/dixon/dixon_gf2n*.h) $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_gf2n_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/mq_gf2n_test: $(SRC_DIR)/test/mq/mq_gf2n_test.c $(SRC_DIR)/dixon/dixon_flint.c $(wildcard $(SRC_DIR)/dixon/dixon_gf2n*.h) $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq/mq_gf2n_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-mq-fq
 test-mq-fq: $(BUILD_DIR)/mq_fq_test
 	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/mq_fq_test
 
-$(BUILD_DIR)/mq_fq_test: $(SRC_DIR)/test/mq_fq_test.c $(SRC_DIR)/test/mq_gf2n_test.c $(SRC_DIR)/dixon/dixon_flint.c $(wildcard $(SRC_DIR)/dixon/dixon_fq*.h) $(SRC_DIR)/mq_fq_coeffs.h $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_fq_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/mq_fq_test: $(SRC_DIR)/test/mq/mq_fq_test.c $(SRC_DIR)/test/mq/mq_gf2n_test.c $(SRC_DIR)/dixon/dixon_flint.c $(wildcard $(SRC_DIR)/dixon/dixon_fq*.h) $(SRC_DIR)/mq_fq_coeffs.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq/mq_fq_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-dixon-pipeline
 test-dixon-pipeline: $(BUILD_DIR)/dixon_pipeline_test
 	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=2 ./$(BUILD_DIR)/dixon_pipeline_test
 
-$(BUILD_DIR)/dixon_pipeline_test: $(SRC_DIR)/test/dixon_pipeline_test.c $(SRC_DIR)/test/dixon_recursive_native_test.c $(SRC_DIR)/dixon/dixon_recursive.c $(SRC_DIR)/dixon/dixon_pipeline.h $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon_pipeline_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/dixon_pipeline_test: $(SRC_DIR)/test/dixon/dixon_pipeline_test.c $(SRC_DIR)/test/dixon/dixon_recursive_native_test.c $(SRC_DIR)/dixon/dixon_recursive.c $(SRC_DIR)/dixon/dixon_pipeline.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon/dixon_pipeline_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
-$(BUILD_DIR)/dixon_scalar_screen_test: $(SRC_DIR)/test/dixon_scalar_screen_test.c $(SRC_DIR)/dixon_scalar_screen.h $(DIXON_SHARED_LIB)
+$(BUILD_DIR)/dixon_scalar_screen_test: $(SRC_DIR)/test/dixon/dixon_scalar_screen_test.c $(SRC_DIR)/dixon_scalar_screen.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-scalar-screen
@@ -1128,30 +1128,30 @@ test-scalar-screen: $(BUILD_DIR)/dixon_scalar_screen_test
 
 .PHONY: test-scalar-screen-cli
 test-scalar-screen-cli: $(DIXON_TARGET)
-	python3 $(SRC_DIR)/test/dixon_scalar_screen_cli_test.py ./$(DIXON_TARGET)
+	python3 $(SRC_DIR)/test/cli/dixon_scalar_screen_cli_test.py ./$(DIXON_TARGET)
 
 .PHONY: test-quotient-back-substitution
 test-quotient-back-substitution: $(BUILD_DIR)/quotient_back_substitution_test
 	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH ./$(BUILD_DIR)/quotient_back_substitution_test
 
-$(BUILD_DIR)/quotient_back_substitution_test: $(SRC_DIR)/test/quotient_back_substitution_test.c $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/quotient_back_substitution_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/quotient_back_substitution_test: $(SRC_DIR)/test/solver/quotient_back_substitution_test.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/solver/quotient_back_substitution_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-quotient-sift
 test-quotient-sift: $(BUILD_DIR)/quotient_sift_test
 	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH ./$(BUILD_DIR)/quotient_sift_test
 
-$(BUILD_DIR)/quotient_sift_test: $(SRC_DIR)/test/quotient_sift_test.c $(SRC_DIR)/quotient_solver.h $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/quotient_sift_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/quotient_sift_test: $(SRC_DIR)/test/solver/quotient_sift_test.c $(SRC_DIR)/quotient_solver.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/solver/quotient_sift_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-sift-cli test-sift-sage
 test-sift-cli: $(DIXON_TARGET)
-	python3 $(SRC_DIR)/test/quotient_sift_cli_test.py ./$(DIXON_TARGET)
+	python3 $(SRC_DIR)/test/cli/quotient_sift_cli_test.py ./$(DIXON_TARGET)
 
 test-sift-sage: $(DIXON_TARGET)
-	sage -python $(SRC_DIR)/test/quotient_sift_sage_test.py ./$(DIXON_TARGET)
+	sage -python $(SRC_DIR)/test/cli/quotient_sift_sage_test.py ./$(DIXON_TARGET)
 
-$(BUILD_DIR)/quotient_extension_test: $(SRC_DIR)/test/quotient_extension_test.c $(DIXON_SHARED_LIB)
+$(BUILD_DIR)/quotient_extension_test: $(SRC_DIR)/test/solver/quotient_extension_test.c $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-quotient-extension
@@ -1160,9 +1160,9 @@ test-quotient-extension: $(BUILD_DIR)/quotient_extension_test
 
 .PHONY: test-quotient-extension-cli
 test-quotient-extension-cli: $(DIXON_TARGET)
-	python3 $(SRC_DIR)/test/quotient_extension_cli_test.py ./$(DIXON_TARGET)
+	python3 $(SRC_DIR)/test/cli/quotient_extension_cli_test.py ./$(DIXON_TARGET)
 
-$(BUILD_DIR)/quotient_extension_sift_test: $(SRC_DIR)/test/quotient_extension_sift_test.c $(DIXON_SHARED_LIB)
+$(BUILD_DIR)/quotient_extension_sift_test: $(SRC_DIR)/test/solver/quotient_extension_sift_test.c $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-quotient-extension-sift
@@ -1172,33 +1172,33 @@ test-quotient-extension-sift: $(BUILD_DIR)/quotient_extension_sift_test
 # Coefficient-panel direct core and its comparison experiment.
 $(BUILD_DIR)/determinant/mq_poly_mat_det.o: $(SRC_DIR)/determinant/mq_coeff_schur.h
 $(BUILD_DIR)/mq_poly_mat_det_test: $(SRC_DIR)/determinant/mq_coeff_schur.h
-$(BUILD_DIR)/mq_shared_core_test: $(SRC_DIR)/test/mq_shared_core_test.c $(SRC_DIR)/test/mq_direct_core_test.c $(SRC_DIR)/determinant/mq_coeff_schur.h $(DIXON_SHARED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq_shared_core_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
-$(BUILD_DIR)/mq_core_interpolation_test: $(SRC_DIR)/test/mq_core_interpolation_test.c $(SRC_DIR)/test/mq_shared_core_test.c $(SRC_DIR)/test/mq_direct_core_test.c $(SRC_DIR)/determinant/mq_coeff_schur.h $(DIXON_SHARED_LIB)
+$(BUILD_DIR)/mq_shared_core_test: $(SRC_DIR)/test/mq/mq_shared_core_test.c $(SRC_DIR)/test/mq/mq_direct_core_test.c $(SRC_DIR)/determinant/mq_coeff_schur.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq/mq_shared_core_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/mq_core_interpolation_test: $(SRC_DIR)/test/mq/mq_core_interpolation_test.c $(SRC_DIR)/test/mq/mq_shared_core_test.c $(SRC_DIR)/test/mq/mq_direct_core_test.c $(SRC_DIR)/determinant/mq_coeff_schur.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 # Standalone pending-root DAG experiment; the hook is absent in production.
-$(BUILD_DIR)/mq_dag_backend.o: $(SRC_DIR)/determinant/fq_mpoly_mat_det.c $(SRC_DIR)/determinant/mq_shared_coeff_template.h $(SRC_DIR)/test/mq_dag_hook.h
-	$(CC) $(ALL_CFLAGS) -DDRSOLVE_MQ_DAG_TEST -include $(SRC_DIR)/test/mq_dag_hook.h -c -o $@ $<
+$(BUILD_DIR)/mq_dag_backend.o: $(SRC_DIR)/determinant/fq_mpoly_mat_det.c $(SRC_DIR)/determinant/mq_shared_coeff_template.h $(SRC_DIR)/test/mq/mq_dag_hook.h
+	$(CC) $(ALL_CFLAGS) -DDRSOLVE_MQ_DAG_TEST -include $(SRC_DIR)/test/mq/mq_dag_hook.h -c -o $@ $<
 
-$(BUILD_DIR)/mq_dag_core_test: $(SRC_DIR)/test/mq_dag_core_test.c $(SRC_DIR)/test/mq_dag_solve.h $(SRC_DIR)/test/mq_shared_core_test.c $(SRC_DIR)/test/mq_direct_core_test.c $(BUILD_DIR)/mq_dag_backend.o $(DIXON_SHARED_LIB)
+$(BUILD_DIR)/mq_dag_core_test: $(SRC_DIR)/test/mq/mq_dag_core_test.c $(SRC_DIR)/test/mq/mq_dag_solve.h $(SRC_DIR)/test/mq/mq_shared_core_test.c $(SRC_DIR)/test/mq/mq_direct_core_test.c $(BUILD_DIR)/mq_dag_backend.o $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< $(BUILD_DIR)/mq_dag_backend.o -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
-$(BUILD_DIR)/mq_quotient_bezout_test: $(SRC_DIR)/test/mq_quotient_bezout_test.c $(SRC_DIR)/determinant/mq_quotient_impl.h $(SRC_DIR)/determinant/mq_quotient_normal_forms.h $(SRC_DIR)/determinant/mq_quotient_accumulate.h $(SRC_DIR)/determinant/mq_quotient_packed.h $(DIXON_SHARED_LIB)
+$(BUILD_DIR)/mq_quotient_bezout_test: $(SRC_DIR)/test/mq/mq_quotient_bezout_test.c $(SRC_DIR)/determinant/mq_quotient_impl.h $(SRC_DIR)/determinant/mq_quotient_normal_forms.h $(SRC_DIR)/determinant/mq_quotient_accumulate.h $(SRC_DIR)/determinant/mq_quotient_packed.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
-$(BUILD_DIR)/mq_quotient_api_test: $(SRC_DIR)/test/mq_quotient_api_test.c $(SRC_DIR)/mq_quotient.h $(DIXON_SHARED_LIB)
+$(BUILD_DIR)/mq_quotient_api_test: $(SRC_DIR)/test/mq/mq_quotient_api_test.c $(SRC_DIR)/mq_quotient.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-mq-quotient
 test-mq-quotient: $(BUILD_DIR)/mq_quotient_api_test drsolve-dynamic
 	LD_LIBRARY_PATH=.:/usr/local/lib ./$(BUILD_DIR)/mq_quotient_api_test
-	python3 $(SRC_DIR)/test/mq_quotient_cli_test.py
+	python3 $(SRC_DIR)/test/cli/mq_quotient_cli_test.py
 
 
-$(BUILD_DIR)/mq_overdetermined_rank_test: $(SRC_DIR)/test/mq_overdetermined_rank_test.c $(SRC_DIR)/determinant/mq_quotient_impl.h $(SRC_DIR)/determinant/mq_quotient_normal_forms.h $(SRC_DIR)/determinant/mq_quotient_accumulate.h $(SRC_DIR)/determinant/mq_quotient_packed.h $(DIXON_SHARED_LIB)
+$(BUILD_DIR)/mq_overdetermined_rank_test: $(SRC_DIR)/test/mq/mq_overdetermined_rank_test.c $(SRC_DIR)/determinant/mq_quotient_impl.h $(SRC_DIR)/determinant/mq_quotient_normal_forms.h $(SRC_DIR)/determinant/mq_quotient_accumulate.h $(SRC_DIR)/determinant/mq_quotient_packed.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 
-$(BUILD_DIR)/mq_quotient_extra_equation_test: $(SRC_DIR)/test/mq_quotient_extra_equation_test.c $(SRC_DIR)/determinant/mq_quotient_impl.h $(SRC_DIR)/determinant/mq_quotient_normal_forms.h $(SRC_DIR)/determinant/mq_quotient_accumulate.h $(SRC_DIR)/determinant/mq_quotient_packed.h $(DIXON_SHARED_LIB)
+$(BUILD_DIR)/mq_quotient_extra_equation_test: $(SRC_DIR)/test/mq/mq_quotient_extra_equation_test.c $(SRC_DIR)/determinant/mq_quotient_impl.h $(SRC_DIR)/determinant/mq_quotient_normal_forms.h $(SRC_DIR)/determinant/mq_quotient_accumulate.h $(SRC_DIR)/determinant/mq_quotient_packed.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)

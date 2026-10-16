@@ -1,4 +1,4 @@
-"""Independent oracle: sage -python src/test/quotient_sift_sage_test.py ./drsolve."""
+"""Independent oracle: sage -python src/test/cli/quotient_sift_sage_test.py ./drsolve."""
 from sage.all import GF, PolynomialRing, QQ
 import os
 from pathlib import Path
@@ -8,7 +8,7 @@ import sys
 import tempfile
 
 binary = Path(sys.argv[1]).resolve()
-fixtures = Path(__file__).resolve().parents[2] / 'examples' / 'sift'
+fixtures = Path(__file__).resolve().parents[3] / 'examples' / 'sift'
 cases = ['two_parameters', 'example34', 'example35',
          'example36_b5_slice', 'example36_a1_slice']
 with tempfile.TemporaryDirectory(prefix='sift-sage-') as work:

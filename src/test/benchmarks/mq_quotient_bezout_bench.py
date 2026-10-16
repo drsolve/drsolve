@@ -2,7 +2,7 @@
 """Compare the research backend with drsolve on exactly the same input.
 
 Run from the repository root after make build/mq_quotient_bezout_test.
-Example: python3 src/test/mq_quotient_bezout_bench.py --n 8 --threads 16
+Example: python3 src/test/benchmarks/mq_quotient_bezout_bench.py --n 8 --threads 16
 Validation samples are reported separately from experimental computation.
 """
 import argparse

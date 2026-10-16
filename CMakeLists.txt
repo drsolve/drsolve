@@ -625,14 +625,15 @@ set(MATH_SOURCES
   src/dixon/dixon_recursive.c
   src/dixon/dixon_flint.c
   src/dixon/dixon_interface_flint.c
-  src/test/dixon_test.c
-  src/test/polynomial_system_solver_test.c
+  src/test/dixon/dixon_test.c
+  src/test/solver/polynomial_system_solver_test.c
   src/dixon/dixon_with_ideal_reduction.c
   src/determinant/fq_mat_det.c
   src/determinant/fq_mpoly_mat_det.c
   src/determinant/fq_multivariate_interpolation.c
   src/determinant/fq_poly_mat_det.c
   src/determinant/mq_poly_mat_det.c
+  src/determinant/mq_quotient.c
   src/determinant/mq_simplex_det.c
   src/determinant/mq_pencil_det.c
   src/determinant/fq_sparse_interpolation.c
@@ -916,7 +917,7 @@ endif()
 enable_testing()
 
 if(BUILD_TESTING)
-  add_executable(dixon_scalar_screen_test src/test/dixon_scalar_screen_test.c)
+  add_executable(dixon_scalar_screen_test src/test/dixon/dixon_scalar_screen_test.c)
   drsolve_target_common(dixon_scalar_screen_test)
   target_compile_options(dixon_scalar_screen_test PRIVATE -UNDEBUG)
   if(TARGET drsolve_static)
@@ -930,11 +931,17 @@ if(BUILD_TESTING)
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
     add_test(NAME drsolve_scalar_screen_cli
-      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/dixon_scalar_screen_cli_test.py
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/dixon_scalar_screen_cli_test.py
               $<TARGET_FILE:drsolve_exe>)
   endif()
 
-  add_executable(poly_mat_interpolation_test src/test/poly_mat_interpolation_test.c)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME drsolve_quotient_mode_cli
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/quotient_mode_cli_test.py
+              $<TARGET_FILE:drsolve_exe>)
+  endif()
+
+  add_executable(poly_mat_interpolation_test src/test/matrix/poly_mat_interpolation_test.c)
   drsolve_target_common(poly_mat_interpolation_test)
   target_compile_options(poly_mat_interpolation_test PRIVATE -UNDEBUG)
   if(TARGET drsolve_static)
@@ -951,7 +958,7 @@ if(BUILD_TESTING)
   endforeach()
 
   if(TARGET pml)
-    add_executable(pml_prime_step4_test src/test/pml_prime_step4_test.c)
+    add_executable(pml_prime_step4_test src/test/matrix/pml_prime_step4_test.c)
     drsolve_target_common(pml_prime_step4_test)
     target_compile_options(pml_prime_step4_test PRIVATE -UNDEBUG)
     if(TARGET drsolve_static)
@@ -966,7 +973,7 @@ if(BUILD_TESTING)
       ENVIRONMENT "OMP_NUM_THREADS=1;DRSOLVE_PML_MUL=ntt;DRSOLVE_PML_DET_ROW_ORDER=degree")
   endif()
 
-  add_executable(quotient_solver_test src/test/quotient_solver_test.c)
+  add_executable(quotient_solver_test src/test/solver/quotient_solver_test.c)
   drsolve_target_common(quotient_solver_test)
   target_compile_options(quotient_solver_test PRIVATE -UNDEBUG)
   if(TARGET drsolve_static)
@@ -977,7 +984,7 @@ if(BUILD_TESTING)
     target_sources(quotient_solver_test PRIVATE ${MATH_SOURCES})
   endif()
   add_test(NAME drsolve_quotient COMMAND quotient_solver_test)
-  add_executable(quotient_extension_test src/test/quotient_extension_test.c)
+  add_executable(quotient_extension_test src/test/solver/quotient_extension_test.c)
   drsolve_target_common(quotient_extension_test)
   target_compile_options(quotient_extension_test PRIVATE -UNDEBUG)
   if(TARGET drsolve_static)
@@ -988,7 +995,7 @@ if(BUILD_TESTING)
     target_sources(quotient_extension_test PRIVATE ${MATH_SOURCES})
   endif()
   add_test(NAME drsolve_quotient_extension COMMAND quotient_extension_test)
-  add_executable(quotient_extension_sift_test src/test/quotient_extension_sift_test.c)
+  add_executable(quotient_extension_sift_test src/test/solver/quotient_extension_sift_test.c)
   drsolve_target_common(quotient_extension_sift_test)
   target_compile_options(quotient_extension_sift_test PRIVATE -UNDEBUG)
   if(TARGET drsolve_static)
@@ -1001,10 +1008,10 @@ if(BUILD_TESTING)
   add_test(NAME drsolve_quotient_extension_sift COMMAND quotient_extension_sift_test)
   if(Python3_Interpreter_FOUND)
     add_test(NAME drsolve_quotient_extension_cli
-      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/quotient_extension_cli_test.py
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/quotient_extension_cli_test.py
               $<TARGET_FILE:drsolve_exe>)
   endif()
-  add_executable(quotient_sift_test src/test/quotient_sift_test.c)
+  add_executable(quotient_sift_test src/test/solver/quotient_sift_test.c)
   drsolve_target_common(quotient_sift_test)
   target_compile_options(quotient_sift_test PRIVATE -UNDEBUG)
   if(TARGET drsolve_static)
@@ -1017,7 +1024,7 @@ if(BUILD_TESTING)
   add_test(NAME drsolve_quotient_sift COMMAND quotient_sift_test)
 
 
-  add_executable(dr_mpoly_test src/test/dr_mpoly_test.c)
+  add_executable(dr_mpoly_test src/test/field/dr_mpoly_test.c)
   drsolve_target_common(dr_mpoly_test)
   target_compile_options(dr_mpoly_test PRIVATE -UNDEBUG)
   if(TARGET drsolve_static)
@@ -1029,7 +1036,7 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME drsolve_native_mpoly COMMAND dr_mpoly_test)
 
-  add_executable(gf2n_sparse_mpoly_test src/test/gf2n_sparse_mpoly_test.c)
+  add_executable(gf2n_sparse_mpoly_test src/test/field/gf2n_sparse_mpoly_test.c)
   drsolve_target_common(gf2n_sparse_mpoly_test)
   target_compile_options(gf2n_sparse_mpoly_test PRIVATE -UNDEBUG)
   if(TARGET drsolve_static)
@@ -1041,7 +1048,7 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME drsolve_gf2n_sparse_mpoly COMMAND gf2n_sparse_mpoly_test)
 
-  add_executable(byte_poly_mat_det_test src/test/byte_poly_mat_det_test.c)
+  add_executable(byte_poly_mat_det_test src/test/matrix/byte_poly_mat_det_test.c)
   drsolve_target_common(byte_poly_mat_det_test)
   target_compile_options(byte_poly_mat_det_test PRIVATE -UNDEBUG)
   if(TARGET drsolve_static)
@@ -1053,7 +1060,7 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME drsolve_byte_poly_det COMMAND byte_poly_mat_det_test)
 
-  add_executable(mq_gf2n_test src/test/mq_gf2n_test.c)
+  add_executable(mq_gf2n_test src/test/mq/mq_gf2n_test.c)
   drsolve_target_common(mq_gf2n_test)
   target_compile_options(mq_gf2n_test PRIVATE -UNDEBUG)
   if(TARGET drsolve_static)
@@ -1067,7 +1074,7 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME drsolve_mq_gf2n COMMAND mq_gf2n_test)
 
-  add_executable(mq_fq_test src/test/mq_fq_test.c)
+  add_executable(mq_fq_test src/test/mq/mq_fq_test.c)
   drsolve_target_common(mq_fq_test)
   target_compile_options(mq_fq_test PRIVATE -UNDEBUG)
   if(TARGET drsolve_static)
@@ -1085,7 +1092,7 @@ if(BUILD_TESTING)
   set(DET_MINOR_TEST_BACKENDS
     src/determinant/unified_mpoly_det.c
     src/determinant/fq_mpoly_mat_det.c)
-  add_executable(det_minor_dp_test src/test/det_minor_dp.c ${DET_MINOR_TEST_BACKENDS})
+  add_executable(det_minor_dp_test src/test/matrix/det_minor_dp.c ${DET_MINOR_TEST_BACKENDS})
   target_compile_definitions(det_minor_dp_test PRIVATE DRSOLVE_DET_TESTING)
   drsolve_target_common(det_minor_dp_test)
   if(TARGET drsolve_static)
@@ -1101,13 +1108,13 @@ if(BUILD_TESTING)
 
   add_executable(component_tests
     src/test/component_tests.c
-    src/test/unified_mpoly_det_test.c
-    src/test/fq_nmod_roots_test.c
-    src/test/rational_system_solver_test.c
-    src/test/dixon_complexity_test.c
-    src/test/dixon_ideal_test.c
-    src/test/resultant_ideal_test.c
-    src/test/fq_sparse_interpolation_test.c
+    src/test/matrix/unified_mpoly_det_test.c
+    src/test/solver/fq_nmod_roots_test.c
+    src/test/solver/rational_system_solver_test.c
+    src/test/dixon/dixon_complexity_test.c
+    src/test/dixon/dixon_ideal_test.c
+    src/test/dixon/resultant_ideal_test.c
+    src/test/matrix/fq_sparse_interpolation_test.c
   )
   drsolve_target_common(component_tests)
   if(TARGET drsolve_static)

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "../dixon/dixon_flint.c"
+#include "../../dixon/dixon_flint.c"
 #include <assert.h>
 
 static void equal_poly(const unified_mpoly_struct *a, const unified_mpoly_struct *b)

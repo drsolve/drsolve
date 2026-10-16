@@ -2,7 +2,7 @@
 """Compare two --mq-quotient executables, including evaluation time and RSS.
 
 Requires a baseline executable saved before rebuilding, e.g.
-python3 src/test/mq_quotient_eval_bench.py --baseline /tmp/drsolve-before
+python3 src/test/benchmarks/mq_quotient_eval_bench.py --baseline /tmp/drsolve-before
 """
 import argparse
 import json

@@ -5,10 +5,10 @@
 #include <omp.h>
 #endif
 #include <flint/nmod_poly_mat.h>
-#include "../../pml_det/pml_det.h"
-#include "../../pml_det/src/nmod_poly_mat_multiply.h"
-#include "../../pml_det/src/nmod_mat_poly.h"
-#include "../../pml_det/src/nmod_poly_mat_utils.h"
+#include "../../../pml_det/pml_det.h"
+#include "../../../pml_det/src/nmod_poly_mat_multiply.h"
+#include "../../../pml_det/src/nmod_mat_poly.h"
+#include "../../../pml_det/src/nmod_poly_mat_utils.h"
 
 static void window_reference(nmod_poly_mat_t out, const nmod_poly_mat_t a,
                              const nmod_poly_mat_t b, slong start, slong count)

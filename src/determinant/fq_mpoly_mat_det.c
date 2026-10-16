@@ -1777,7 +1777,7 @@ static int mq_linear_mul(nmod_mpoly_t out, const nmod_mpoly_t a, const nmod_mpol
 }
 
 #ifdef DRSOLVE_MQ_SUM_TEST
-#include "../test/mq_sum_experiment.h"
+#include "../test/mq/mq_sum_experiment.h"
 #endif
 
 /* Retain FLINT's packed-exponent multiplication and compact immediately,

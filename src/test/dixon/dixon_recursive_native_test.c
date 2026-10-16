@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Compare every recursive coefficient against both the legacy arithmetic
  * and the independent cancellation determinant, including sparse inputs. */
-#include "../dixon/dixon_recursive.c"
+#include "../../dixon/dixon_recursive.c"
 #include <assert.h>
 #include <flint/ulong_extras.h>
 

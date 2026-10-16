@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Exercise private packing/proof helpers without exposing test library APIs. */
 #define DRSOLVE_MQ_SUM_TEST 1
-#include "../determinant/fq_mpoly_mat_det.c"
+#include "../../determinant/fq_mpoly_mat_det.c"
 #include <assert.h>
 
 static void check_packing(flint_rand_t state, slong n, ordering_t order)

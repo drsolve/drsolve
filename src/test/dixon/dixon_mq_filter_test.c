@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Private integration helpers are exercised without extending the public ABI. */
-#include "../dixon/dixon_flint.c"
+#include "../../dixon/dixon_flint.c"
 #include <assert.h>
 
 static unified_mpoly_struct *random_mq(slong n, const fq_nmod_ctx_t ctx, flint_rand_t state)

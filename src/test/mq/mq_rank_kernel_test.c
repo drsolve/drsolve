@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "../determinant/fq_mpoly_mat_det.c"
+#include "../../determinant/fq_mpoly_mat_det.c"
 #include <assert.h>
 
 static void verify(const mq_shared_support *previous, const mq_shared_support *shifts,

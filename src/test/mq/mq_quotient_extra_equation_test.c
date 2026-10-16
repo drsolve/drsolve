@@ -3,7 +3,7 @@
  * Quotient both tensor factors by additional equations; compare the new
  * recurrence with explicit projection of the original square core.
  * Full RREF deliberately permits parameter-dependent pivots. */
-#include "../determinant/mq_quotient_impl.h"
+#include "../../determinant/mq_quotient_impl.h"
 
 static void extra_specialize(ulong *q,const ulong *input,slong count,ulong value)
 {

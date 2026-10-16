@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Measure truncated Macaulay ranks, not a complete overdetermined solver.
  * Eight affine variables, eight/nine quadratics sharing the origin. */
-#include "../determinant/mq_quotient_impl.h"
+#include "../../determinant/mq_quotient_impl.h"
 
 static slong relation_rank(const grade *g,const grade *lower,const ulong *q,slong equations)
 {

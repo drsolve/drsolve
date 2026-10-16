@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compare complete CLI peak RSS (GNU time), runtime and resultants.
 
-Example: python3 src/test/mq_quotient_memory_bench.py --n 8 9 --threads 1 16
+Example: python3 src/test/benchmarks/mq_quotient_memory_bench.py --n 8 9 --threads 1 16
 Each measurement runs in a fresh process. RSS includes the runtime and libraries.
 """
 import argparse

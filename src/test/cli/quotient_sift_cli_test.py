@@ -7,7 +7,7 @@ import sys
 import tempfile
 
 binary = Path(sys.argv[1]).resolve()
-root = Path(__file__).resolve().parents[2]
+root = Path(__file__).resolve().parents[3]
 fixtures = root / 'examples' / 'sift'
 env = dict(os.environ, OMP_NUM_THREADS='4')
 

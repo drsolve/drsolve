@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #define main compact_fixture_main
-#include "dixon_mq_filter_test.c"
+#include "../dixon/dixon_mq_filter_test.c"
 #undef main
 
 static int direct_core_cases;

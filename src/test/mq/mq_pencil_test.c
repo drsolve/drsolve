@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #define main mq_filter_regression_main
-#include "dixon_mq_filter_test.c"
+#include "../dixon/dixon_mq_filter_test.c"
 #undef main
 #include "mq_pencil_det.h"
 #include <time.h>

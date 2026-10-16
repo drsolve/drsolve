@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include <assert.h>
 #include "dixon_interface_flint.h"
-#include "../dixon/dixon_pipeline.h"
+#include "../../dixon/dixon_pipeline.h"
 
 static void check_system(const char *polys, const fq_nmod_ctx_t ctx,
                          dixon_scalar_screen_status_t expected)

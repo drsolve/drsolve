@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Include the implementation to exercise the private repair routine without
    adding a test-only symbol to the library ABI. */
-#include "../dixon/dixon_flint.c"
+#include "../../dixon/dixon_flint.c"
 #include <assert.h>
 
 static int lu_backend;

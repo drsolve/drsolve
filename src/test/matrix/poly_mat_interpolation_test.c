@@ -3,7 +3,7 @@
 #include "dixon_flint.h"
 #include "fq_multivariate_interpolation.h"
 #include <assert.h>
-#include "../determinant/poly_mat_eval_batch.h"
+#include "../../determinant/poly_mat_eval_batch.h"
 #include <flint/ulong_extras.h>
 
 static void check(ulong prime, slong n, slong degree, flint_rand_t rng)

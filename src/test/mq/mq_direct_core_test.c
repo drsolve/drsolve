@@ -3,11 +3,11 @@
  * build the full candidate, but it still computes complementary coefficients;
  * it is NOT an O*(4^n) quotient-algebra construction or a solver backend. */
 #define main mq_filter_existing_main
-#include "dixon_mq_filter_test.c"
+#include "../dixon/dixon_mq_filter_test.c"
 #undef main
 /* Reuse the exact blocked solve and permutation primitives in this standalone
  * experiment, without changing the production Schur backend. */
-#include "../determinant/mq_poly_mat_det.c"
+#include "../../determinant/mq_poly_mat_det.c"
 #include "mq_pencil_det.h"
 
 typedef struct panel_source panel_source;
