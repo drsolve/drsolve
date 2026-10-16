@@ -4478,20 +4478,23 @@ random_done:
         }
     }
 
-    if (!comp_mode && !solve_mode && !ideal_str && !mq_quotient &&
+    if (!comp_mode && !ideal_str && !mq_quotient &&
         !resultant_method_explicit && !determinant_method_explicit &&
-        polys_str && vars_str) {
+        polys_str && (solve_mode || vars_str)) {
         int poly_count = count_comma_separated_items(polys_str);
-        int var_count = count_comma_separated_items(vars_str);
+        int var_count = vars_str ? count_comma_separated_items(vars_str) : 0;
 
-        if (!rational_mode && !large_prime_mode && poly_count == 2 && var_count == 1) {
+        /* The solver already uses bivariate_resultant for two variables;
+         * --subres itself is only supported in elimination mode. */
+        if (!solve_mode && !rational_mode && !large_prime_mode &&
+            poly_count == 2 && var_count == 1) {
             resultant_method = RESULTANT_METHOD_SUBRES;
             if (!silent_mode) {
                 printf("Hint: detected 2 equations with 1 elimination variable; auto-enabling --subres.\n");
             }
         } else if (!rational_mode && !large_prime_mode &&
                    (poly_count == 3) &&
-                   var_count == poly_count - 1) {
+                   (solve_mode || var_count == poly_count - 1)) {
             slong parsed_count = 0, total_vars = 0;
             char **poly_parts = split_string(polys_str, &parsed_count);
             char **names = NULL;

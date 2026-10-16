@@ -339,7 +339,7 @@ static int dixon_show_step_details(void)
 
 static int dixon_should_dump_small_matrix(slong nrows, slong ncols)
 {
-    return (g_dixon_verbose_level == 3 && nrows <= 3 && ncols <= 3) || (g_dixon_verbose_level >= 4 && nrows <= 100 && ncols <= 100);
+    return (g_dixon_verbose_level == 3 && nrows <= 2 && ncols <= 2) || (g_dixon_verbose_level >= 4 && nrows <= 100 && ncols <= 100);
 }
 
 static void dixon_print_basis_monomial(const monom_t *monom,
