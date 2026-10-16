@@ -19,20 +19,20 @@ with tempfile.TemporaryDirectory(prefix='drsolve-quotient-') as work:
         assert (result.returncode == 0) == success, result.stdout
         return result.stdout
 
-    text = run('-r', '[2]*8', '256', '-n', '7', '--quotient', '--seed', '123')
+    text = run('-r', '[2]*8', '256', '-n', '7', '--solver', 'quotient', '--seed', '123')
     assert 'GF(2^8) lookup tables' in text and 'certified dimension 1,' in text
     assert '[PASS]' in text and '1 rational point(s)' in text
     for q, backend in [('9', 'General finite field'), ('1062961', 'General finite field')]:
         text = run('x-t,y-t-1', q, '--solver', 'quotient', '--quotient-max-degree', '2')
         assert backend in text and 'x = t, y = t+1 [PASS]' in text
-    text = run('x-2,y-3', '257', '--quotient')
+    text = run('x-2,y-3', '257', '--solver', 'quotient')
     assert 'Quotient algebra over F_257:' in text and '[PASS]' in text
     for q in ['9', '256']:
-        text = run('x*y,0', q, '--quotient', '--quotient-max-degree', '3', success=False)
+        text = run('x*y,0', q, '--solver', 'quotient', '--quotient-max-degree', '3', success=False)
         assert 'Quotient closure incomplete: degree limit reached' in text
-        text = run('x*y,0', q, '--quotient', '--quotient-memory', '1', success=False)
+        text = run('x*y,0', q, '--solver', 'quotient', '--quotient-memory', '1', success=False)
         assert 'Quotient closure incomplete: memory budget reached' in text
-    text = run('x-t,y-t-1', '9', '--quotient', '--silent')
+    text = run('x-t,y-t-1', '9', '--solver', 'quotient', '--silent')
     assert 'Progress:' not in text and 'Field backend:' not in text
     text = run('-r', '[2]*7', '256', '-s', '--seed', '123')
     assert 'Solver: Dixon elimination (7 equations, 7 variables)' in text

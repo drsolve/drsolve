@@ -3264,6 +3264,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int fast_ksy_precondition = 0;
     long fast_ksy_constant_col = 0;
     int mq_quotient = 0, quotient_mq_enabled = 1;
+    int quotient_resultant = 0;
     int mq_step1_filter = 1;
     int mq_step1_shared = 1;
     int mq_step1_rank = 1;
@@ -3315,9 +3316,8 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             sift_degree=value;
             sift_limits_given=1; i++;
         } else if (strcmp(argv[i], "--quotient") == 0) {
-            solve_mode = 1;
-            solver_method = POLYNOMIAL_SOLVER_QUOTIENT;
-            solver_method_explicit = 1;
+            quotient_resultant = 1;
+            mq_quotient = 1; quotient_mq_enabled = 1;
         } else if (strcmp(argv[i], "--solver") == 0 && i + 1 < argc) {
             const char *method = argv[++i];
             if (!strcmp(method, "auto")) solver_method = POLYNOMIAL_SOLVER_AUTO;
@@ -3697,6 +3697,9 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             positional_args[positional_count++] = argv[i];
         }
     }
+
+    /* --quotient selects construction; only a solve option requests solving. */
+    if (quotient_resultant && !solve_mode) resultant_only_mode = 1;
 
     gf2n_mpoly_set_array_limit_k(array_limit_k);
 
@@ -4130,7 +4133,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     }
     if (solver_method == POLYNOMIAL_SOLVER_QUOTIENT &&
         (rational_mode || large_prime_mode)) {
-        fprintf(stderr, "Error: --quotient/--solver quotient requires a finite field of machine-word characteristic.\n");
+        fprintf(stderr, "Error: --solver quotient requires a finite field of machine-word characteristic.\n");
         goto cleanup_fail;
     }
     if ((solver_method_explicit || quotient_limits_given) &&
@@ -4803,8 +4806,7 @@ random_done:
                 redirect_fd_to_devnull(STDERR_FILENO, &orig_stderr);
             }
 
-            if (rand_generated && allvars_str && !specialize_vars_arg &&
-                solver_method == POLYNOMIAL_SOLVER_QUOTIENT) {
+            if (rand_generated && allvars_str && !specialize_vars_arg) {
                 /* Keep declared random variables even if sparsity removes
                  * them from every polynomial. Otherwise a positive-dimensional
                  * system could be mistaken for a smaller zero-dimensional one. */

@@ -2454,8 +2454,9 @@ static int quotient_square_mq(char **polys, slong count,
 static int solve_selected(char **polys, slong count, variable_info_t *vars,
                           slong n, polynomial_solutions_t *sols)
 {
-    int use_quotient = solver_method == POLYNOMIAL_SOLVER_QUOTIENT;
-    if (use_quotient && quotient_square_mq(polys,count,vars,n,sols->ctx)) {
+    int use_quotient = solver_method == POLYNOMIAL_SOLVER_QUOTIENT ||
+        (solver_method == POLYNOMIAL_SOLVER_AUTO && count > n);
+    if (solver_method != POLYNOMIAL_SOLVER_DIXON && quotient_square_mq(polys,count,vars,n,sols->ctx)) {
         int saved_mq=g_dixon_mq_quotient;
         polynomial_solver_method_t saved_method=solver_method;
         g_dixon_mq_quotient=1;

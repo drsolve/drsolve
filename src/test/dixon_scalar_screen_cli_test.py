@@ -66,7 +66,7 @@ with tempfile.TemporaryDirectory(prefix="drsolve-scalar-cli-") as work:
     assert polynomials(pure) != polynomials(planted)
     assert nonconstant_terms(pure) == nonconstant_terms(planted)
 
-    for extra in (["--quotient"], ["-s"], ["--vardeg", "-m", "3"]):
+    for extra in (["--solver", "quotient"], ["-s"], ["--vardeg", "-m", "3"]):
         args = ["-r", "[1]*2", "257", "--seed", "123", "--pure-random", *extra]
         stdout, saved = run(directory, "other_mode", args)
         assert "Planted solution:" not in saved

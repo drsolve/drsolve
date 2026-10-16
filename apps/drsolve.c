@@ -67,9 +67,9 @@ static void print_short_usage(const char *prog_name)
     printf("OTHER OPTIONS:\n");
     printf("  --method <n>      Determinant method selection (0:Expansion, 1:HNF, 2:Interpolation, 3:Sparse, 4:Bareiss, 5:Fdixon)\n");
     printf("  --step1, --step4  Override method <n> for specific algorithm steps\n");
-    printf("  --quotient  Use certified quotient algebra over a finite field\n");
+    printf("  --quotient  Use the new Bezoutian construction; without -s compute only the resultant\n");
     printf("  --sift  Remove extraneous resultant factors using quotient algebra (finite fields)\n");
-    printf("  --solver auto|dixon|quotient  Auto uses Dixon with quotient back substitution\n");
+    printf("  --solver auto|dixon|quotient  Auto uses Bezoutian for supported square MQ systems\n");
     printf("  --threads <num>   Set number of threads for parallel computation\n");
     printf("  --dixon           Use Dixon resultant (default)\n");
     printf("  --macaulay        Use Macaulay resultant\n");
@@ -116,7 +116,7 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    -> `-s` / `--solve` is optional here; `--solve-rational-only` keeps only exact rational solutions\n");
     printf("    -> `--specialize-vars a=0,b=1` fixes variables before solving; in extension fields integers use the generator expansion (F_2^k: 2=t, 3=1+t, 4=t^2)\n");
     printf("    -> Random n+1 equations in n variables default to Dixon scalar consistency screening\n");
-    printf("    -> Auto starts with Dixon and tries quotient on overdetermined finite-field back substitution; --solver dixon disables this\n");
+    printf("    -> -s uses Bezoutian for supported square MQ systems and quotient closure for overdetermined systems; --solver dixon forces Dixon\n");
     printf("    -> --solver auto|dixon|quotient selects the solver; quotient requires at least as many equations as variables\n");
     printf("    -> Quotient uses the new Bezoutian method for supported square MQ systems; overdetermined systems use quotient closure\n");
     printf("    -> --no-mq-quotient or explicit nonzero quotient limits retain quotient closure for square systems\n");
