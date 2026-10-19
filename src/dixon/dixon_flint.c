@@ -5276,6 +5276,8 @@ typedef struct {
     int core_ready;
     ulong core_factor;
     slong core_bound;
+    slong adaptive_size, adaptive_sigma;
+    slong *adaptive_rd, *adaptive_cd;
 } dixon_mq_step4_profile;
 
 typedef struct {
@@ -5313,6 +5315,7 @@ static void dixon_mq_step4_profile_clear(dixon_mq_step4_profile *p)
 {
     flint_free(p->rows); flint_free(p->cols);
     flint_free(p->rd); flint_free(p->cd);
+    flint_free(p->adaptive_rd); flint_free(p->adaptive_cd);
     memset(p, 0, sizeof(*p));
 }
 
@@ -5340,7 +5343,7 @@ static int dixon_mq_step4_eligible(const unified_mpoly_struct *polys, slong m, s
     return 1;
 }
 
-static void dixon_mq_step4_prepare(dixon_mq_step4_profile *out,
+static void dixon_mq_step4_prepare_predicted(dixon_mq_step4_profile *out,
                                   const monom_t *rm, const monom_t *cm,
                                   const slong *rows, const slong *cols,
                                   slong size, slong m, const long *degrees)
@@ -5396,14 +5399,35 @@ static void dixon_mq_step4_prepare(dixon_mq_step4_profile *out,
     out->size = size; out->h = h; out->sigma = sigma;
 }
 
+/* Preserve actual monomial weights even when the predicted Hilbert-layer
+ * quotas cannot be matched. Native prime-field Step 4 can certify a partial
+ * complement directly from the coefficient matrix. */
+static void dixon_mq_step4_prepare(dixon_mq_step4_profile *out,
+    const monom_t *rm, const monom_t *cm, const slong *rows,
+    const slong *cols, slong size, slong m, const long *degrees)
+{
+    dixon_mq_step4_prepare_predicted(out,rm,cm,rows,cols,size,m,degrees);
+    if(out->size || !size) return;
+    out->adaptive_size=size;out->adaptive_sigma=1;
+    for(slong i=0;i<=m;i++)out->adaptive_sigma+=degrees[i]-1;
+    out->adaptive_rd=flint_calloc(size,sizeof(slong));
+    out->adaptive_cd=flint_calloc(size,sizeof(slong));
+    for(slong i=0;i<size;i++)for(slong v=0;v<m;v++) {
+        out->adaptive_rd[i]+=rm[rows[i]].exp[v];
+        out->adaptive_cd[i]+=cm[cols[i]].exp[v];
+    }
+}
+
 #include "dixon_gf2n_schur.h"
 
 static int dixon_mq_step4_try(fq_nmod_poly_t det, const fq_nmod_poly_mat_t matrix,
                              const dixon_mq_step4_profile *p, const fq_nmod_ctx_t ctx)
 {
-    if (!p->size || p->size != matrix->r || matrix->r != matrix->c) return 0;
+    slong size=p->size ? p->size : p->adaptive_size;
+    if (!size || size != matrix->r || matrix->r != matrix->c) return 0;
     double start = get_wall_time();
     if (fq_nmod_ctx_degree(ctx) != 1) {
+        if(!p->size) return 0;
         fq_nmod_poly_mat_t core;
         fq_nmod_poly_mat_init(core, p->h, p->h, ctx);
         fq_nmod_t factor; fq_nmod_init(factor, ctx);
@@ -5420,34 +5444,42 @@ static int dixon_mq_step4_try(fq_nmod_poly_t det, const fq_nmod_poly_mat_t matri
     }
     ulong prime = fq_nmod_ctx_prime(ctx), factor = 0;
     nmod_poly_mat_t B, core;
-    nmod_poly_mat_init(B, p->size, p->size, prime);
+    nmod_poly_mat_init(B, size, size, prime);
     nmod_poly_mat_init(core, p->h, p->h, prime);
-    for (slong i = 0; i < p->size; i++) for (slong j = 0; j < p->size; j++) {
-        const fq_nmod_poly_struct *entry = fq_nmod_poly_mat_entry(matrix, p->rows[i], p->cols[j]);
+    for (slong i = 0; i < size; i++) for (slong j = 0; j < size; j++) {
+        const fq_nmod_poly_struct *entry = fq_nmod_poly_mat_entry(matrix, p->size ? p->rows[i] : i, p->size ? p->cols[j] : j);
         nmod_poly_struct *target = nmod_poly_mat_entry(B, i, j);
         for (slong k = 0; k < entry->length; k++)
             nmod_poly_set_coeff_ui(target, k, nmod_poly_get_coeff_ui(entry->coeffs + k, 0));
     }
-    int ok = nmod_poly_mat_mq_schur(core, &factor, B, p->rd, p->cd, p->h, p->sigma);
-    if (!ok) {
+    int adaptive=0;
+    int ok = p->size && nmod_poly_mat_mq_schur(core, &factor, B, p->rd, p->cd, p->h, p->sigma);
+    if (!ok && p->size) {
         ok = nmod_poly_mat_mq_schur_repair(core, &factor, B, p->rd, p->cd, p->h, p->sigma);
         if (ok) dixon_info_log("  Step 4 Schur: repaired complement by degree-layer pivoting\n");
+    }
+    if (!ok) {
+        ok=nmod_poly_mat_mq_schur_adaptive(core,&factor,B,
+            p->size ? p->rd : p->adaptive_rd,
+            p->size ? p->cd : p->adaptive_cd,
+            p->size ? p->sigma : p->adaptive_sigma);
+        adaptive=ok;
     }
     nmod_poly_mat_clear(B);
     if (ok) {
         fq_nmod_poly_mat_t small;
-        fq_nmod_poly_mat_init(small, p->h, p->h, ctx);
+        fq_nmod_poly_mat_init(small, core->r, core->r, ctx);
         fq_nmod_t coefficient;
         fq_nmod_init(coefficient, ctx);
-        for (slong i = 0; i < p->h; i++) for (slong j = 0; j < p->h; j++) {
+        for (slong i = 0; i < core->r; i++) for (slong j = 0; j < core->r; j++) {
             const nmod_poly_struct *entry = nmod_poly_mat_entry(core, i, j);
             for (slong k = 0; k < entry->length; k++) {
                 fq_nmod_set_ui(coefficient, nmod_poly_get_coeff_ui(entry, k), ctx);
                 fq_nmod_poly_set_coeff(fq_nmod_poly_mat_entry(small, i, j), k, coefficient, ctx);
             }
         }
-        dixon_info_log("  Step 4 Schur: %ld -> %ld, compression %.3fs\n",
-                       p->size, p->h, get_wall_time() - start);
+        dixon_info_log("  Step 4 %sSchur: %ld -> %ld, compression %.3fs\n",
+                       adaptive ? "adaptive " : "", size, core->r, get_wall_time() - start);
         fq_nmod_poly_mat_det_iter(det, small, ctx);
         if (p->odd) factor = prime - factor;
         fq_nmod_set_ui(coefficient, factor, ctx);
@@ -6645,7 +6677,7 @@ static void dixon_step4_resultant(unified_mpoly_struct *result,
         fq_nmod_poly_t det;
         fq_nmod_poly_init(det,polys[0].ctx);
         if (g_dixon_mq_step4_schur && !mq_profile->size && !mq_profile->core_ready)
-            dixon_info_log("  Step 4 Schur: no eligible complement profile; using original determinant backend\n");
+            dixon_info_log("  Step 4 Schur: no predicted complement profile; checking adaptive fallback\n");
         if (prime_matrix) dixon_mq_native_det(det,prime_matrix,mq_profile,polys[0].ctx);
         else if (!dixon_mq_step4_try(det,poly_matrix,mq_profile,polys[0].ctx))
             fq_nmod_poly_mat_det_iter(det,poly_matrix,polys[0].ctx);

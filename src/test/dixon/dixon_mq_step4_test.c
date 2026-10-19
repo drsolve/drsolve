@@ -116,9 +116,53 @@ static void check_general_degrees(const long *degrees, slong m,
     flint_free(p); flint_free(exp);
 }
 
+/* Exercise both matrix representations, including failed predicted profiles
+ * and the outer row-permutation sign in the adaptive retry. */
+static void check_adaptive_dispatch(void)
+{
+    fq_nmod_ctx_t ctx;fq_nmod_ctx_init_ui(ctx,101,1,"a");
+    fq_nmod_t coefficient;fq_nmod_init(coefficient,ctx);
+    slong rd[3]={0,1,2},cd[3]={0,2,1},identity[3]={0,1,2};
+    for(int mode=0;mode<3;mode++) {
+        nmod_poly_mat_t B,N;nmod_poly_mat_init(B,3,3,101);nmod_poly_mat_init(N,3,3,101);
+        fq_nmod_poly_mat_t F;fq_nmod_poly_mat_init(F,3,3,ctx);
+        for(slong i=0;i<3;i++)for(slong j=0;j<3;j++) {
+            for(slong k=0;k<=3-rd[i]-cd[j];k++) {
+                ulong v=1+7*i+3*j+k;
+                if(i==2 && j==2)v=0; /* Only one constant layer pivot exists. */
+                nmod_poly_set_coeff_ui(nmod_poly_mat_entry(B,i,j),k,v);
+                fq_nmod_set_ui(coefficient,v,ctx);
+                fq_nmod_poly_set_coeff(fq_nmod_poly_mat_entry(F,i,j),k,coefficient,ctx);
+            }
+        }
+        nmod_poly_t expected,got;nmod_poly_init(expected,101);nmod_poly_init(got,101);
+        nmod_poly_mat_det(expected,B);assert(!nmod_poly_is_zero(expected));
+        fq_nmod_poly_t result;fq_nmod_poly_init(result,ctx);
+        dixon_mq_step4_profile p={0};
+        slong swapped[3]={1,0,2},swapped_rd[3]={1,0,2};
+        if(mode==0) {p.adaptive_size=3;p.adaptive_sigma=3;p.adaptive_rd=rd;p.adaptive_cd=cd;}
+        else {p.size=3;p.h=1;p.sigma=3;p.rows=mode==2?swapped:identity;
+              p.cols=identity;p.rd=mode==2?swapped_rd:rd;p.cd=cd;p.odd=mode==2;}
+        assert(dixon_mq_step4_try(result,F,&p,ctx));
+        for(slong k=0;k<result->length;k++)
+            nmod_poly_set_coeff_ui(got,k,nmod_poly_get_coeff_ui(result->coeffs+k,0));
+        assert(nmod_poly_equal(expected,got));
+        nmod_poly_mat_set(N,B);dixon_mq_native_det(result,N,&p,ctx);
+        assert(N->r==2);nmod_poly_zero(got);
+        for(slong k=0;k<result->length;k++)
+            nmod_poly_set_coeff_ui(got,k,nmod_poly_get_coeff_ui(result->coeffs+k,0));
+        assert(nmod_poly_equal(expected,got));
+        fq_nmod_poly_clear(result,ctx);nmod_poly_clear(expected);nmod_poly_clear(got);
+        fq_nmod_poly_mat_clear(F,ctx);nmod_poly_mat_clear(N);nmod_poly_mat_clear(B);
+    }
+    fq_nmod_clear(coefficient,ctx);fq_nmod_ctx_clear(ctx);
+    puts("Adaptive Schur native/general dispatch and external signs PASS");
+}
+
 int main(void)
 {
     omp_set_num_threads(4);g_dixon_verbose_level=0;g_dixon_det_cache_limit=100000;
+    check_adaptive_dispatch();
     flint_rand_t state;flint_rand_init(state);flint_rand_set_seed(state,24092026,808);
     fq_nmod_ctx_t ctx;fq_nmod_ctx_init_ui(ctx,65537,1,"a");
     for(slong m=3;m<=5;m++) {

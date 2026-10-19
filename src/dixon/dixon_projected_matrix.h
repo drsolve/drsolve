@@ -14,6 +14,7 @@ static void dixon_mq_native_det(fq_nmod_poly_t out, nmod_poly_mat_t matrix,
                               const dixon_mq_step4_profile *p, const fq_nmod_ctx_t ctx)
 {
     ulong prime=fq_nmod_ctx_prime(ctx), factor=p->core_ready ? p->core_factor : 1;
+    int compressed = p->core_ready;
     slong interpolation_bound = p->core_ready ? p->core_bound : -1;
     if(p->size && p->size==matrix->r && matrix->r==matrix->c) {
         double start=get_wall_time();
@@ -41,6 +42,7 @@ static void dixon_mq_native_det(fq_nmod_poly_t out, nmod_poly_mat_t matrix,
             if (schur_ok) dixon_info_log("  Step 4 Schur: repaired complement by degree-layer pivoting\n");
         }
         if (schur_ok) {
+            compressed=1;
             factor=schur_factor;
             /* Each determinant product has degree <= h*sigma-sum(rd+cd).
              * Confirm the compressed entries retain these degree bounds. */
@@ -63,6 +65,22 @@ static void dixon_mq_native_det(fq_nmod_poly_t out, nmod_poly_mat_t matrix,
         }
         nmod_poly_mat_clear(core);
         if(p->odd) factor=prime-factor;
+    }
+    if (!compressed && g_dixon_mq_step4_schur &&
+        (p->size == matrix->r || p->adaptive_size == matrix->r)) {
+        const slong *rd=p->size ? p->rd : p->adaptive_rd;
+        const slong *cd=p->size ? p->cd : p->adaptive_cd;
+        slong sigma=p->size ? p->sigma : p->adaptive_sigma;
+        nmod_poly_mat_t core;nmod_poly_mat_init(core,0,0,prime);
+        ulong scale;double start=get_wall_time();slong before=matrix->r;
+        if(nmod_poly_mat_mq_schur_adaptive(core,&scale,matrix,rd,cd,sigma)) {
+            nmod_t mod;nmod_init(&mod,prime);factor=nmod_mul(factor,scale,mod);
+            nmod_poly_mat_swap(matrix,core);
+            dixon_info_log("  Step 4 adaptive Schur: %ld -> %ld, compression %.3fs\n",
+                           before,matrix->r,get_wall_time()-start);
+        } else dixon_info_log("  Step 4 adaptive Schur: no certified partial complement (%.3fs)\n",
+                             get_wall_time()-start);
+        nmod_poly_mat_clear(core);
     }
     nmod_poly_t det; nmod_poly_init(det,prime);
     int interpolated = fq_nmod_poly_mat_det_wants_interpolation() &&

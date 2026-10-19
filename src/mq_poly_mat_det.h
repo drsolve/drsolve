@@ -46,6 +46,13 @@ int nmod_poly_mat_mq_schur(nmod_poly_mat_t core, ulong *factor, const nmod_poly_
  * still hold; factor includes both additional permutation signs. */
 int nmod_poly_mat_mq_schur_repair(nmod_poly_mat_t core, ulong *factor, const nmod_poly_mat_t B,
                                  const slong *row_degree, const slong *col_degree, slong h, slong sigma);
+/* Adaptive partial complement, selected using actual degree-layer ranks.
+ * core may have any initial dimensions; success resizes it by swapping.
+ * det(B) = *factor * det(core). Failure preserves all inputs and outputs.
+ * core must not overlap B (including matrix windows). Prime fields only. */
+int nmod_poly_mat_mq_schur_adaptive(nmod_poly_mat_t core, ulong *factor,
+    const nmod_poly_mat_t B, const slong *row_degree,
+    const slong *col_degree, slong sigma);
 #ifdef __cplusplus
 }
 #endif

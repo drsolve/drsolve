@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "mq_poly_mat_det.h"
 #include <flint/nmod.h>
+#include <string.h>
 #include <flint/nmod_mat.h>
 #ifdef _OPENMP
 #include <omp.h>
@@ -296,6 +297,70 @@ int nmod_poly_mat_mq_schur_repair(nmod_poly_mat_t core, ulong *factor,
     }
     flint_free(pivots); flint_free(perm); flint_free(ci); flint_free(ri);
     flint_free(cols); flint_free(rows);
+    return ok;
+}
+
+/* Choose maximal independent constant pivots in each complementary degree
+ * layer. The negative degree bounds force a block triangular complement;
+ * each selected diagonal block is nonsingular by exact field LU. */
+int nmod_poly_mat_mq_schur_adaptive(nmod_poly_mat_t core, ulong *factor,
+    const nmod_poly_mat_t B, const slong *rd, const slong *cd, slong sigma)
+{
+    slong n = B->r;
+    if (!factor || !rd || !cd || core == B || n != B->c || sigma < 0 ||
+        core->modulus != B->modulus) return 0;
+    for (slong i=0;i<n;i++) {
+        if (rd[i]<0 || cd[i]<0 || rd[i]>sigma || cd[i]>sigma) return 0;
+        for (slong j=0;j<n;j++)
+            if (!nmod_poly_is_zero(nmod_poly_mat_entry(B,i,j)) &&
+                nmod_poly_degree(nmod_poly_mat_entry(B,i,j))>sigma-rd[i]-cd[j]) return 0;
+    }
+    slong *ri=flint_malloc(n*sizeof(slong)), *ci=flint_malloc(n*sizeof(slong));
+    slong *perm=flint_malloc(n*sizeof(slong));
+    slong *rows=flint_malloc(n*sizeof(slong)), *cols=flint_malloc(n*sizeof(slong));
+    unsigned char *usedr=flint_calloc(n,1), *usedc=flint_calloc(n,1);
+    slong count=0;
+    for (slong d=0;d<=sigma;d++) {
+        slong nr=0,nc=0;
+        for(slong i=0;i<n;i++) {
+            if(rd[i]==d)ri[nr++]=i;
+            if(cd[i]==sigma-d)ci[nc++]=i;
+        }
+        if(!nr || !nc)continue;
+        nmod_mat_t block;nmod_mat_init(block,nr,nc,B->modulus);
+        for(slong i=0;i<nr;i++)for(slong j=0;j<nc;j++)
+            nmod_mat_entry(block,i,j)=nmod_poly_get_coeff_ui(nmod_poly_mat_entry(B,ri[i],ci[j]),0);
+        slong rank=nmod_mat_lu(perm,block,0), next=0;
+        for(slong i=0;i<rank;i++) {
+            while(next<nc && !nmod_mat_entry(block,i,next))next++;
+            rows[count]=ri[perm[i]];cols[count]=ci[next++];
+            usedr[rows[count]]=usedc[cols[count]]=1;count++;
+        }
+        nmod_mat_clear(block);
+    }
+    int ok=0;
+    if(count) {
+        slong h=n-count;
+        memmove(rows+h,rows,count*sizeof(slong));memmove(cols+h,cols,count*sizeof(slong));
+        slong r=0,c=0;
+        for(slong i=0;i<n;i++) {if(!usedr[i])rows[r++]=i;if(!usedc[i])cols[c++]=i;}
+        slong *rw=flint_malloc(n*sizeof(slong)),*cw=flint_malloc(n*sizeof(slong));
+        nmod_poly_mat_t ordered,candidate;
+        nmod_poly_mat_init(ordered,n,n,B->modulus);nmod_poly_mat_init(candidate,h,h,B->modulus);
+        for(slong i=0;i<n;i++) {
+            rw[i]=rd[rows[i]];cw[i]=cd[cols[i]];
+            for(slong j=0;j<n;j++)nmod_poly_set(nmod_poly_mat_entry(ordered,i,j),nmod_poly_mat_entry(B,rows[i],cols[j]));
+        }
+        ulong scale;
+        ok=nmod_poly_mat_mq_schur(candidate,&scale,ordered,rw,cw,h,sigma);
+        if(ok) {
+            if(mq_permutation_odd(rows,n,0)^mq_permutation_odd(cols,n,0))scale=B->modulus-scale;
+            nmod_poly_mat_swap(core,candidate);*factor=scale;
+        }
+        nmod_poly_mat_clear(candidate);nmod_poly_mat_clear(ordered);flint_free(rw);flint_free(cw);
+    }
+    flint_free(usedr);flint_free(usedc);flint_free(rows);flint_free(cols);
+    flint_free(ri);flint_free(ci);flint_free(perm);
     return ok;
 }
 

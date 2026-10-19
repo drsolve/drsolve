@@ -74,8 +74,58 @@ static void check_degree_blocks(ulong prime)
     flint_rand_clear(rng);
 }
 
+static void check_adaptive(void)
+{
+    flint_rand_t state;flint_rand_init(state);
+    const ulong primes[]={2,101,1073741831};
+    for(int trial=0;trial<90;trial++) {
+        slong n=3+trial%8, sigma=trial%9==0 ? 0 : 6;
+        slong rd[10],cd[10];
+        nmod_poly_mat_t B,saved,core,old;
+        nmod_poly_mat_init(B,n,n,primes[trial%3]);
+        nmod_poly_mat_init(saved,n,n,primes[trial%3]);
+        nmod_poly_mat_init(core,1,1,primes[trial%3]);
+        nmod_poly_mat_init(old,1,1,primes[trial%3]);
+        nmod_poly_one(nmod_poly_mat_entry(core,0,0));nmod_poly_mat_set(old,core);
+        for(slong i=0;i<n;i++) {
+            rd[i]=sigma ? n_randint(state,7) : 0;
+            cd[i]=sigma ? n_randint(state,7) : 0;
+        }
+        for(slong i=0;i<n;i++)for(slong j=0;j<n;j++) {
+            slong degree=sigma-rd[i]-cd[j];
+            for(slong k=0;k<=degree;k++) {
+                /* Include completely singular degree-diagonal layers. */
+                ulong v=(trial%4==0 && degree==0) ? 0 : n_randint(state,primes[trial%3]);
+                nmod_poly_set_coeff_ui(nmod_poly_mat_entry(B,i,j),k,v);
+            }
+        }
+        nmod_poly_mat_set(saved,B);
+        ulong factor=42;
+        int ok=nmod_poly_mat_mq_schur_adaptive(core,&factor,B,rd,cd,sigma);
+        assert(nmod_poly_mat_equal(B,saved));
+        if(ok) {
+            assert(core->r<n);
+            nmod_poly_t expected,got;nmod_poly_init(expected,B->modulus);nmod_poly_init(got,B->modulus);
+            nmod_poly_mat_det(expected,B);nmod_poly_mat_det(got,core);
+            nmod_poly_scalar_mul_nmod(got,got,factor);
+            assert(nmod_poly_equal(expected,got));
+            nmod_poly_clear(expected);nmod_poly_clear(got);
+        } else assert(factor==42 && nmod_poly_mat_equal(core,old));
+        /* Invalid degree metadata must fail without touching output. */
+        nmod_poly_set_coeff_ui(nmod_poly_mat_entry(B,0,0),sigma+1,1);
+        nmod_poly_mat_clear(old);nmod_poly_mat_init(old,core->r,core->c,B->modulus);nmod_poly_mat_set(old,core);
+        ulong before=factor;
+        assert(!nmod_poly_mat_mq_schur_adaptive(core,&factor,B,rd,cd,sigma));
+        assert(factor==before && nmod_poly_mat_equal(core,old));
+        nmod_poly_mat_clear(B);nmod_poly_mat_clear(saved);nmod_poly_mat_clear(core);nmod_poly_mat_clear(old);
+    }
+    flint_rand_clear(state);
+    puts("Adaptive Schur: randomized exact determinants and rejection preservation PASS");
+}
+
 int main(void)
 {
+    check_adaptive();
     ulong primes[] = {2, 3, 257, 65537};
     for (slong z = 0; z < 4; z++)
     {
