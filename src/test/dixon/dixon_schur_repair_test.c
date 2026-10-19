@@ -410,8 +410,71 @@ static void check_candidate_compression(void)
     }
 }
 
+static void check_schur_seed(void)
+{
+    flint_rand_t state;flint_rand_init(state);flint_rand_set_seed(state,208,779);
+    for(int trial=0;trial<30;trial++) {
+        slong nr=5+trial%3,nc=4+trial%4,m=1;
+        fq_nmod_ctx_t ctx;fq_nmod_ctx_init_ui(ctx,trial%2 ? 101 : 2,1,"a");
+        ulong prime=fq_nmod_ctx_prime(ctx);
+        monom_t *rm=flint_calloc(nr,sizeof(monom_t)),*cm=flint_calloc(nc,sizeof(monom_t));
+        slong *rd=flint_malloc(nr*sizeof(slong)),*cd=flint_malloc(nc*sizeof(slong));
+        for(slong i=0;i<nr;i++){rd[i]=i%4;rm[i].exp=rd+i;}
+        for(slong j=0;j<nc;j++){cd[j]=(j+1)%4;cm[j].exp=cd+j;}
+        unified_mpoly_struct ***matrix=flint_malloc(nr*sizeof(*matrix));
+        fq_nmod_t coeff,params[1],value;
+        fq_nmod_init(coeff,ctx);fq_nmod_init(params[0],ctx);fq_nmod_init(value,ctx);
+        slong zero=0;
+        for(slong i=0;i<nr;i++) {
+            matrix[i]=flint_calloc(nc,sizeof(**matrix));
+            for(slong j=0;j<nc;j++) {
+                matrix[i][j]=flint_calloc(1,sizeof(unified_mpoly_struct));
+                dr_mpoly_init(matrix[i][j],0,1,ctx);
+                for(slong d=0;d<=3-rd[i]-cd[j];d++) {
+                    fq_nmod_set_ui(coeff,n_randint(state,prime),ctx);
+                    dr_mpoly_add_term(matrix[i][j],&zero,&d,coeff);
+                }
+            }
+        }
+        long degrees[2]={2,2};slong *rows=NULL,*cols=NULL,size=-1;
+        int ok=dixon_schur_seed_select(matrix,nr,nc,rm,cm,m,degrees,ctx,&rows,&cols,&size);
+        if(ok) {
+            slong full_rank=0,selected_rank=0;
+            for(slong point=0;point<2;point++) {
+                fq_nmod_set_ui(params[0],(point+1)%prime,ctx);
+                nmod_mat_t full,selected;nmod_mat_init(full,nr,nc,prime);nmod_mat_init(selected,size,size,prime);
+                for(slong i=0;i<nr;i++)for(slong j=0;j<nc;j++) {
+                    evaluate_dr_mpoly_at_params(value,matrix[i][j],params);
+                    nmod_mat_entry(full,i,j)=nmod_poly_get_coeff_ui(value,0);
+                }
+                for(slong i=0;i<size;i++)for(slong j=0;j<size;j++)
+                    nmod_mat_entry(selected,i,j)=nmod_mat_entry(full,rows[i],cols[j]);
+                full_rank=FLINT_MAX(full_rank,nmod_mat_rank(full));
+                selected_rank=FLINT_MAX(selected_rank,nmod_mat_rank(selected));
+                nmod_mat_clear(full);nmod_mat_clear(selected);
+            }
+            assert(size==full_rank && size==selected_rank);
+        } else assert(!rows && !cols && size==-1);
+        flint_free(rows);flint_free(cols);
+        /* A term beyond the budget must reject without publishing indices. */
+        slong bad=4;fq_nmod_one(coeff,ctx);dr_mpoly_add_term(matrix[0][0],&zero,&bad,coeff);
+        rows=cols=NULL;size=-1;
+        assert(!dixon_schur_seed_select(matrix,nr,nc,rm,cm,m,degrees,ctx,&rows,&cols,&size));
+        assert(!rows && !cols && size==-1);
+        for(slong i=0;i<nr;i++) {
+            for(slong j=0;j<nc;j++){dr_mpoly_clear(matrix[i][j]);flint_free(matrix[i][j]);}
+            flint_free(matrix[i]);
+        }
+        flint_free(matrix);flint_free(rm);flint_free(cm);flint_free(rd);flint_free(cd);
+        fq_nmod_clear(value,ctx);fq_nmod_clear(params[0],ctx);fq_nmod_clear(coeff,ctx);fq_nmod_ctx_clear(ctx);
+    }
+    flint_rand_clear(state);
+    puts("Schur-first: rectangular rank completion, characteristic two and rejection PASS");
+}
+
 int main(void)
 {
+    check_schur_seed();
     check_candidate_compression();
     fq_nmod_ctx_t ctx;
     fmpz_t prime;

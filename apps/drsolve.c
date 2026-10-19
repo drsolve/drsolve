@@ -67,7 +67,8 @@ static void print_short_usage(const char *prog_name)
     printf("OTHER OPTIONS:\n");
     printf("  --method <n>      Determinant method selection (0:Expansion, 1:HNF, 2:Interpolation, 3:Sparse, 4:Bareiss, 5:Fdixon)\n");
     printf("  --step1, --step4  Override method <n> for specific algorithm steps\n");
-    printf("  --quotient  Use the new Bezoutian construction; without -s compute only the resultant\n");
+    printf("  --quotient        Use Dixon quotient / Bezoutian construction (automatic for supported MQ)\n");
+    printf("  --no-quotient     Disable Dixon quotient / Bezoutian construction\n");
     printf("  --sift  Remove extraneous resultant factors using quotient algebra (finite fields)\n");
     printf("  --solver auto|dixon|quotient  Auto uses Bezoutian for supported square MQ systems\n");
     printf("  --threads <num>   Set number of threads for parallel computation\n");
@@ -119,7 +120,7 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    -> -s uses Bezoutian for supported square MQ systems and quotient closure for overdetermined systems; --solver dixon forces Dixon\n");
     printf("    -> --solver auto|dixon|quotient selects the solver; quotient requires at least as many equations as variables\n");
     printf("    -> Quotient uses the new Bezoutian method for supported square MQ systems; overdetermined systems use quotient closure\n");
-    printf("    -> --no-mq-quotient or explicit nonzero quotient limits retain quotient closure for square systems\n");
+    printf("    -> --no-quotient (alias --no-mq-quotient) or explicit nonzero quotient limits retain quotient closure for square systems\n");
     printf("    -> Add --sift to remove extraneous resultant factors using quotient algebra (finite fields)\n");
     printf("    -> No degree or memory budget by default; optional --quotient-max-degree <D> and --quotient-memory <MiB> (0 = unlimited)\n");
     printf("    -> Quotient limits cause AUTO to fall back to Dixon; explicit quotient returns an incomplete-solve error\n");
@@ -286,13 +287,14 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    -> Available methods: 0.Minor expansion; 1.HNF; 2.Interpolation; 3.Sparse interpolation; 4.Bareiss; 5.Recursive Dixon construction; 6.Balanced split Laplace (experimental)\n");
     printf("    -> Finite-field elimination of two variables from three equations in three variables defaults to method 5; explicit method options take precedence\n");
     printf("    -> --method sets both step 1 and step 4 for backward compatibility\n");
-    printf("    -> --mq-quotient enables experimental Macaulay/Bezoutian quotient construction (prime-field square quadratic systems, dynamic dimensions); unsupported inputs fall back to Dixon\n");
+    printf("    -> Dixon quotient / Bezoutian is automatic for supported prime-field square MQ systems (3+ variables); --no-quotient disables it; --quotient / --mq-quotient explicitly enable it; rejected inputs fall back to Dixon\n");
     printf("    -> MQ direct indices for eligible projected shared DP are default on; --no-mq-step1-rank disables them\n");
     printf("    -> MQ shared-index Step 1 DP is default on when eligible; --no-mq-step1-shared disables it\n");
     printf("    -> --mq-step1-pencil enables experimental MQ degree recurrence (default off); --no-mq-step1-pencil disables it\n");
     printf("    -> --mq-step1-simplex enables parallel total-degree MQ interpolation (default off); --no-mq-step1-simplex disables it\n");
     printf("    -> --no-mq-step1-filter disables the default Step 1 coefficient filtering for prime and extension fields, single-parameter MQ systems\n");
     printf("    -> --mq-step4-schur enables checked Schur compression for single-parameter systems of any degree over prime and extension fields, automatic/HNF Step 4 (default on); --no-mq-step4-schur disables it\n");
+    printf("    -> Complement-first minor selection is default on for eligible prime-field systems; --no-schur-seed disables it while retaining Step 4 Schur compression\n");
     printf("    -> --fq-det-method (auto|hnf|iter|interp) controls the prime-field univariate polynomial-matrix determinant backend used in fq_poly_mat_det\n");
     printf("    -> --cache limits live minor DP entries (method 0); smaller subproblems are used when full layers do not fit; 0 disables DP\n");
     printf("    -> --array-limit-k <k> caps optimized extension-field array multiplication tables at 2^k entries (0-62)\n");
@@ -379,6 +381,7 @@ static int validate_cli_options(int argc, char *argv[])
         {"step3-verify-second", no_argument, NULL, OPT_FLAG},
         {"no-step3-verify-second", no_argument, NULL, OPT_FLAG},
         {"mq-quotient", no_argument, NULL, OPT_FLAG},
+        {"no-quotient", no_argument, NULL, OPT_FLAG},
         {"no-mq-quotient", no_argument, NULL, OPT_FLAG},
         {"mq-step1-rank", no_argument, NULL, OPT_FLAG},
         {"no-mq-step1-rank", no_argument, NULL, OPT_FLAG},
@@ -391,6 +394,7 @@ static int validate_cli_options(int argc, char *argv[])
         {"no-mq-step1-filter", no_argument, NULL, OPT_FLAG},
         {"mq-step4-schur", no_argument, NULL, OPT_FLAG},
         {"no-mq-step4-schur", no_argument, NULL, OPT_FLAG},
+        {"no-schur-seed", no_argument, NULL, OPT_FLAG},
         {"step1", required_argument, NULL, OPT_FLAG},
         {"step4", required_argument, NULL, OPT_FLAG},
         {"threads", required_argument, NULL, OPT_FLAG},

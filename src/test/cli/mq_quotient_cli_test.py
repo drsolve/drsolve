@@ -30,14 +30,16 @@ def main():
                 cmd = ["./drsolve", *arguments, "--time", "--threads", "16", "-o", str(path)]
                 if enabled:
                     cmd.append("--mq-quotient")
+                else:
+                    cmd.append("--no-quotient")
                 p = subprocess.run(cmd, env=env, capture_output=True, text=True, check=True, timeout=120)
                 log = p.stdout + p.stderr
                 (out / (stem + ".log")).write_text(log)
                 if enabled:
-                    assert ("  Core:" in log) == accepted, log
+                    assert ("; normalize to monic." in log) == accepted, log
                     assert ("MQ quotient fallback:" in log) != accepted, log
                 else:
-                    assert "Experimental Macaulay quotient" not in log
+                    assert "Experimental Dixon resultant via quotient-space Bezoutian" not in log
                 results.append(path.read_text().split("Resultant:\n", 1)[1].splitlines()[0])
                 total = next(line for line in log.splitlines() if line.startswith("Total -"))
                 times.append(float(re.search(r"Wall time: ([0-9.]+)", total)[1]))

@@ -97,6 +97,8 @@ extern int g_dixon_mq_step1_rank;
 extern int g_dixon_mq_step1_simplex;
 extern int g_dixon_mq_step1_pencil;
 extern int g_dixon_mq_step4_schur;
+extern int g_dixon_schur_seed;
+/* 0: disabled, 1: explicit attempt, -1: automatic supported MQ inputs. */
 extern int g_dixon_mq_quotient;
 int dixon_try_mq_quotient_resultant(unified_mpoly_struct *result,
     const unified_mpoly_struct *polys, slong nvars, slong npars);

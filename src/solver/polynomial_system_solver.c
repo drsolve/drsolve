@@ -2462,7 +2462,7 @@ static int solve_selected(char **polys, slong count, variable_info_t *vars,
         g_dixon_mq_quotient=1;
         /* Reuse root extraction and overdetermined quotient back substitution. */
         solver_method=POLYNOMIAL_SOLVER_AUTO;
-        solver_progress("Solver: Macaulay quotient / Bezoutian (%ld equations, %ld variables)",count,n);
+        solver_progress("Solver: Dixon quotient / Bezoutian (%ld equations, %ld variables)",count,n);
         int ok=solve_by_elimination_enhanced(polys,count,vars,n,sols);
         solver_method=saved_method;g_dixon_mq_quotient=saved_mq;
         return ok;

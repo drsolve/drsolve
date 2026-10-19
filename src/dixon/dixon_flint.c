@@ -54,6 +54,7 @@ int g_dixon_mq_step1_rank = 1;
 int g_dixon_mq_step1_simplex = 0;
 int g_dixon_mq_step1_pencil = 0;
 int g_dixon_mq_step4_schur = 1;
+int g_dixon_schur_seed = 1;
 int g_dixon_mq_quotient = 0;
 int g_dixon_step3_second_verification = 0;
 slong g_dixon_det_cache_limit = 1024;
@@ -5725,12 +5726,19 @@ static void dixon_select_scalar(unified_mpoly_struct ***matrix, slong nr, slong 
     flint_free(perm); fq_nmod_mat_clear(a,ctx);
 }
 
+#include "dixon_schur_seed.h"
+
 void dixon_select_submatrix(unified_mpoly_struct ***full_matrix, slong nx_monoms, slong ndual_monoms,
     const monom_t *x_monoms, const monom_t *dual_monoms, slong nvars, slong npars,
     const long *degrees, slong num_polys, slong ksy_constant_col,
     const fq_nmod_ctx_t ctx, slong **selected_rows, slong **selected_cols, slong *size)
 {
     *selected_rows=NULL; *selected_cols=NULL; *size=0;
+    if (g_dixon_mq_step4_schur && npars==1 && ksy_constant_col<0 &&
+        degrees && num_polys==nvars+1 && g_dixon_schur_seed &&
+        dixon_schur_seed_select(full_matrix,nx_monoms,ndual_monoms,
+            x_monoms,dual_monoms,nvars,degrees,ctx,
+            selected_rows,selected_cols,size)) return;
     if (npars == 0 && dixon_scalar_screen_active()) {
         dixon_screen_scalar(full_matrix, nx_monoms, ndual_monoms, dual_monoms, nvars, ctx);
         return;
@@ -6736,21 +6744,41 @@ int dixon_try_mq_quotient_resultant(unified_mpoly_struct *result,
     const unified_mpoly_struct *polys,slong nvars,slong npars)
 {
     if(!g_dixon_mq_quotient)return 0;
+    /* Automatic selection only attempts supported square MQ inputs. Explicit
+     * --quotient retains the detailed rejection/fallback diagnostics. */
+    if(g_dixon_mq_quotient < 0) {
+        if(npars!=1 || nvars<2 || fq_nmod_ctx_degree(polys[0].ctx)!=1 ||
+           polys[0].field_id!=FIELD_ID_NMOD || g_field_equation_reduction ||
+           g_field_equation_final_only ||
+           fq_nmod_ctx_modulus(polys[0].ctx)->mod.n <= (ulong)(nvars+2))return 0;
+        for(slong f=0;f<=nvars;f++) {
+            slong max_degree=0;
+            if(polys[f].nvars!=nvars || polys[f].npars!=1)return 0;
+            for(slong t=0;t<dr_mpoly_length(polys+f);t++) {
+                DR_MPOLY_TERM(term,polys+f,t);
+                slong degree=term.par_exp[0];
+                if(degree>2)return 0;
+                for(slong v=0;v<nvars;v++) {
+                    if(term.var_exp[v]>2)return 0;
+                    degree+=term.var_exp[v];
+                    if(degree>2)return 0;
+                }
+                max_degree=FLINT_MAX(max_degree,degree);
+            }
+            if(max_degree!=2)return 0;
+        }
+    }
     mq_quotient_stats stats;
     int workers=1;
 #ifdef _OPENMP
     workers=omp_get_max_threads();
 #endif
-    dixon_info_log("\nExperimental Macaulay quotient / Bezoutian method\n");
+    dixon_info_log("\nExperimental Dixon resultant via quotient-space Bezoutian\n");
     int ok=dr_mq_quotient_resultant(result,polys,nvars,npars,workers,&stats);
     if(!ok) {
         dixon_info_log("  MQ quotient fallback: %s; using Dixon path\n",stats.reason);
         return 0;
     }
-    dixon_info_log("  Core: %ld x %ld, evaluation points: %ld\n",stats.core_size,stats.core_size,stats.samples);
-    if(g_dixon_show_step_timing)
-        dixon_info_log("  Shared decomposition %.6fs, evaluations %.6fs, interpolation %.6fs, determinant %.6fs (wall)\n",
-            stats.leading,stats.evaluation,stats.interpolation,stats.determinant);
     dixon_maybe_print_step_time("MQ quotient resultant",stats.total);
     return 1;
 }

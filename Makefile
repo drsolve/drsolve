@@ -1202,3 +1202,5 @@ $(BUILD_DIR)/mq_overdetermined_rank_test: $(SRC_DIR)/test/mq/mq_overdetermined_r
 
 $(BUILD_DIR)/mq_quotient_extra_equation_test: $(SRC_DIR)/test/mq/mq_quotient_extra_equation_test.c $(SRC_DIR)/determinant/mq_quotient_impl.h $(SRC_DIR)/determinant/mq_quotient_normal_forms.h $(SRC_DIR)/determinant/mq_quotient_accumulate.h $(SRC_DIR)/determinant/mq_quotient_packed.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+$(BUILD_DIR)/dixon_schur_repair_test: $(SRC_DIR)/dixon/dixon_schur_seed.h

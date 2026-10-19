@@ -3263,7 +3263,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int determinant_method_explicit = 0;
     int fast_ksy_precondition = 0;
     long fast_ksy_constant_col = 0;
-    int mq_quotient = 0, quotient_mq_enabled = 1;
+    int mq_quotient = -1, quotient_mq_enabled = 1; /* -1: automatic MQ selection */
     int quotient_resultant = 0;
     int mq_step1_filter = 1;
     int mq_step1_shared = 1;
@@ -3271,6 +3271,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int mq_step1_simplex = 0;
     int mq_step1_pencil = 0;
     int mq_step4_schur = 1;
+    int schur_seed = 1;
     int step3_verify_second = 0;
     fq_nmod_poly_det_method_t fq_det_method = FQ_NMOD_POLY_DET_METHOD_AUTO;
     int fq_det_method_explicit = 0;
@@ -3547,7 +3548,8 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             fast_ksy_precondition = 0;
         } else if (strcmp(argv[i], "--mq-quotient") == 0) {
             mq_quotient = 1; quotient_mq_enabled = 1;
-        } else if (strcmp(argv[i], "--no-mq-quotient") == 0) {
+        } else if (strcmp(argv[i], "--no-mq-quotient") == 0 ||
+                   strcmp(argv[i], "--no-quotient") == 0) {
             mq_quotient = 0; quotient_mq_enabled = 0;
         } else if (strcmp(argv[i], "--mq-step1-rank") == 0) {
             mq_step1_rank = 1;
@@ -3567,6 +3569,8 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             mq_step1_simplex = 0;
         } else if (strcmp(argv[i], "--mq-step4-schur") == 0) {
             mq_step4_schur = 1;
+        } else if (strcmp(argv[i], "--no-schur-seed") == 0) {
+            schur_seed = 0;
         } else if (strcmp(argv[i], "--no-mq-step4-schur") == 0) {
             mq_step4_schur = 0;
         } else if (strcmp(argv[i], "--no-mq-step1-filter") == 0) {
@@ -4478,7 +4482,7 @@ random_done:
         }
     }
 
-    if (!comp_mode && !ideal_str && !mq_quotient &&
+    if (!comp_mode && !ideal_str && mq_quotient <= 0 &&
         !resultant_method_explicit && !determinant_method_explicit &&
         polys_str && (solve_mode || vars_str)) {
         int poly_count = count_comma_separated_items(polys_str);
@@ -4588,12 +4592,19 @@ random_done:
     g_dixon_fast_use_ksy_precondition = fast_ksy_precondition;
     g_dixon_fast_ksy_constant_col = fast_ksy_constant_col;
     g_dixon_mq_quotient = mq_quotient;
+    if (mq_quotient < 0 && (resultant_method_explicit || determinant_method_explicit ||
+                           solver_method == POLYNOMIAL_SOLVER_DIXON ||
+                           quotient_degree || quotient_memory)) {
+        g_dixon_mq_quotient = 0;
+        quotient_mq_enabled = 0;
+    }
     g_dixon_mq_step1_filter = mq_step1_filter;
     g_dixon_mq_step1_shared = mq_step1_shared;
     g_dixon_mq_step1_rank = mq_step1_rank;
     g_dixon_mq_step1_simplex = mq_step1_simplex;
     g_dixon_mq_step1_pencil = mq_step1_pencil;
     g_dixon_mq_step4_schur = mq_step4_schur;
+    g_dixon_schur_seed = schur_seed;
     g_dixon_step3_second_verification = step3_verify_second;
     g_dixon_det_cache_limit = det_cache_limit;
     fq_nmod_poly_mat_det_set_method(fq_det_method);

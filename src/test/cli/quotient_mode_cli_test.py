@@ -20,7 +20,7 @@ with tempfile.TemporaryDirectory(prefix='quotient-mode-') as directory:
         return log, output.read_text()
 
     log, result = run('--quotient')
-    assert 'Experimental Macaulay quotient / Bezoutian' in log
+    assert 'Experimental Dixon resultant via quotient-space Bezoutian' in log
     assert 'Resultant:\n' in result
     assert 'Roots in ' not in log + result
     assert 'Solution set ' not in result
@@ -28,11 +28,26 @@ with tempfile.TemporaryDirectory(prefix='quotient-mode-') as directory:
     extract = lambda text: text.split('Resultant:\n', 1)[1].splitlines()[0]
     assert extract(result) == extract(reference)
 
+    log, automatic = run()
+    assert 'Experimental Dixon resultant via quotient-space Bezoutian' in log
+    assert extract(automatic) == extract(reference)
+    for options in [('--no-quotient',), ('--no-mq-quotient',),
+                    ('--quotient', '--no-quotient'), ('--step4', '1')]:
+        log, plain = run(*options)
+        assert 'Experimental Dixon resultant via quotient-space Bezoutian' not in log
+        assert extract(plain) == extract(reference)
+    log, _ = run('--no-quotient', '--quotient')
+    assert 'Experimental Dixon resultant via quotient-space Bezoutian' in log
+
     log, result = run('-s')
-    assert 'Solver: Macaulay quotient / Bezoutian' in log
+    assert 'Solver: Dixon quotient / Bezoutian' in log
     assert '[PASS]' in log and 'Found 2 solution set(s)' in log
     points = lambda text: set(re.findall(r'x0 = [^\n]*\[PASS\]', text))
     expected = points(log)
+    log, _ = run('-s', '--no-quotient')
+    assert 'Experimental Dixon resultant via quotient-space Bezoutian' not in log
+    assert 'Solver: Dixon quotient / Bezoutian' not in log
+    assert points(log) == expected
     for options in [('--quotient', '-s'), ('-s', '--quotient'),
                     ('--solver', 'dixon', '--mq-quotient')]:
         log, _ = run(*options)

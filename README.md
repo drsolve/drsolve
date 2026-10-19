@@ -66,6 +66,13 @@ Example:
 
 Add `--sift` to enable quotient-based removal of extraneous resultant factors.
 
+Supported square MQ systems over prime fields (at least three variables, with
+one variable retained) use Dixon quotient / Bezoutian construction by default.
+Use `--no-quotient` to disable it in resultant and solving modes;
+`--no-mq-quotient` remains an alias. Explicit method selections take priority
+over automatic selection. `--quotient` explicitly enables the construction;
+inputs rejected by its rank or degree checks fall back to Dixon.
+
 #### Polynomial system solver
 ```bash
 ./drsolve "polynomials" field_size
