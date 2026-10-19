@@ -1190,6 +1190,15 @@ $(BUILD_DIR)/mq_quotient_bezout_test: $(SRC_DIR)/test/mq/mq_quotient_bezout_test
 $(BUILD_DIR)/mq_quotient_api_test: $(SRC_DIR)/test/mq/mq_quotient_api_test.c $(SRC_DIR)/mq_quotient.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
+$(BUILD_DIR)/degree_quotient_experiment: $(SRC_DIR)/test/mq/degree_quotient_experiment.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: experiment-degree-quotient experiment-cubic-quotient
+experiment-cubic-quotient: experiment-degree-quotient
+
+experiment-degree-quotient: $(BUILD_DIR)/degree_quotient_experiment $(DIXON_TARGET)
+	python3 $(SRC_DIR)/test/mq/degree_quotient_experiment.py
+
 .PHONY: test-mq-quotient
 test-mq-quotient: $(BUILD_DIR)/mq_quotient_api_test drsolve-dynamic
 	LD_LIBRARY_PATH=.:/usr/local/lib ./$(BUILD_DIR)/mq_quotient_api_test

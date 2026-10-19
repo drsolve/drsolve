@@ -1347,10 +1347,6 @@ static void mq_improved_bounds(dixon_complexity_report_t *report,
     report->step1_mq_simplex_log2 = INFINITY;
     report->step1_mq_simplex_probe_log2 = INFINITY;
     report->step1_mq_simplex_transform_log2 = INFINITY;
-    report->step4_mq_schur_log2 = INFINITY;
-    report->step4_mq_schur_formation_log2 = INFINITY;
-    report->step4_mq_core_log2 = INFINITY;
-    report->step4_mq_verification_log2 = INFINITY;
     if (!report->step1_mq_bounds_applicable) return;
     double D = (double)n+1, v = 2.0*n-1;
     /* N simplex points. Count ALL entries, numerical determinants, and both
@@ -1374,10 +1370,23 @@ static void mq_improved_bounds(dixon_complexity_report_t *report,
     report->step1_mq_simplex_log2 = log2_add_exp(report->step1_mq_simplex_probe_log2,
                                                report->step1_mq_simplex_transform_log2);
 
-    /* Canonical degree-paired candidate, including construction of its Schur
-     * complement and the numerical candidate verification, not just det(core).
-     * Coefficient convolution is classical here; constant matrix products use
-     * the square-block bound above. This remains an arithmetic surrogate. */
+}
+
+/* Generic degree-paired Schur estimate, also for higher and mixed degrees.
+ * Only the simplex Step 1 estimates above are restricted to quadratics. */
+static void schur_improved_bounds(dixon_complexity_report_t *report,
+    const long *degrees, slong n, const fmpz_t field_order, double omega)
+{
+    report->step4_mq_schur_log2=INFINITY;
+    report->step4_mq_schur_formation_log2=INFINITY;
+    report->step4_mq_core_log2=INFINITY;
+    report->step4_mq_verification_log2=INFINITY;
+    report->step3_schur_selection_log2=INFINITY;
+    if (report->num_parameter_vars!=1 || report->num_elim_vars!=n-1 ||
+        report->num_all_vars!=n || n<2 || fmpz_cmp_ui(field_order,2)<0) return;
+    /* Generic degree-paired candidate. Soft-O suppresses constants/logarithms,
+     * but retains the sums over degree layers. Candidate rank selection is
+     * Step 3; Step 4 reuses the constant-block LU for its certificate. */
     slong *R=NULL,*H=NULL,nr=0,nh=0,sigma=0,rank=0;
     if (!dixon_rank_profile_from_degrees(&R,&nr,&H,&nh,&sigma,&rank,degrees,n,n-1)) return;
     slong h_size=0; for(slong d=0;d<nh;d++) h_size+=H[d];
@@ -1389,26 +1398,48 @@ static void mq_improved_bounds(dixon_complexity_report_t *report,
         if(other>=0 && other<nr)
             blocks[d]=FLINT_MAX(0,FLINT_MIN(R[d],R[other])-(low<nh?H[low]:0));
     }
-    double formation=(double)rank*rank*(sigma+1.0),e=rank-h;
+    /* Polynomial matrix products of degrees a,b cost soft-O((a+b+1)*MM),
+     * using fast polynomial arithmetic, not classical (a+1)*(b+1) convolution.
+     * MM is the rectangular square-block arithmetic bound. */
+    double formation=0,e=rank-h;
     for(slong d=0;d<nr;d++) if(blocks[d]>0) {
         double b=blocks[d];
-        formation+=pow(b,omega); /* factor/invert the constant diagonal block */
-        formation+=(sigma-d+1.0)*mq_rect_work(b,b,h,omega);
-        for(slong j=d+1;j<nr;j++) if(blocks[j]>0)
-            formation+=(j-d+1.0)*(sigma-j+1.0)*mq_rect_work(b,blocks[j],h,omega);
-        formation+=(d+1.0)*(sigma-d+1.0)*mq_rect_work(h,b,h,omega);
+        formation+=pow(b,omega);
+        for(slong c=0;c<nh;c++) if(H[c]>0 && sigma-d-c>=0) {
+            formation+=(sigma-d-c+1.0)*mq_rect_work(b,b,(double)H[c],omega);
+            for(slong j=d+1;j<nr;j++) if(blocks[j]>0 && sigma-j-c>=0)
+                formation+=(sigma-d-c+1.0)*
+                    mq_rect_work(b,blocks[j],(double)H[c],omega);
+            for(slong a=0;a<nh && a<=d;a++) if(H[a]>0)
+                formation+=(sigma-a-c+1.0)*
+                    mq_rect_work((double)H[a],b,(double)H[c],omega);
+        }
     }
     formation+=(e*h+h*h)*(sigma+1.0);
     report->step4_mq_core_size=h_size;
     report->step4_mq_schur_formation_log2=log2(formation);
-    /* ceil(2^n/h) without forming 2^n when n is large. */
-    double avg=(double)n-log2(h);
-    double degree=avg<52 ? log2(ceil(exp2(avg))) : avg+1;
-    report->step4_mq_core_log2=omega*log2(h)+degree;
-    report->step4_mq_verification_log2=log2_add_exp(omega*log2((double)rank),
-                                                   log2((double)n)+2*log2((double)rank));
-    report->step4_mq_schur_log2=log2_add_exp(report->step4_mq_schur_formation_log2,
-        log2_add_exp(report->step4_mq_core_log2,report->step4_mq_verification_log2));
+    /* The core entry bound is sigma-a-b. Its determinant degree budget is
+     * Delta = h*sigma - 2*sum_d d*H[d]. This is a bound from the matrix
+     * grading, not an assumption that every Dixon minor equals the resultant. */
+    double delta=0;
+    for(slong d=0;d<nh;d++) delta+=(double)H[d]*(sigma-2.0*d);
+    report->step4_schur_degree_bound=delta;
+    report->step4_mq_core_log2=omega*log2(h)+log2(fmax(1.0,ceil(delta/h)));
+    /* Candidate evaluation in Step 3 scans the graded coefficient slots.
+     * Step 4 only checks cached polynomial degrees (constant time per entry).
+     * Constant-block LU is already in formation, not charged a second time. */
+    double slots=0;
+    for(slong a=0;a<nr;a++) for(slong b=0;b<nr && a+b<=sigma;b++) {
+        double ra=blocks[a]+(a<nh ? H[a] : 0);
+        double cb=blocks[b]+(b<nh ? H[b] : 0);
+        slots+=ra*cb*(sigma-a-b+1.0);
+    }
+    report->step4_mq_verification_log2=2*log2((double)rank);
+    report->step3_schur_selection_log2=fmax(omega*log2((double)rank),
+                                          log2(fmax(1.0,slots)));
+    /* There are three phases: their sum and maximum differ by a constant. */
+    report->step4_mq_schur_log2=fmax(report->step4_mq_schur_formation_log2,
+        fmax(report->step4_mq_core_log2,report->step4_mq_verification_log2));
     flint_free(blocks);flint_free(R);flint_free(H);
 }
 
@@ -1811,6 +1842,7 @@ void dixon_complexity_report_from_degrees(dixon_complexity_report_t *report,
         report->step1_direct_mpoly_mul_proxy_log2;
     step1_mq_bounds(report, degrees, num_polys, num_all_vars, num_elim_vars, num_parameter_vars);
     mq_improved_bounds(report, degrees, num_polys, field_order, omega);
+    schur_improved_bounds(report, degrees, num_polys, field_order, omega);
     report->step1_bareiss_log2 =
         ((num_polys > 1) ? (3.0 * log2((double) num_polys)) : 0.0) +
         2.0 * report->step1_sparse_term_bound_log2;
@@ -2325,12 +2357,14 @@ static void dixon_complexity_write_report_body(
                                    detailed.step4_sparse_term_bound_log2 + 2 * loglogq) : la;
             }
             detailed.step4_log2 = select_step4_best_method(&detailed, &detailed.step4_best_method);
-            if (detailed.step4_mq_schur_log2 < detailed.step4_log2) {
+            if (g_dixon_mq_step4_schur && detailed.step4_mq_schur_log2 < detailed.step4_log2) {
                 detailed.step4_log2 = detailed.step4_mq_schur_log2;
                 detailed.step4_best_method = "blocked Schur + core determinant";
             }
         }
         detailed.overall_log2 = FLINT_MAX(detailed.step1_best_log2, detailed.step4_log2);
+        if (g_dixon_mq_step4_schur && isfinite(detailed.step3_schur_selection_log2))
+            detailed.overall_log2=FLINT_MAX(detailed.overall_log2,detailed.step3_schur_selection_log2);
         report = &detailed;
     }
     if (verbose_level <= 0) {
@@ -2830,12 +2864,21 @@ static void dixon_complexity_write_report_body(
                 report->step4_ordinary_interp_log2);
         fprintf(fp, "Step 4 sparse interpolation (log2): %.6f\n",
                 report->step4_sparse_log2);
-        if (verbose_level >= 2 && isfinite(report->step4_mq_schur_log2)) {
-            fprintf(fp, "Step 4 blocked Schur + core determinant (log2): %.6f\n",
+        if (verbose_level >= 2 && !g_dixon_mq_step4_schur)
+            fprintf(fp, "Step 4 Schur estimate: disabled by --no-mq-step4-schur.\n");
+        if (verbose_level >= 2 && g_dixon_mq_step4_schur && isfinite(report->step4_mq_schur_log2)) {
+            fprintf(fp, "Step 4 blocked Schur + core determinant (soft-O, log2): %.6f\n",
                     report->step4_mq_schur_log2);
-            fprintf(fp, "  Core size: %ld; formation: %.6f; core determinant: %.6f; verification: %.6f (log2).\n",
+            fprintf(fp, "  Core size: %ld; formation: %.6f; core determinant: %.6f; certificate scan: %.6f (soft-O, log2).\n",
                     report->step4_mq_core_size, report->step4_mq_schur_formation_log2,
                     report->step4_mq_core_log2, report->step4_mq_verification_log2);
+            fprintf(fp, "  Generic Hilbert-layer prediction; actual complement must pass rank/degree checks.\n");
+            fprintf(fp, "  Core determinant: soft-O(h^omega * ceil(Delta/h)); h=%ld, Delta=%.0f.\n",
+                    report->step4_mq_core_size, report->step4_schur_degree_bound);
+            fprintf(fp, "  Formation uses fast polynomial products: soft-O((a+b+1)*MM), not classical coefficient convolution.\n");
+            fprintf(fp, "  Step 4 = max(formation, core determinant, certificate scan); constant-block LU is reused.\n");
+            fprintf(fp, "  Step 3 generic candidate selection/rank verification (soft-O, log2): %.6f; counted separately in overall.\n",
+                    report->step3_schur_selection_log2);
         }
         fprintf(fp, "Best Step 4 estimate: %s%s (log2: %.6f)\n",
                 report->step4_best_method ? report->step4_best_method : "unknown",
@@ -2926,8 +2969,12 @@ static void dixon_complexity_write_report_body(
             report->step4_best_method ? report->step4_best_method : "unknown",
             rank_view ? " (rank prediction)" : "",
             report->step4_log2);
-    fprintf(fp, "Overall complexity = max(step1/2, step4) (log2): %.6f\n",
-            dixon_complexity_best_total_log2(report));
+    if (verbose_level>=2 && g_dixon_mq_step4_schur && isfinite(report->step3_schur_selection_log2))
+        fprintf(fp, "Overall complexity = max(step1/2, step3 selection, step4) (soft-O, log2): %.6f\n",
+                dixon_complexity_best_total_log2(report));
+    else
+        fprintf(fp, "Overall complexity = max(step1/2, step4) (log2): %.6f\n",
+                dixon_complexity_best_total_log2(report));
     fprintf(fp, "\n--- Comparison: Macaulay / Groebner ---\n");
     {
         fmpz_t exact_macaulay_degree, exact_macaulay_rows;

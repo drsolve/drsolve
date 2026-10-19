@@ -151,6 +151,8 @@ typedef struct {
     double step4_mq_core_log2;
     double step4_mq_verification_log2;
     slong step4_mq_core_size;
+    double step3_schur_selection_log2; /* generic candidate rank check, separate from Step 4 */
+    double step4_schur_degree_bound; /* determinant degree budget of the graded core */
 } dixon_complexity_report_t;
 
 // Function declarations
