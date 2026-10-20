@@ -634,6 +634,7 @@ set(MATH_SOURCES
   src/determinant/fq_poly_mat_det.c
   src/determinant/mq_poly_mat_det.c
   src/determinant/mq_quotient.c
+  src/determinant/degree_quotient.c
   src/determinant/mq_simplex_det.c
   src/determinant/mq_pencil_det.c
   src/determinant/fq_sparse_interpolation.c
