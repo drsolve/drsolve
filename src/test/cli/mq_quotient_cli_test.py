@@ -37,7 +37,7 @@ def main():
                 (out / (stem + ".log")).write_text(log)
                 if enabled:
                     assert ("; normalize to monic." in log) == accepted, log
-                    assert ("MQ quotient fallback:" in log) != accepted, log
+                    assert ("quotient fallback:" in log) != accepted, log
                 else:
                     assert "Experimental Dixon resultant via quotient-space Bezoutian" not in log
                 results.append(path.read_text().split("Resultant:\n", 1)[1].splitlines()[0])
@@ -56,7 +56,7 @@ def main():
     check("seed54321", ["-r", "[2]*9", "65537", "--seed", "54321"], True)
     check("recursive", ["-r", "[2]*4", "65537", "--seed", "12345", "--method", "5"], True)
     check("field_equation_final", ["-r", "[2]*3", "37", "--seed", "12345", "--field-equation-s"], False)
-    check("cubic", ["-r", "[3]*3", "65537", "--seed", "12345"], False)
+    check("cubic", ["-r", "[3]*3", "65537", "--seed", "12345"], True)
     check("small_field", ["-r", "[2]*3", "3", "--seed", "12345"], False)
     check("extension", ["-r", "[2]*3", "2^8", "--seed", "12345"], False)
     check("singular_leading", ["x^2+y^2+z,x^2+y^2+x+1,x^2+y^2+y+2", "x,y", "65537"], False)

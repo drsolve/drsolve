@@ -12,4 +12,10 @@ typedef struct {
 int dr_mq_quotient_resultant(unified_mpoly_struct *result,
     const unified_mpoly_struct *polys, slong nvars, slong npars,
     slong workers, mq_quotient_stats *stats);
+/* General positive degrees, prime field only. Rejections leave result untouched.
+ * Grouped quotient recurrence; parallel samples, generic ranks and fixed bases.
+ * Calls are serialized. workers controls sample concurrency, with no memory budget. */
+int dr_degree_quotient_resultant(unified_mpoly_struct *result,
+    const unified_mpoly_struct *polys, slong nvars, slong npars,
+    slong workers, mq_quotient_stats *stats);
 #endif

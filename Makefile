@@ -159,6 +159,7 @@ MATH_SOURCES = $(SRC_DIR)/dixon/dixon_complexity.c \
                $(SRC_DIR)/determinant/fq_poly_mat_det.c \
                $(SRC_DIR)/determinant/mq_poly_mat_det.c \
                $(SRC_DIR)/determinant/mq_quotient.c \
+               $(SRC_DIR)/determinant/degree_quotient.c \
                $(SRC_DIR)/determinant/mq_simplex_det.c \
                $(SRC_DIR)/determinant/mq_pencil_det.c \
                $(SRC_DIR)/determinant/fq_sparse_interpolation.c \
@@ -1190,7 +1191,7 @@ $(BUILD_DIR)/mq_quotient_bezout_test: $(SRC_DIR)/test/mq/mq_quotient_bezout_test
 $(BUILD_DIR)/mq_quotient_api_test: $(SRC_DIR)/test/mq/mq_quotient_api_test.c $(SRC_DIR)/mq_quotient.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
-$(BUILD_DIR)/degree_quotient_experiment: $(SRC_DIR)/test/mq/degree_quotient_experiment.c $(DIXON_SHARED_LIB)
+$(BUILD_DIR)/degree_quotient_experiment: $(SRC_DIR)/test/mq/degree_quotient_experiment.c $(SRC_DIR)/determinant/degree_quotient_impl.h $(SRC_DIR)/determinant/degree_quotient_grouped.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: experiment-degree-quotient experiment-cubic-quotient
@@ -1203,6 +1204,8 @@ experiment-degree-quotient: $(BUILD_DIR)/degree_quotient_experiment $(DIXON_TARG
 test-mq-quotient: $(BUILD_DIR)/mq_quotient_api_test drsolve-dynamic
 	LD_LIBRARY_PATH=.:/usr/local/lib ./$(BUILD_DIR)/mq_quotient_api_test
 	python3 $(SRC_DIR)/test/cli/mq_quotient_cli_test.py
+	python3 $(SRC_DIR)/test/cli/degree_quotient_cli_test.py
+	python3 $(SRC_DIR)/test/cli/degree_quotient_parallel_test.py --seeds 1 --threads 1 4 --cases '[3]*3' '[2,3,4]'
 
 
 $(BUILD_DIR)/mq_overdetermined_rank_test: $(SRC_DIR)/test/mq/mq_overdetermined_rank_test.c $(SRC_DIR)/determinant/mq_quotient_impl.h $(SRC_DIR)/determinant/mq_quotient_normal_forms.h $(SRC_DIR)/determinant/mq_quotient_accumulate.h $(SRC_DIR)/determinant/mq_quotient_packed.h $(DIXON_SHARED_LIB)

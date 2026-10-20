@@ -46,6 +46,7 @@ def main():
     parser.add_argument('--prime', type=int, default=65537)
     parser.add_argument('--memory-mib', type=int, default=512)
     parser.add_argument('--timeout', type=float, default=60)
+    parser.add_argument('--kernel', choices=['grouped', 'reference'], default='grouped')
     args = parser.parse_args()
     cases = []
     for spec in args.cases:
@@ -72,6 +73,7 @@ def main():
         (['3', '4', '1', invalid_prefix, '7'], 'prime too small'),
         (['8', '34', '1', invalid_prefix], 'packed exponent capacity'),
         (['4', '4', '1', invalid_prefix, '65537', '1'], 'exceeds budget'),
+        (['3', '3', '1', invalid_prefix, '65537', '512', 'invalid'], 'kernel must'),
     ]:
         rejected = subprocess.run([binary, *command], capture_output=True,
                                   text=True, env=env, timeout=10)
@@ -83,7 +85,7 @@ def main():
             prefix = output / f'n{n}_d{degree_spec.replace(",", "-")}_s{seed}'
             for repeat in range(args.repeat):
                 p = subprocess.run([binary, str(n), degree_spec, str(seed), str(prefix),
-                                    str(args.prime), str(args.memory_mib)],
+                                    str(args.prime), str(args.memory_mib), args.kernel],
                                    capture_output=True, text=True, env=env, timeout=args.timeout)
                 if p.returncode:
                     raise RuntimeError(f'prototype failed: {prefix}\n{p.stdout}\n{p.stderr}')
@@ -112,17 +114,19 @@ def main():
         summary = {k: selected[0][k] for k in ('n', 'degrees', 'core', 'full_rows', 'full_cols', 'resultant_degree')}
         summary['runs'] = len(selected)
         for key in ('normal', 'reduced', 'direct', 'interpolation', 'determinant',
-                    'prototype_total', 'full_block_total', 'dixon_wall'):
+                    'prototype_total', 'full_block_total', 'dixon_wall', 'operator_setup', 'operator_updates'):
             summary[key + '_median_ms'] = 1000 * statistics.median(r[key] for r in selected)
+        summary['update_matrix_products_median'] = statistics.median(r['update_matrix_products'] for r in selected)
         summaries.append(summary)
         print(json.dumps(summary), flush=True)
     report = {
-        'prime': args.prime, 'threads': 1,
+        'prime': args.prime, 'threads': 1, 'kernel': args.kernel,
         'notes': [
             'Prototype totals sum normal forms, core construction, interpolation and HNF; exclude input generation and validation.',
             'Direct means constructing the homogeneous Bezoutian middle block then reducing; it is not the production Dixon algorithm.',
             'Production Dixon times are CLI computation wall times rounded to 1 ms; process startup is excluded.',
             'The prototype has no shared leading frames, packed kernels or sample parallelism.',
+            'Grouped kernel setup is included in the recurrence time; update_matrix_products counts update multiplications only, excluding operator construction.',
             'Every core is checked against full-block reduction, interpolation at two extra points, and the monic resultant against production Dixon.',
         ],
         'records': records, 'summary': summaries,

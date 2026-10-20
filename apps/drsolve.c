@@ -288,6 +288,7 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    -> Finite-field elimination of two variables from three equations in three variables defaults to method 5; explicit method options take precedence\n");
     printf("    -> --method sets both step 1 and step 4 for backward compatibility\n");
     printf("    -> Dixon quotient / Bezoutian is automatic for supported prime-field square MQ systems (3+ variables); --no-quotient disables it; --quotient / --mq-quotient explicitly enable it; rejected inputs fall back to Dixon\n");
+    printf("    -> Explicit --quotient also supports general degrees over prime fields via grouped recurrence in graded quotient algebras (2-8 equations, one parameter); --threads parallelizes samples; no memory budget; rank/degree checks may fall back to Dixon.\n");
     printf("    -> MQ direct indices for eligible projected shared DP are default on; --no-mq-step1-rank disables them\n");
     printf("    -> MQ shared-index Step 1 DP is default on when eligible; --no-mq-step1-shared disables it\n");
     printf("    -> --mq-step1-pencil enables experimental MQ degree recurrence (default off); --no-mq-step1-pencil disables it\n");

@@ -6774,12 +6774,26 @@ int dixon_try_mq_quotient_resultant(unified_mpoly_struct *result,
     workers=omp_get_max_threads();
 #endif
     dixon_info_log("\nExperimental Dixon resultant via quotient-space Bezoutian\n");
-    int ok=dr_mq_quotient_resultant(result,polys,nvars,npars,workers,&stats);
+    int general=0;
+    if(g_dixon_mq_quotient>0 && npars==1 && nvars>=1 && nvars<=7) {
+        for(slong f=0;f<=nvars;f++) {
+            slong maximum=0;
+            for(slong t=0;t<dr_mpoly_length(polys+f);t++) {
+                DR_MPOLY_TERM(term,polys+f,t);
+                slong degree=FLINT_MIN(3,term.par_exp[0]);
+                for(slong v=0;v<nvars;v++)degree=FLINT_MIN(3,degree+FLINT_MIN(3,term.var_exp[v]));
+                maximum=FLINT_MAX(maximum,degree);
+            }
+            if(maximum!=2)general=1;
+        }
+    }
+    int ok=general?dr_degree_quotient_resultant(result,polys,nvars,npars,workers,&stats)
+                  :dr_mq_quotient_resultant(result,polys,nvars,npars,workers,&stats);
     if(!ok) {
-        dixon_info_log("  MQ quotient fallback: %s; using Dixon path\n",stats.reason);
+        dixon_info_log("  %s quotient fallback: %s; using Dixon path\n",general?"General-degree":"MQ",stats.reason);
         return 0;
     }
-    dixon_maybe_print_step_time("MQ quotient resultant",stats.total);
+    dixon_maybe_print_step_time(general?"General-degree quotient resultant":"MQ quotient resultant",stats.total);
     return 1;
 }
 
