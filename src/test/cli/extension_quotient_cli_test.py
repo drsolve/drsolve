@@ -12,8 +12,8 @@ env = dict(os.environ, OMP_NUM_THREADS='1',
 with tempfile.TemporaryDirectory(prefix='extension-bezoutian-') as work:
     output = Path(work) / 'result.dr'
 
-    def run(arguments, flag, threads=1):
-        p = subprocess.run([str(binary), *arguments, flag, '--threads', str(threads),
+    def run(arguments, flag=None, threads=1):
+        p = subprocess.run([str(binary), *arguments, *([flag] if flag else []), '--threads', str(threads),
                             '-v', '3' if '-s' in arguments else '1', '-o', str(output)], env=env,
                            capture_output=True, text=True, timeout=120)
         log = p.stdout + p.stderr
@@ -45,9 +45,19 @@ with tempfile.TemporaryDirectory(prefix='extension-bezoutian-') as work:
     compare(['-r', '[2]*9', '2^8', '--seed', '12345'])
     # MQ inputs must actually use the shared-frame kernel, including >8 equations.
     for count in (3, 9):
-        _, log = run(['-r', f'[2]*{count}', '2^8', '--seed', '12345'], '--quotient', 4)
+        arguments = ['-r', f'[2]*{count}', '256', '--seed', '12345', '--time']
+        reference, log = run(arguments, '--quotient', 4)
         assert 'shared leading-frame MQ kernel' in log and 'Compact byte minors' in log, log
         assert 'fallback:' not in log, log
+        automatic, log = run(arguments, threads=4)
+        assert automatic == reference
+        assert 'shared leading-frame MQ kernel' in log and 'fallback:' not in log, log
+    for options in (['--no-quotient'], ['--no-mq-quotient'], ['--step4', '1']):
+        _, log = run(['-r', '[2]*3', '256', '--seed', '12345', *options])
+        assert 'Experimental Dixon resultant via quotient-space Bezoutian' not in log, log
+    for degrees, field in (('[3]*3', '256'), ('[2]*3', '4')):
+        _, log = run(['-r', degrees, field, '--seed', '12345'])
+        assert 'Experimental Dixon resultant via quotient-space Bezoutian' not in log, log
     # Coefficients explicitly outside the prime subfield, with an exact oracle.
     compare(['x-t,y-t-1', 'x', '2^8'])
     # Too few distinct field elements, including the two validation points.

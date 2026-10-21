@@ -6758,10 +6758,17 @@ int dixon_try_mq_quotient_resultant(unified_mpoly_struct *result,
     /* Automatic selection only attempts supported square MQ inputs. Explicit
      * --quotient retains the detailed rejection/fallback diagnostics. */
     if(g_dixon_mq_quotient < 0) {
-        if(npars!=1 || nvars<2 || fq_nmod_ctx_degree(polys[0].ctx)!=1 ||
-           polys[0].field_id!=FIELD_ID_NMOD || g_field_equation_reduction ||
-           g_field_equation_final_only ||
-           fq_nmod_ctx_modulus(polys[0].ctx)->mod.n <= (ulong)(nvars+2))return 0;
+        if(npars!=1 || nvars<2 || g_field_equation_reduction ||
+           g_field_equation_final_only)return 0;
+        slong extension=fq_nmod_ctx_degree(polys[0].ctx);
+        ulong prime=fq_nmod_ctx_prime(polys[0].ctx);
+        if(extension==1) {
+            if(polys[0].field_id!=FIELD_ID_NMOD || prime <= (ulong)(nvars+2))return 0;
+        } else {
+            /* N+2 interpolation nodes and two independent validation nodes,
+             * where N=nvars+1. Count elements of the full extension field. */
+            if(calculate_field_size(prime,extension) < (ulong)(nvars+5))return 0;
+        }
         for(slong f=0;f<=nvars;f++) {
             slong max_degree=0;
             if(polys[f].nvars!=nvars || polys[f].npars!=1)return 0;

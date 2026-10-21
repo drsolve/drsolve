@@ -18,14 +18,27 @@ static void random_terms(unified_mpoly_struct *p, slong *exp, slong pos, slong l
     ulong prime=fq_nmod_ctx_prime(p->ctx);
     ulong value=n_randint(rng,prime);
     if (sparse && n_randint(rng,3)) value=0;
-    fq_nmod_t c; fq_nmod_init(c,p->ctx); fq_nmod_set_ui(c,value,p->ctx);
-    if (value)
+    fq_nmod_t c; fq_nmod_init(c,p->ctx);
+    if(fq_nmod_ctx_degree(p->ctx)>1) {
+        fq_nmod_randtest(c,rng,p->ctx);
+        if(sparse && !value) fq_nmod_zero(c,p->ctx);
+    } else fq_nmod_set_ui(c,value,p->ctx);
+    if (!fq_nmod_is_zero(c,p->ctx))
         dr_mpoly_add_term_fast(p, exp, exp + p->nvars, c);
     fq_nmod_clear(c,p->ctx);
 }
 
 static int equal_poly(const unified_mpoly_struct *a, const unified_mpoly_struct *b)
 {
+    if(fq_nmod_ctx_degree(a->ctx)>1) {
+        fq_nmod_mpoly_ctx_t ctx;
+        fq_nmod_mpoly_ctx_init(ctx,a->nvars+a->npars,ORD_LEX,a->ctx);
+        fq_nmod_mpoly_t x,y;fq_nmod_mpoly_init(x,ctx);fq_nmod_mpoly_init(y,ctx);
+        dr_mpoly_to_fq_nmod_mpoly(x,a,ctx);dr_mpoly_to_fq_nmod_mpoly(y,b,ctx);
+        int same=fq_nmod_mpoly_equal(x,y,ctx);
+        fq_nmod_mpoly_clear(y,ctx);fq_nmod_mpoly_clear(x,ctx);fq_nmod_mpoly_ctx_clear(ctx);
+        return same;
+    }
     nmod_mpoly_ctx_t ctx;
     nmod_mpoly_ctx_init(ctx,a->nvars+a->npars,ORD_LEX,fq_nmod_ctx_prime(a->ctx));
     nmod_mpoly_t x,y; nmod_mpoly_init(x,ctx); nmod_mpoly_init(y,ctx);
@@ -36,9 +49,14 @@ static int equal_poly(const unified_mpoly_struct *a, const unified_mpoly_struct 
     return same;
 }
 
-static void check(ulong prime, slong degree, int sparse, slong npars)
+static void check_field(ulong prime, slong extension, slong degree, int sparse, slong npars, ulong modulus_bits)
 {
-    fq_nmod_ctx_t ctx; fq_nmod_ctx_init_ui(ctx,prime,1,"a");
+    fq_nmod_ctx_t ctx;
+    if(modulus_bits) {
+        nmod_poly_t modulus;nmod_poly_init(modulus,prime);
+        for(slong i=0;i<=extension;i++) nmod_poly_set_coeff_ui(modulus,i,(modulus_bits>>i)&1);
+        fq_nmod_ctx_init_modulus(ctx,modulus,"a");nmod_poly_clear(modulus);
+    } else fq_nmod_ctx_init_ui(ctx,prime,extension,"a");
     flint_rand_t rng; flint_rand_init(rng); flint_rand_set_seed(rng,prime+degree,17+sparse);
     unified_mpoly_struct p[3] = {0};
     const unified_mpoly_struct *ptrs[3];
@@ -100,6 +118,11 @@ static void check(ulong prime, slong degree, int sparse, slong npars)
     flint_rand_clear(rng); fq_nmod_ctx_clear(ctx);
 }
 
+static void check(ulong prime, slong degree, int sparse, slong npars)
+{
+    check_field(prime,1,degree,sparse,npars,0);
+}
+
 int main(void)
 {
     g_dixon_verbose_level=0; omp_set_num_threads(4);
@@ -107,6 +130,17 @@ int main(void)
         check(65537,d,0,1); check(101,d,1,1);
     }
     check(2,3,0,1); check(65537,3,1,2);
+    for(int threads=1;threads<=4;threads*=4) {
+        omp_set_num_threads(threads);
+        check_field(2,4,3,0,1,0x13);
+        check_field(2,8,4,0,1,0x11d);
+        check_field(2,8,3,1,1,0x11b);
+        check_field(2,16,3,0,1,0x1002d);
+        check_field(3,2,3,0,1,0);
+        check_field(65537,2,2,1,1,0);
+        check_field(2,7,3,1,1,0);
+        check_field(2,8,2,0,2,0x11d);
+    }
     unsetenv("DRSOLVE_FAST_NATIVE");
     puts("Recursive native/legacy coefficients and independent cancellation determinant PASS");
     flint_cleanup_master(); return 0;
