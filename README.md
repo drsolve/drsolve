@@ -66,13 +66,6 @@ Example:
 
 Add `--sift` to enable quotient-based removal of extraneous resultant factors.
 
-Supported square MQ systems over prime fields (at least three variables, with
-one variable retained) use Dixon quotient / Bezoutian construction by default.
-Use `--no-quotient` to disable it in resultant and solving modes;
-`--no-mq-quotient` remains an alias. Explicit method selections take priority
-over automatic selection. `--quotient` explicitly enables the construction;
-inputs rejected by its rank or degree checks fall back to Dixon.
-
 #### Polynomial system solver
 ```bash
 ./drsolve "polynomials" field_size
@@ -290,30 +283,6 @@ This library implements the methods described in:
 > **Efficient Polynomial System Solving via Dixon Resultants: Applications to AO Primitives**
 - ePrint: <https://eprint.iacr.org/2026/1969>
 - reproduction materials: <https://github.com/drsolve/dixon_asiacrypt>
-
-## Development Notes
-
-The standalone general-degree quotient experiment accepts equal or mixed
-positive equation degrees over a prime field. It generates dense square
-systems with one variable retained and compares both Bezoutian construction
-paths against the production Dixon resultant, coefficient by coefficient.
-
-```bash
-make experiment-degree-quotient
-# Choose cases: number of equations followed by one degree or a degree list.
-python3 src/test/mq/degree_quotient_experiment.py --cases 3:4 3:5 3:2,3,4 --repeat 3
-# One generated system: N, degrees, seed, output prefix, prime, memory MiB.
-./build/degree_quotient_experiment 3 2,3,4 1 /tmp/quotient_mixed 65537 512
-```
-
-Results and per-run timings are written to `out/degree_quotient_experiment/`.
-The experiment supports 2–8 variables within its packed-exponent and estimated
-storage limits (512 MiB by default). It requires generic Macaulay ranks and a
-fixed quotient basis across interpolation points; unsupported cases are
-reported as errors. This remains an experimental executable, separate from
-the optimized MQ backend selected by `drsolve --quotient`.
-
-Parts of this project were developed with the assistance of AI-based coding tools. All AI-assisted contributions were reviewed and tested by the project author.
 
 ## License
 DRSolve is distributed under the GNU General Public License version 2.0 (GPL-2.0-or-later). See the file COPYING.
