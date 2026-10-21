@@ -161,7 +161,27 @@ static void check_schur(const fq_nmod_ctx_t ctx, flint_rand_t state)
         assert(!dixon_mq_step4_try(actual, mat, &p, ctx));
         assert(fq_nmod_poly_equal(expected, actual, ctx));
         assert(equal_matrix(mat, copy, ctx)); p.sigma = 4;
+        /* Destroy the predicted complement. Adaptive degree-layer pivoting
+         * must still recover a usable partial complement, with the exact
+         * determinant of the modified input (not the previous trial). */
         for (slong j = 2; j < 5; j++) fq_nmod_poly_zero(fq_nmod_poly_mat_entry(mat,rows[4],cols[j]), ctx);
+        copy_matrix(copy, mat, ctx);
+        fq_nmod_poly_mat_t core;
+        fq_nmod_poly_mat_init(core, p.h, p.h, ctx);
+        assert(!dixon_extension_schur(core, constant, mat, &p, ctx));
+        fq_nmod_poly_mat_clear(core, ctx);
+        fq_nmod_poly_zero(expected, ctx);
+        expand(expected, mat, 0, 0, one, ctx);
+        assert(dixon_mq_step4_try(actual, mat, &p, ctx));
+        assert(fq_nmod_poly_equal(expected, actual, ctx));
+        assert(equal_matrix(mat, copy, ctx));
+
+        /* With every constant degree-layer block zero, neither fixed nor
+         * adaptive compression is possible. Rejection preserves both the
+         * input and the last successfully published determinant. */
+        for (slong i = 0; i < 5; i++) for (slong j = 0; j < 5; j++)
+            if (rd[i]+cd[j] == p.sigma)
+                fq_nmod_poly_zero(fq_nmod_poly_mat_entry(mat,rows[i],cols[j]), ctx);
         copy_matrix(copy, mat, ctx);
         assert(!dixon_mq_step4_try(actual, mat, &p, ctx));
         assert(fq_nmod_poly_equal(expected, actual, ctx));

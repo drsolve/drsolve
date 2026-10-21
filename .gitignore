@@ -98,3 +98,10 @@ dll/
 
 # Local benchmark artifacts
 /benchmarks/
+
+# Local agent instructions and skills
+/AGENTS.md
+/agents.md
+/.agents/skills/
+/.codex/skills/
+/skills/
