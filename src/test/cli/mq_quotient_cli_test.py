@@ -58,7 +58,7 @@ def main():
     check("field_equation_final", ["-r", "[2]*3", "37", "--seed", "12345", "--field-equation-s"], False)
     check("cubic", ["-r", "[3]*3", "65537", "--seed", "12345"], True)
     check("small_field", ["-r", "[2]*3", "3", "--seed", "12345"], False)
-    check("extension", ["-r", "[2]*3", "2^8", "--seed", "12345"], False)
+    check("extension", ["-r", "[2]*3", "2^8", "--seed", "12345"], True)
     check("singular_leading", ["x^2+y^2+z,x^2+y^2+x+1,x^2+y^2+y+2", "x,y", "65537"], False)
     check("degree_drop", ["x^2+y,x^2+y+1", "x", "65537"], False)
     for name in ("n8_p65537", "n9_p65537"):

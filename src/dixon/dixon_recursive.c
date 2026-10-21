@@ -2320,7 +2320,7 @@ static void fq_dixon_fast_resultant_common(unified_mpoly_struct *result,
     if (matrix_size > 0) {
         dixon_recursive_det_options native = {
             selected_rows, selected_cols, nvars>1 ? degrees[1] : 0,
-            fast_dixon_use_native(npars,polys[0].ctx)
+            fast_dixon_use_native(npars,polys[0].ctx), degrees
         };
         dixon_compute_dense_resultant(result,coeff_matrix,matrix_size,polys,
                                      nvars,npars,0,par_names,&native);

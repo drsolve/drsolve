@@ -160,6 +160,8 @@ MATH_SOURCES = $(SRC_DIR)/dixon/dixon_complexity.c \
                $(SRC_DIR)/determinant/mq_poly_mat_det.c \
                $(SRC_DIR)/determinant/mq_quotient.c \
                $(SRC_DIR)/determinant/degree_quotient.c \
+               $(SRC_DIR)/determinant/extension_quotient.c \
+               $(SRC_DIR)/determinant/mq_extension_quotient.c \
                $(SRC_DIR)/determinant/mq_simplex_det.c \
                $(SRC_DIR)/determinant/mq_pencil_det.c \
                $(SRC_DIR)/determinant/fq_sparse_interpolation.c \
@@ -1216,3 +1218,23 @@ $(BUILD_DIR)/mq_quotient_extra_equation_test: $(SRC_DIR)/test/mq/mq_quotient_ext
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 $(BUILD_DIR)/dixon_schur_repair_test: $(SRC_DIR)/dixon/dixon_schur_seed.h
+
+$(BUILD_DIR)/extension_quotient_api_test: $(SRC_DIR)/test/mq/extension_quotient_api_test.c $(SRC_DIR)/mq_quotient.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-extension-quotient
+test-extension-quotient: $(BUILD_DIR)/extension_quotient_api_test drsolve-dynamic
+	LD_LIBRARY_PATH=.:/usr/local/lib ./$(BUILD_DIR)/extension_quotient_api_test
+	python3 $(SRC_DIR)/test/cli/extension_quotient_cli_test.py ./$(DIXON_TARGET)
+
+$(BUILD_DIR)/dixon/dixon_flint.o $(BUILD_DIR)/dixon_schur_repair_test: $(SRC_DIR)/dixon/dixon_recursive_extension_schur.h $(SRC_DIR)/dixon/dixon_gf2n_schur.h $(SRC_DIR)/dixon/dixon_pipeline.h
+$(BUILD_DIR)/dixon/dixon_recursive.o: $(SRC_DIR)/dixon/dixon_pipeline.h
+$(BUILD_DIR)/dixon_schur_repair_test: $(SRC_DIR)/test/dixon/extension_schur_cases.h
+.PHONY: test-extension-schur
+test-extension-schur: $(BUILD_DIR)/dixon_schur_repair_test drsolve-dynamic
+	LD_LIBRARY_PATH=.:/usr/local/lib OMP_NUM_THREADS=4 ./$(BUILD_DIR)/dixon_schur_repair_test
+	python3 $(SRC_DIR)/test/cli/extension_schur_cli_test.py ./$(DIXON_TARGET)
+
+$(BUILD_DIR)/dixon/dixon_flint.o $(BUILD_DIR)/dixon_schur_repair_test: $(SRC_DIR)/dixon/dixon_schur_seed_template.h
+
+$(BUILD_DIR)/dixon/dixon_flint.o $(BUILD_DIR)/dixon_schur_repair_test: $(SRC_DIR)/dixon/dixon_schur_seed_byte.h $(SRC_DIR)/solver/quotient_byte.h

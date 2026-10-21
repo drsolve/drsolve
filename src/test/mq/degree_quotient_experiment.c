@@ -20,7 +20,7 @@ int main(int argc,char **argv) {
         else if(strcmp(argv[7],"grouped"))fail("kernel must be grouped or reference");
     }
     n=positive_integer(argv[1]);
-    if(n<2 || n>8)fail("N must be between 2 and 8 for packed monomial keys");
+    if(n<2 || n>=FLINT_BITS-1)fail("subset workspace exceeds machine address capacity");
     char *end;errno=0;ulong seed=strtoul(argv[3],&end,10);
     if(errno || !*argv[3] || *end || argv[3][0]=='-')fail("invalid seed");
     prime=argc>=6?(ulong)positive_integer(argv[5]):65537;
@@ -80,6 +80,6 @@ int main(int argc,char **argv) {
     for(slong f=0;f<n;f++)flint_free(q[f]);
     flint_free(q);flint_free(xs);flint_free(ys);
     flint_free(degrees);flint_free(prefix_degree);flint_free(hilbert_dims);
-    for(slong d=0;d<=limit;d++){flint_free(spaces[d].keys);flint_free(spaces[d].free);nmod_mat_clear(spaces[d].reduce);}flint_free(spaces);
+    for(slong d=0;d<=limit;d++){flint_free(spaces[d].keys);flint_free(spaces[d].free);nmod_mat_clear(spaces[d].reduce);}flint_free(spaces);key_tables_clear();
     for(slong i=0;i<input_count;i++)flint_free(input[i].coeff);flint_free(input);flint_rand_clear(rng);flint_cleanup_master();return 0;
 }

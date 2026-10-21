@@ -95,3 +95,6 @@ dll/
 
 # Local experimental scripts, benchmarks, notes and data
 /src/experiments/
+
+# Local benchmark artifacts
+/benchmarks/

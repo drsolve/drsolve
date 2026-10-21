@@ -107,40 +107,41 @@ static int compute(unified_mpoly_struct *result,const unified_mpoly_struct *poly
                    slong nv,slong np,slong requested_workers,mq_quotient_stats *stats)
 {
     double begin=seconds();memset(stats,0,sizeof(*stats));
-    stats->reason="general-degree quotient requires 2-8 equations over a prime field and one parameter";
-    if(np!=1 || nv<1 || nv>7 || polys[0].field_id!=FIELD_ID_NMOD ||
+    stats->reason="general-degree quotient requires at least two equations over a prime field and one parameter";
+    if(np!=1 || nv<1 || polys[0].field_id!=FIELD_ID_NMOD ||
        fq_nmod_ctx_degree(polys[0].ctx)!=1 ||
        g_field_equation_reduction || g_field_equation_final_only)return 0;
+    stats->reason="subset workspace exceeds machine address capacity";
+    if(nv>=FLINT_BITS-2)return 0;
     n=nv+1;socle=max_degree=0;input_count=0;
     spaces=NULL;input=NULL;degrees=prefix_degree=hilbert_dims=NULL;
     prime=fq_nmod_ctx_modulus(polys[0].ctx)->mod.n;
     nmod_init(&mod,prime);grouped_kernel=1;
     /* Enforce representation limits only; there is no memory/work budget. */
-    slong ds[8],sum=0,terms=0;
-    char spec[128];size_t used=0;
-    stats->reason="general-degree quotient requires positive degrees fitting 8-bit packed exponents";
+    slong ds[n],sum=0,terms=0;
+    char spec[n*(3*sizeof(slong)+2)];size_t used=0;
+    stats->reason="general-degree quotient requires positive degrees fitting machine address capacity";
     for(slong f=0;f<n;f++) {
         if(polys[f].nvars!=nv || polys[f].npars!=1)return 0;
         ds[f]=0;
         for(slong t=0;t<dr_mpoly_length(polys+f);t++) {
             DR_MPOLY_TERM(term,polys+f,t);
             slong degree=term.par_exp[0];
-            if(degree<0 || degree>255)return 0;
+            if(degree<0)return 0;
             for(slong v=0;v<nv;v++) {
-                if(term.var_exp[v]<0 || term.var_exp[v]>255)return 0;
+                if(term.var_exp[v]<0 || term.var_exp[v]>LONG_MAX-degree)return 0;
                 degree+=term.var_exp[v];
             }
-            if(degree>255)return 0;
             ds[f]=FLINT_MAX(ds[f],degree);
         }
-        if(!ds[f] || sum+ds[f]-1>255)return 0;
+        if(!ds[f] || ds[f]>LONG_MAX-n-sum)return 0;
         sum+=ds[f]-1;
         if(dr_mpoly_length(polys+f)>LONG_MAX-terms)return 0;
         terms+=dr_mpoly_length(polys+f);
         used+=snprintf(spec+used,sizeof(spec)-used,"%s%ld",f?",":"",ds[f]);
     }
     stats->reason="field too small for interpolation and validation points";
-    if(prime<=(ulong)(sum+4))return 0;
+    if(prime<=((ulong)sum+4))return 0;
     int ok=0,saved_threads=flint_get_num_threads();
     ulong *xs=NULL,*values=NULL,*column=NULL;
     nmod_poly_mat_t matrix;int matrix_live=0;
@@ -157,8 +158,8 @@ static int compute(unified_mpoly_struct *result,const unified_mpoly_struct *poly
     for(slong f=0;f<n;f++)for(slong j=0;j<dr_mpoly_length(polys+f);j++) {
         DR_MPOLY_TERM(term,polys+f,j);
         input_term *out=input+input_count++;
-        out->key=(uint64_t)term.par_exp[0]<<(8*nv);
-        for(slong v=0;v<nv;v++)out->key|=(uint64_t)term.var_exp[v]<<(8*v);
+        out->key=key_set(0,nv,term.par_exp[0]);
+        for(slong v=0;v<nv;v++)out->key=key_set(out->key,v,term.var_exp[v]);
         out->coeff=flint_calloc(n,sizeof(ulong));
         out->coeff[f]=nmod_poly_get_coeff_ui(term.coeff,0);
     }
@@ -222,7 +223,7 @@ done:
     if(spaces)for(slong d=0;d<=limit;d++) {
         flint_free(spaces[d].keys);flint_free(spaces[d].free);nmod_mat_clear(spaces[d].reduce);
     }
-    flint_free(spaces);
+    flint_free(spaces);key_tables_clear();
     for(slong i=0;i<input_count;i++)flint_free(input[i].coeff);flint_free(input);
     flint_free(degrees);flint_free(prefix_degree);flint_free(hilbert_dims);
     flint_set_num_threads(saved_threads);stats->total=seconds()-begin;
@@ -232,6 +233,9 @@ done:
 int dr_degree_quotient_resultant(unified_mpoly_struct *result,
     const unified_mpoly_struct *polys,slong nv,slong np,slong requested_workers,mq_quotient_stats *stats)
 {
+    if(fq_nmod_ctx_degree(polys[0].ctx)>1)
+        return dr_extension_quotient_resultant(result,polys,nv,np,requested_workers,stats);
+
     int ok;mq_quotient_stats local;if(!stats)stats=&local;
     #pragma omp critical(drsolve_quotient_context)
     {ok=compute(result,polys,nv,np,requested_workers,stats);}

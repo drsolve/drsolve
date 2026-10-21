@@ -611,6 +611,10 @@ set(MATH_INTERNAL_HEADERS
   src/dixon/dixon_fq_projection.h
   src/dixon/dixon_fq_schur.h
   src/dixon/dixon_gf2n_projection.h
+  src/dixon/dixon_schur_seed.h
+  src/dixon/dixon_schur_seed_byte.h
+  src/dixon/dixon_schur_seed_template.h
+  src/dixon/dixon_recursive_extension_schur.h
   src/dixon/dixon_gf2n_schur.h
   src/dixon/dixon_gf2n_schur_template.h
   src/field/gf2n_mpoly_sparse.h
@@ -635,6 +639,8 @@ set(MATH_SOURCES
   src/determinant/mq_poly_mat_det.c
   src/determinant/mq_quotient.c
   src/determinant/degree_quotient.c
+  src/determinant/extension_quotient.c
+  src/determinant/mq_extension_quotient.c
   src/determinant/mq_simplex_det.c
   src/determinant/mq_pencil_det.c
   src/determinant/fq_sparse_interpolation.c
@@ -1010,6 +1016,25 @@ if(BUILD_TESTING)
   if(Python3_Interpreter_FOUND)
     add_test(NAME drsolve_quotient_extension_cli
       COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/quotient_extension_cli_test.py
+              $<TARGET_FILE:drsolve_exe>)
+  endif()
+  add_executable(extension_quotient_api_test src/test/mq/extension_quotient_api_test.c)
+  drsolve_target_common(extension_quotient_api_test)
+  target_compile_options(extension_quotient_api_test PRIVATE -UNDEBUG)
+  if(TARGET drsolve_static)
+    target_link_libraries(extension_quotient_api_test PRIVATE drsolve_static)
+  elseif(TARGET drsolve_shared)
+    target_link_libraries(extension_quotient_api_test PRIVATE drsolve_shared)
+  else()
+    target_sources(extension_quotient_api_test PRIVATE ${MATH_SOURCES})
+  endif()
+  add_test(NAME drsolve_extension_quotient_api COMMAND extension_quotient_api_test)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME drsolve_extension_schur_cli
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/extension_schur_cli_test.py
+              $<TARGET_FILE:drsolve_exe>)
+    add_test(NAME drsolve_extension_quotient_cli
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/extension_quotient_cli_test.py
               $<TARGET_FILE:drsolve_exe>)
   endif()
   add_executable(quotient_sift_test src/test/solver/quotient_sift_test.c)

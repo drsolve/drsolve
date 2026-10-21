@@ -21,6 +21,7 @@ typedef struct {
     const slong *rows, *cols;
     slong y_degree;
     int enabled;
+    const slong *variable_degrees;
 } dixon_recursive_det_options;
 void dixon_compute_dense_resultant(unified_mpoly_struct *result,
     unified_mpoly_struct **matrix, slong size, unified_mpoly_struct *polys,

@@ -1,0 +1,40 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Zero-overhead prime-field instantiation of the graded quotient template. */
+typedef ulong dq_coeff;
+#define DQ_COEFF_BYTES sizeof(ulong)
+#define dq_mat_t nmod_mat_t
+#define dq_mat_struct nmod_mat_struct
+#define dq_mat_entry nmod_mat_entry
+#define dq_mat_init nmod_mat_init
+#define dq_mat_clear nmod_mat_clear
+#define dq_mat_zero nmod_mat_zero
+#define dq_mat_set nmod_mat_set
+#define dq_mat_transpose nmod_mat_transpose
+#define dq_mat_mul nmod_mat_mul
+#define dq_mat_add nmod_mat_add
+#define dq_mat_sub nmod_mat_sub
+#define dq_mat_rref nmod_mat_rref
+#define dq_init(a) ((a)=0)
+#define dq_clear(a) ((void)0)
+#define dq_set(a,b) ((a)=(b))
+#define dq_one(a) ((a)=1)
+#define dq_nonzero(a) ((a)!=0)
+#define dq_neg(a,b) ((a)=nmod_neg((b),mod))
+#define dq_add(a,b,c) ((a)=nmod_add((b),(c),mod))
+#define dq_addmul(a,b,c) ((a)=nmod_add((a),nmod_mul((b),(c),mod),mod))
+#define dq_pow(a,b,e) ((a)=nmod_pow_ui((b),(e),mod))
+#define dq_vec_zero(a,n) memset((a),0,(n)*sizeof(ulong))
+
+#define dq_mat_entry_ptr nmod_mat_entry_ptr
+#define dq_mat_one nmod_mat_one
+#define dq_mat_neg nmod_mat_neg
+#define dq_mat_equal nmod_mat_equal
+#define dq_mat_lu nmod_mat_lu
+#define dq_mat_solve_tril nmod_mat_solve_tril
+#define dq_mat_solve_triu nmod_mat_solve_triu
+#define dq_mat_addmul nmod_mat_addmul
+#define dq_mat_submul nmod_mat_submul
+#define dq_vec_set(a,b,n) memcpy((a),(b),(n)*sizeof(ulong))
+#define dq_vec_new(n) flint_calloc((n),sizeof(ulong))
+#define dq_vec_free(a,n) flint_free(a)
+#define dq_vec_addmul(a,b,n,c) _nmod_vec_scalar_addmul_nmod((a),(b),(n),(c),mod)

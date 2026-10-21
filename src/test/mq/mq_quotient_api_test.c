@@ -71,14 +71,14 @@ int main(void)
             if(nv==3) {
                 unified_mpoly_struct large[4]={{0}};
                 for(slong f=0;f<n;f++) {
-                    dr_mpoly_init(large+f,nv,1,ctx);exp[f]=256;
+                    dr_mpoly_init(large+f,nv,1,ctx);exp[f]=LONG_MAX/2;
                     fq_nmod_one(coefficient,ctx);
                     dr_mpoly_add_term_fast(large+f,exp,exp+nv,coefficient);
                     exp[f]=0;dr_mpoly_normalize(large+f);
                 }
                 assert(!dr_degree_quotient_resultant(&general,large,nv,1,4,&stats));
                 assert(stats.reason && flint_get_num_threads()==2);
-                assert(strstr(stats.reason,"packed exponents"));
+                assert(strstr(stats.reason,"machine address capacity"));
                 assert(nmod_mpoly_equal(GET_NMOD_POLY(&a),GET_NMOD_POLY(&general),GET_NMOD_CTX(a.ctx_ptr)));
                 for(slong f=0;f<n;f++)dr_mpoly_clear(large+f);
             }

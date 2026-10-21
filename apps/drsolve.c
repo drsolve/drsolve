@@ -288,14 +288,14 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    -> Finite-field elimination of two variables from three equations in three variables defaults to method 5; explicit method options take precedence\n");
     printf("    -> --method sets both step 1 and step 4 for backward compatibility\n");
     printf("    -> Dixon quotient / Bezoutian is automatic for supported prime-field square MQ systems (3+ variables); --no-quotient disables it; --quotient / --mq-quotient explicitly enable it; rejected inputs fall back to Dixon\n");
-    printf("    -> Explicit --quotient also supports general degrees over prime fields via grouped recurrence in graded quotient algebras (2-8 equations, one parameter); --threads parallelizes samples; no memory budget; rank/degree checks may fall back to Dixon.\n");
+    printf("    -> Explicit --quotient also supports quadratic and general degrees over extension fields, and general degrees over prime fields, via shared-frame MQ or grouped quotient recurrence (one parameter; no fixed equation-count cutoff); --threads parallelizes samples; no memory budget; rank/degree checks may fall back to Dixon.\n");
     printf("    -> MQ direct indices for eligible projected shared DP are default on; --no-mq-step1-rank disables them\n");
     printf("    -> MQ shared-index Step 1 DP is default on when eligible; --no-mq-step1-shared disables it\n");
     printf("    -> --mq-step1-pencil enables experimental MQ degree recurrence (default off); --no-mq-step1-pencil disables it\n");
     printf("    -> --mq-step1-simplex enables parallel total-degree MQ interpolation (default off); --no-mq-step1-simplex disables it\n");
     printf("    -> --no-mq-step1-filter disables the default Step 1 coefficient filtering for prime and extension fields, single-parameter MQ systems\n");
     printf("    -> --mq-step4-schur enables checked Schur compression for single-parameter systems of any degree over prime and extension fields, automatic/HNF Step 4 (default on); --no-mq-step4-schur disables it\n");
-    printf("    -> Complement-first minor selection is default on for eligible prime-field systems; --no-schur-seed disables it while retaining Step 4 Schur compression\n");
+    printf("    -> Complement-first minor selection is default on for eligible prime and extension-field systems; --no-schur-seed disables it while retaining Step 4 Schur compression\n");
     printf("    -> --fq-det-method (auto|hnf|iter|interp) controls the prime-field univariate polynomial-matrix determinant backend used in fq_poly_mat_det\n");
     printf("    -> --cache limits live minor DP entries (method 0); smaller subproblems are used when full layers do not fit; 0 disables DP\n");
     printf("    -> --array-limit-k <k> caps optimized extension-field array multiplication tables at 2^k entries (0-62)\n");

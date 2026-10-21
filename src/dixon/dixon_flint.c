@@ -5401,7 +5401,7 @@ static void dixon_mq_step4_prepare_predicted(dixon_mq_step4_profile *out,
 }
 
 /* Preserve actual monomial weights even when the predicted Hilbert-layer
- * quotas cannot be matched. Native prime-field Step 4 can certify a partial
+ * quotas cannot be matched. Step 4 can certify a partial
  * complement directly from the coefficient matrix. */
 static void dixon_mq_step4_prepare(dixon_mq_step4_profile *out,
     const monom_t *rm, const monom_t *cm, const slong *rows,
@@ -5428,14 +5428,19 @@ static int dixon_mq_step4_try(fq_nmod_poly_t det, const fq_nmod_poly_mat_t matri
     if (!size || size != matrix->r || matrix->r != matrix->c) return 0;
     double start = get_wall_time();
     if (fq_nmod_ctx_degree(ctx) != 1) {
-        if(!p->size) return 0;
+        if(g_field_equation_reduction) return 0;
         fq_nmod_poly_mat_t core;
         fq_nmod_poly_mat_init(core, p->h, p->h, ctx);
         fq_nmod_t factor; fq_nmod_init(factor, ctx);
-        int ok = !g_field_equation_reduction && dixon_extension_schur(core, factor, matrix, p, ctx);
+        int adaptive = 0;
+        int ok = p->size && dixon_extension_schur(core, factor, matrix, p, ctx);
+        if (!ok) {
+            ok = dixon_extension_schur_adaptive(core, factor, matrix, p, ctx);
+            adaptive = ok;
+        }
         if (ok) {
-            dixon_info_log("  Step 4 Schur (extension field): %ld -> %ld, compression %.3fs\n",
-                           p->size, p->h, get_wall_time()-start);
+            dixon_info_log("  Step 4 %sSchur (extension field): %ld -> %ld, compression %.3fs\n",
+                           adaptive ? "adaptive " : "", size, core->r, get_wall_time()-start);
             fq_nmod_poly_mat_det_iter(det, core, ctx);
             fq_nmod_poly_scalar_mul_fq_nmod(det, det, factor, ctx);
         } else
@@ -5498,6 +5503,7 @@ static int dixon_mq_step4_try(fq_nmod_poly_t det, const fq_nmod_poly_mat_t matri
 #include "dixon_compact_matrix.h"
 #include "dixon_native.h"
 #include "dixon_pipeline.h"
+#include "dixon_recursive_extension_schur.h"
 
 int dixon_bivariate_native_eligible(const unified_mpoly_struct *polys, slong nvars, slong npars)
 {
@@ -6701,11 +6707,16 @@ static void dixon_step4_resultant(unified_mpoly_struct *result,
          * Do not deflate that matrix before asking the native backend. */
         int native=recursive && recursive->enabled && method==DET_METHOD_KRONECKER &&
                    dixon_bivariate_native_eligible(polys,nvars,npars);
+        int extension_schur = recursive && recursive->variable_degrees &&
+            g_dixon_mq_step4_schur && !g_field_equation_reduction &&
+            method == DET_METHOD_KRONECKER && fq_nmod_ctx_degree(polys[0].ctx) > 1 &&
+            dixon_mq_step4_eligible(polys,nvars,npars) &&
+            dixon_recursive_extension_schur(result,matrix,size,polys,nvars,recursive);
         if (native) {
             dixon_debug_log("  Using native bivariate Step 4 with checked complement compression...\n");
             dixon_bivariate_native_selected_det(result,matrix,size,recursive->rows,
                                                 recursive->cols,recursive->y_degree,polys);
-        } else {
+        } else if (!extension_schur) {
             slong content=extract_fq_matrix_x_content(matrix,size,npars);
             extracted_power+=content;
             if (content>0) dixon_info_log("  Pre-determinant row/column x-content: x^%ld\n",content);
@@ -6775,7 +6786,7 @@ int dixon_try_mq_quotient_resultant(unified_mpoly_struct *result,
 #endif
     dixon_info_log("\nExperimental Dixon resultant via quotient-space Bezoutian\n");
     int general=0;
-    if(g_dixon_mq_quotient>0 && npars==1 && nvars>=1 && nvars<=7) {
+    if(g_dixon_mq_quotient>0 && npars==1 && nvars>=1) {
         for(slong f=0;f<=nvars;f++) {
             slong maximum=0;
             for(slong t=0;t<dr_mpoly_length(polys+f);t++) {

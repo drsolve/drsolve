@@ -63,7 +63,7 @@ static int dixon_extension_schur(fq_nmod_poly_mat_t core, fq_nmod_t factor,
     const fq_nmod_ctx_t ctx)
 {
     slong n = p->size, h = p->h, budget = 0;
-    if (!n || matrix->r != n || matrix->c != n || h <= 0 || h >= n || p->sigma < 0) return 0;
+    if (!n || matrix->r != n || matrix->c != n || h < 0 || h >= n || p->sigma < 0) return 0;
     for (slong i = 0; i < n; i++) {
         if (p->rd[i] < 0 || p->cd[i] < 0 || p->rd[i] > p->sigma || p->cd[i] > p->sigma) return 0;
         if (i >= h) budget += p->sigma-p->rd[i]-p->cd[i];
@@ -95,5 +95,88 @@ static int dixon_extension_schur(fq_nmod_poly_mat_t core, fq_nmod_t factor,
     default: ok = dixon_schur_fq(core, factor, matrix, p, rows, cols, ctx); break;
     }
     field_ctx_clear(&field); flint_free(rows); flint_free(cols);
+    return ok;
+}
+
+/* Exact degree-layer pivot selection also works when the predicted Hilbert
+ * quotas fail. Negative degree bounds make the selected complement block
+ * triangular, with nonsingular constant diagonal blocks certified by LU.
+ * Keep original matrix indices so the existing native kernels need no copy. */
+static int dixon_extension_schur_adaptive(fq_nmod_poly_mat_t core,
+    fq_nmod_t factor, const fq_nmod_poly_mat_t matrix,
+    const dixon_mq_step4_profile *p, const fq_nmod_ctx_t ctx)
+{
+    slong n = matrix->r, sigma = p->size ? p->sigma : p->adaptive_sigma;
+    const slong *rd = p->size ? p->rd : p->adaptive_rd;
+    const slong *cd = p->size ? p->cd : p->adaptive_cd;
+    if (!n || n != matrix->c || !rd || !cd || sigma < 0) return 0;
+    for (slong i = 0; i < n; i++) {
+        if (rd[i] < 0 || cd[i] < 0 || rd[i] > sigma || cd[i] > sigma) return 0;
+        for (slong j = 0; j < n; j++) {
+            const fq_nmod_poly_struct *a = fq_nmod_poly_mat_entry(matrix,
+                p->size ? p->rows[i] : i, p->size ? p->cols[j] : j);
+            if (a->length && a->length-1 > sigma-rd[i]-cd[j]) return 0;
+        }
+    }
+    slong *ri = flint_malloc(n*sizeof(slong)), *ci = flint_malloc(n*sizeof(slong));
+    slong *perm = flint_malloc(n*sizeof(slong));
+    slong *rows = flint_malloc(n*sizeof(slong)), *cols = flint_malloc(n*sizeof(slong));
+    unsigned char *usedr = flint_calloc(n,1), *usedc = flint_calloc(n,1);
+    slong count = 0;
+    for (slong degree = 0; degree <= sigma; degree++) {
+        slong nr = 0, nc = 0;
+        for (slong i = 0; i < n; i++) {
+            if (rd[i] == degree) ri[nr++] = i;
+            if (cd[i] == sigma-degree) ci[nc++] = i;
+        }
+        if (!nr || !nc) continue;
+        fq_nmod_mat_t block;
+        fq_nmod_mat_init(block,nr,nc,ctx);
+        for (slong i = 0; i < nr; i++) for (slong j = 0; j < nc; j++)
+            fq_nmod_poly_get_coeff(fq_nmod_mat_entry(block,i,j),
+                fq_nmod_poly_mat_entry(matrix,p->size ? p->rows[ri[i]] : ri[i],
+                    p->size ? p->cols[ci[j]] : ci[j]),0,ctx);
+        slong rank = fq_nmod_mat_lu(perm,block,0,ctx), next = 0;
+        for (slong i = 0; i < rank; i++) {
+            while (next < nc && fq_nmod_is_zero(fq_nmod_mat_entry(block,i,next),ctx)) next++;
+            rows[count] = ri[perm[i]]; cols[count] = ci[next++];
+            usedr[rows[count]] = usedc[cols[count]] = 1; count++;
+        }
+        fq_nmod_mat_clear(block,ctx);
+    }
+    int ok = 0;
+    if (count) {
+        slong h = n-count;
+        memmove(rows+h,rows,count*sizeof(slong));
+        memmove(cols+h,cols,count*sizeof(slong));
+        slong r = 0, c = 0;
+        for (slong i = 0; i < n; i++) {
+            if (!usedr[i]) rows[r++] = i;
+            if (!usedc[i]) cols[c++] = i;
+        }
+        dixon_mq_step4_profile selected = {.size=n, .h=h, .sigma=sigma};
+        selected.rows = flint_malloc(n*sizeof(slong));
+        selected.cols = flint_malloc(n*sizeof(slong));
+        selected.rd = flint_malloc(n*sizeof(slong));
+        selected.cd = flint_malloc(n*sizeof(slong));
+        for (slong i = 0; i < n; i++) {
+            selected.rd[i] = rd[rows[i]]; selected.cd[i] = cd[cols[i]];
+            selected.rows[i] = p->size ? p->rows[rows[i]] : rows[i];
+            selected.cols[i] = p->size ? p->cols[cols[i]] : cols[i];
+        }
+        selected.odd = dixon_mq_step4_permutation_odd(selected.rows,n) ^
+                       dixon_mq_step4_permutation_odd(selected.cols,n);
+        fq_nmod_poly_mat_t candidate;
+        fq_nmod_poly_mat_init(candidate,h,h,ctx);
+        ok = dixon_extension_schur(candidate,factor,matrix,&selected,ctx);
+        if (ok) {
+            fq_nmod_poly_mat_struct swap = *core;
+            *core = *candidate; *candidate = swap;
+        }
+        fq_nmod_poly_mat_clear(candidate,ctx);
+        dixon_mq_step4_profile_clear(&selected);
+    }
+    flint_free(usedr); flint_free(usedc); flint_free(rows); flint_free(cols);
+    flint_free(ri); flint_free(ci); flint_free(perm);
     return ok;
 }

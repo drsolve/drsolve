@@ -132,6 +132,9 @@ input_done:
 int dr_mq_quotient_resultant(unified_mpoly_struct *result,
     const unified_mpoly_struct *polys,slong nv,slong np,slong workers,mq_quotient_stats *stats)
 {
+    if(fq_nmod_ctx_degree(polys[0].ctx)>1)
+        return dr_mq_extension_quotient_resultant(result,polys,nv,np,workers,stats);
+
     int ok;mq_quotient_stats local;if(!stats)stats=&local;
     /* The recurrence's shared context is immutable inside the sample team. */
     #pragma omp critical(drsolve_quotient_context)

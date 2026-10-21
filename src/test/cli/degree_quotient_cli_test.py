@@ -36,7 +36,7 @@ for degrees in ("[3]*3", "[3]*5", "[8]*3", "[2,3,4]", "[1,3,5]", "[20]*2"):
         check(f"{degrees}_{seed}", ["-r", degrees, "65537", "--seed", str(seed)], True)
 check("mq", ["-r", "[2]*4", "65537", "--seed", "12345"], False)
 check("small_prime", ["-r", "[3]*3", "7", "--seed", "12345"], False)
-check("extension", ["-r", "[3]*3", "2^8", "--seed", "12345"], False)
+check("extension", ["-r", "[3]*3", "2^8", "--seed", "12345"], True)
 # Rejected genericity should safely fall back even after the core path starts.
 check("singular", ["x^3+y^3+z,x^3+y^3+x+1,x^3+y^3+y+2", "x,y", "65537"], True, True)
 
