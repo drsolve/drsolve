@@ -73,36 +73,6 @@ Use `--no-quotient` to disable it in resultant and solving modes;
 over automatic selection. `--quotient` explicitly enables the construction;
 inputs rejected by its rank or degree checks fall back to Dixon.
 
-Explicit `--quotient` also supports square systems over extension fields, for
-quadratic and general positive degrees, with one variable retained. There is no
-fixed equation-count or memory-budget cutoff; dimension and address-space
-overflow checks reject only workspaces that cannot be represented.
-MQ systems reuse the prime kernel's shared leading Macaulay frames and linear
-multiplication-map recurrence. GF(16)/GF(256) additionally use compact byte minors,
-SIMD field accumulation, and maps allocated one recurrence layer at a time.
-General degrees use grouped recurrence with dynamically indexed monomials;
-packed MQ keys that do not fit select this general representation.
-Both paths use the native binary-field
-backends for GF(2^4), GF(2^8), GF(2^16), GF(2^32), GF(2^64), and GF(2^128), and the
-unified field interface for other extensions. `--threads` parallelizes samples.
-The existing prime-field MQ fast kernel and automatic selection are unchanged.
-
-```bash
-./drsolve -r '[2]*8' '2^8' --quotient --seed 12345 --threads 4
-./drsolve -r '[3]*6' '2^8' --quotient --seed 12345 --threads 4
-./drsolve -r '[3]*3' '3^3' --quotient --seed 12345
-make test-extension-quotient
-```
-
-For degrees `d_i`, the general-degree extension path needs at least `sum(d_i - 1) + 5`
-distinct field elements; the MQ fast path needs `N + 4` for `N` equations. Both
-include two validation points. They enumerate elements
-in a polynomial basis rather than embedding integer constants in the prime
-subfield. Insufficient field size, nongeneric ranks, changing quotient bases,
-or failed interpolation/determinant degree checks cause a diagnostic fallback
-to Dixon. This construction is distinct from the `--solver quotient` closure
-solver and does not use its degree or memory budgets.
-
 #### Polynomial system solver
 ```bash
 ./drsolve "polynomials" field_size
@@ -283,21 +253,6 @@ Example:
 - Sets the number of threads for parallel computation
 
 #### Step 4 determinant options
-
-Checked Schur compression is enabled by default for eligible single-parameter
-Dixon matrices over prime and extension fields, including recursive Dixon.
-Step 3 uses complement-first (Schur-first) selection in both prime and
-extension fields; `--no-schur-seed` disables this selection while retaining
-Step 4 compression. Extension completion samples the extension generator and
-the generator plus one, retaining full field coefficients. GF(16)/GF(256)
-selection uses compact byte matrices, SIMD row operations and parallel matrix
-products; other extensions retain the general FLINT matrix backend.
-If the predicted complement fails, exact degree-layer pivoting selects a
-smaller usable complement. GF(2^n) uses the native arithmetic kernels; other
-extensions use the general field interface. A failed degree or invertibility
-certificate falls back to the original determinant backend. Disable with
-`--no-mq-step4-schur`; run `make test-extension-schur` for regression checks.
-
 ```bash
 ./drsolve --fq-det-method hnf <args>
 ./drsolve --fq-det-method iter <args>
@@ -352,8 +307,8 @@ python3 src/test/mq/degree_quotient_experiment.py --cases 3:4 3:5 3:2,3,4 --repe
 ```
 
 Results and per-run timings are written to `out/degree_quotient_experiment/`.
-The experiment uses dynamically indexed monomials, subject to address-space
-checks and its optional estimated storage limit (512 MiB by default). It requires generic Macaulay ranks and a
+The experiment supports 2–8 variables within its packed-exponent and estimated
+storage limits (512 MiB by default). It requires generic Macaulay ranks and a
 fixed quotient basis across interpolation points; unsupported cases are
 reported as errors. This remains an experimental executable, separate from
 the optimized MQ backend selected by `drsolve --quotient`.
