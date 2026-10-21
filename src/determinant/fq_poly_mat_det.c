@@ -5,6 +5,7 @@
 #include <flint/nmod_mat.h>
 #include "poly_mat_eval_batch.h"
 #include "gf28_poly_mat_det.h"
+#include "unified_mat_poly.h"
 #include <stdlib.h>
 #include <string.h>
 #ifdef _OPENMP
@@ -12,6 +13,9 @@
 #endif
 extern double get_wall_time(void);
 extern int g_dixon_verbose_level;
+static void fq_nmod_poly_mat_det_dispatch(fq_nmod_poly_t det,
+    fq_nmod_poly_mat_t mat, const fq_nmod_ctx_t ctx, int force_hnf);
+
 
 extern int g_dixon_debug_mode;
 
@@ -565,7 +569,7 @@ void fq_nmod_poly_mat_det_hnf(fq_nmod_poly_t det,
     }
 #endif
 
-    fq_nmod_poly_mat_det_iter(det, mat, ctx);
+    fq_nmod_poly_mat_det_dispatch(det, mat, ctx, 1);
 }
 
 void fq_nmod_poly_mat_det_prime_iter(fq_nmod_poly_t det,
@@ -740,7 +744,13 @@ void dixon_nmod_poly_mat_det(nmod_poly_t det, nmod_poly_mat_t mat)
 
 void fq_nmod_poly_mat_det_iter(fq_nmod_poly_t det,
                               fq_nmod_poly_mat_t mat,
-                              const fq_nmod_ctx_t ctx) {
+                              const fq_nmod_ctx_t ctx)
+{
+    fq_nmod_poly_mat_det_dispatch(det, mat, ctx, 0);
+}
+
+static void fq_nmod_poly_mat_det_dispatch(fq_nmod_poly_t det,
+    fq_nmod_poly_mat_t mat, const fq_nmod_ctx_t ctx, int force_hnf) {
     if (mat->r == 0) {
         fq_nmod_poly_one(det, ctx);
         return;
@@ -817,6 +827,20 @@ void fq_nmod_poly_mat_det_iter(fq_nmod_poly_t det,
     }
 #endif
     
+    /* Prime-field dispatch above remains unchanged. Extension fields use
+     * exact unified HNF unless the iterative backend was requested. */
+    extern int g_field_equation_reduction;
+    if (fq_nmod_ctx_degree(ctx) > 1 && !g_field_equation_reduction &&
+        (force_hnf || fq_nmod_poly_mat_det_get_method() != FQ_NMOD_POLY_DET_METHOD_ITER)) {
+        double started = get_wall_time();
+        int ok = unified_fq_poly_mat_det_hnf(det, mat, ctx);
+        if (g_dixon_verbose_level >= 2)
+            printf("  Unified extension HNF: %ld x %ld, %.3fs, %s\n",
+                   mat->r, mat->c, get_wall_time()-started,
+                   ok ? "exact" : "structural fallback to iterative");
+        if (ok) return;
+    }
+
     /* Initialize field context with compile-time dispatch */
     field_ctx_t field_ctx;
     field_ctx_init(&field_ctx, ctx);

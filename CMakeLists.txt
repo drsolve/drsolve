@@ -647,6 +647,8 @@ set(MATH_SOURCES
   src/determinant/unified_mpoly_det.c
   src/field/dr_mpoly.c
   src/field/fq_unified_interface.c
+  src/matrix/unified_mat_poly.c
+  src/determinant/unified_hnf.c
   src/field/gf2n_field.c
   src/field/gf2n_mpoly.c
   src/field/gf2n_poly.c
@@ -1085,6 +1087,19 @@ if(BUILD_TESTING)
     target_sources(byte_poly_mat_det_test PRIVATE ${MATH_SOURCES})
   endif()
   add_test(NAME drsolve_byte_poly_det COMMAND byte_poly_mat_det_test)
+
+  add_executable(unified_hnf_test src/test/matrix/unified_hnf_test.c)
+  drsolve_target_common(unified_hnf_test)
+  target_compile_options(unified_hnf_test PRIVATE -UNDEBUG)
+  if(TARGET drsolve_static)
+    target_link_libraries(unified_hnf_test PRIVATE drsolve_static)
+  elseif(TARGET drsolve_shared)
+    target_link_libraries(unified_hnf_test PRIVATE drsolve_shared)
+  else()
+    target_sources(unified_hnf_test PRIVATE ${MATH_SOURCES})
+  endif()
+  add_test(NAME drsolve_unified_hnf COMMAND unified_hnf_test)
+
 
   add_executable(mq_gf2n_test src/test/mq/mq_gf2n_test.c)
   drsolve_target_common(mq_gf2n_test)

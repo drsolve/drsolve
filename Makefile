@@ -168,6 +168,8 @@ MATH_SOURCES = $(SRC_DIR)/dixon/dixon_complexity.c \
                $(SRC_DIR)/determinant/unified_mpoly_det.c \
                $(SRC_DIR)/field/dr_mpoly.c \
                $(SRC_DIR)/field/fq_unified_interface.c \
+               $(SRC_DIR)/matrix/unified_mat_poly.c \
+               $(SRC_DIR)/determinant/unified_hnf.c \
                $(SRC_DIR)/field/gf2n_field.c \
                $(SRC_DIR)/field/gf2n_mpoly.c \
                $(SRC_DIR)/field/gf2n_poly.c \
@@ -1238,3 +1240,9 @@ test-extension-schur: $(BUILD_DIR)/dixon_schur_repair_test drsolve-dynamic
 $(BUILD_DIR)/dixon/dixon_flint.o $(BUILD_DIR)/dixon_schur_repair_test: $(SRC_DIR)/dixon/dixon_schur_seed_template.h
 
 $(BUILD_DIR)/dixon/dixon_flint.o $(BUILD_DIR)/dixon_schur_repair_test: $(SRC_DIR)/dixon/dixon_schur_seed_byte.h $(SRC_DIR)/solver/quotient_byte.h
+
+$(BUILD_DIR)/unified_hnf_test: $(SRC_DIR)/test/matrix/unified_hnf_test.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+.PHONY: test-unified-hnf
+test-unified-hnf: $(BUILD_DIR)/unified_hnf_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=1 ./$(BUILD_DIR)/unified_hnf_test

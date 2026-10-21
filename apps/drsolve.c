@@ -296,7 +296,7 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    -> --no-mq-step1-filter disables the default Step 1 coefficient filtering for prime and extension fields, single-parameter MQ systems\n");
     printf("    -> --mq-step4-schur enables checked Schur compression for single-parameter systems of any degree over prime and extension fields, automatic/HNF Step 4 (default on); --no-mq-step4-schur disables it\n");
     printf("    -> Complement-first minor selection is default on for eligible prime and extension-field systems; --no-schur-seed disables it while retaining Step 4 Schur compression\n");
-    printf("    -> --fq-det-method (auto|hnf|iter|interp) controls the prime-field univariate polynomial-matrix determinant backend used in fq_poly_mat_det\n");
+    printf("    -> --fq-det-method (auto|hnf|iter|interp) controls the univariate determinant backend: prime-field PML or extension-field unified HNF; interp is prime-field only\n");
     printf("    -> --cache limits live minor DP entries (method 0); smaller subproblems are used when full layers do not fit; 0 disables DP\n");
     printf("    -> --array-limit-k <k> caps optimized extension-field array multiplication tables at 2^k entries (0-62)\n");
     printf("    -> --fast-ksy enables a KSY precondition check for method 5 submatrix extraction; --no-fast-ksy disables it\n");
