@@ -324,6 +324,21 @@ void dr_mpoly_scalar_mul(unified_mpoly_struct *out, const unified_mpoly_struct *
 void dr_mpoly_pow(unified_mpoly_struct *out, const unified_mpoly_struct *in, slong power)
 {
     assert(power >= 0);
+    dr_mpoly_normalize((unified_mpoly_t)in);
+    /* Share the monomial fast path with callers of the unified interface. */
+    if (!g_field_equation_reduction && dr_mpoly_length(in) <= 1) {
+        unified_mpoly_struct result = {0};
+        dr_mpoly_init(&result, in->nvars, in->npars, in->ctx);
+        fmpz_t exponent;
+        fmpz_init_set_ui(exponent, (ulong)power);
+        int ok = unified_mpoly_pow_fmpz(&result, (unified_mpoly_t)in, exponent);
+        fmpz_clear(exponent);
+        if (ok) {
+            dr_mpoly_move(out, &result);
+            return;
+        }
+        dr_mpoly_clear(&result);
+    }
     unified_mpoly_struct a = {0}, r = {0};
     dr_mpoly_copy(&a, in);
     dr_mpoly_init(&r, in->nvars, in->npars, in->ctx);

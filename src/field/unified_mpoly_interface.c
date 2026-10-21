@@ -467,6 +467,18 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                      const unified_mpoly_t poly3) {
     unified_mpoly_ctx_t ctx = poly1->ctx_ptr;
     
+    /* A scalar or monomial product is already cheap in FLINT's sparse
+     * storage. Avoid converting it to and from the binary-field kernels. */
+    if (poly1->field_id != FIELD_ID_NMOD &&
+        poly1->field_id != FIELD_ID_FQ_ZECH &&
+        (GET_FQ_POLY(poly2)->length <= 1 || GET_FQ_POLY(poly3)->length <= 1)) {
+        fq_nmod_mpoly_mul(GET_FQ_POLY(poly1), GET_FQ_POLY(poly2),
+                         GET_FQ_POLY(poly3), GET_FQ_CTX(ctx));
+        if (g_field_equation_reduction)
+            unified_mpoly_reduce_field_equation_inplace(poly1);
+        return 1;
+    }
+
     switch (poly1->field_id) {
         case FIELD_ID_NMOD:
             nmod_mpoly_mul(GET_NMOD_POLY(poly1), GET_NMOD_POLY(poly2),
@@ -1339,6 +1351,27 @@ int unified_mpoly_pow_fmpz(unified_mpoly_t poly1, const unified_mpoly_t poly2,
         return 1;
     }
     
+    /* FLINT raises a monomial by scaling its exponents and powering its
+     * coefficient; no repeated multivariate multiplication is needed. */
+    if (!g_field_equation_reduction && unified_mpoly_length(poly2) <= 1) {
+        unified_mpoly_ctx_t ctx = poly1->ctx_ptr;
+        switch (poly1->field_id) {
+            case FIELD_ID_NMOD:
+                return nmod_mpoly_pow_fmpz(GET_NMOD_POLY(poly1), GET_NMOD_POLY(poly2),
+                                            exp, GET_NMOD_CTX(ctx));
+            case FIELD_ID_FQ_ZECH:
+                /* Some FLINT releases declare, but do not export, the
+                 * Zech fmpz variant. Retain binary powering for huge powers. */
+                if (fmpz_abs_fits_ui(exp))
+                    return fq_zech_mpoly_pow_ui(GET_ZECH_POLY(poly1), GET_ZECH_POLY(poly2),
+                                                fmpz_get_ui(exp), GET_ZECH_CTX(ctx));
+                break;
+            default:
+                return fq_nmod_mpoly_pow_fmpz(GET_FQ_POLY(poly1), GET_FQ_POLY(poly2),
+                                               exp, GET_FQ_CTX(ctx));
+        }
+    }
+
     /* Binary exponentiation */
     unified_mpoly_ctx_t ctx = poly1->ctx_ptr;
     unified_mpoly_t temp = unified_mpoly_init(ctx);
@@ -1353,8 +1386,9 @@ int unified_mpoly_pow_fmpz(unified_mpoly_t poly1, const unified_mpoly_t poly2,
         if (fmpz_is_odd(e)) {
             unified_mpoly_mul(result, result, temp);
         }
-        unified_mpoly_mul(temp, temp, temp);
         fmpz_fdiv_q_2exp(e, e, 1);
+        if (!fmpz_is_zero(e))
+            unified_mpoly_mul(temp, temp, temp);
     }
     
     unified_mpoly_set(poly1, result);

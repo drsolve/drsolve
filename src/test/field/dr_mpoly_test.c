@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "dr_mpoly.h"
+#include "dixon_interface_flint.h"
 #include <assert.h>
 
 static void equal_native(const unified_mpoly_struct *actual, const fq_nmod_mpoly_t expected,
@@ -10,6 +11,63 @@ static void equal_native(const unified_mpoly_struct *actual, const fq_nmod_mpoly
     dr_mpoly_to_fq_nmod_mpoly(got, actual, ctx);
     assert(fq_nmod_mpoly_equal(got, expected, ctx));
     fq_nmod_mpoly_clear(got, ctx);
+}
+
+/* Exercise the same expression parser used by resultant solving and
+ * back substitution, including extension coefficients and nested sums. */
+static void check_parser(const fq_nmod_ctx_t field)
+{
+    char *variables[] = {"x", "y"};
+    char *parameters[16] = {"z"};
+    parser_state_t state = {0};
+    state.input = "(a+1)^3*x^2402*y^3*z^2 + (x+y)^3 - x^2402*y^3*z^2";
+    state.len = strlen(state.input);
+    state.var_names = variables;
+    state.nvars = 2;
+    state.par_names = parameters;
+    state.npars = 1;
+    state.max_pars = 16;
+    state.ctx = field;
+    state.generator_name = "a";
+    fq_nmod_init(state.current.value, field);
+    unified_mpoly_struct parsed = {0};
+    dr_mpoly_init(&parsed, 2, 1, field);
+    next_token(&state);
+    parse_expression(&state, &parsed);
+    assert(state.current.type == TOK_EOF && state.npars == 1);
+    dr_mpoly_normalize(&parsed);
+
+    fq_nmod_mpoly_ctx_t ctx;
+    fq_nmod_mpoly_ctx_init(ctx, 3, ORD_LEX, field);
+    fq_nmod_mpoly_t expected, x, y;
+    fq_nmod_mpoly_init(expected, ctx);
+    fq_nmod_mpoly_init(x, ctx);
+    fq_nmod_mpoly_init(y, ctx);
+    fq_nmod_t c, one;
+    fq_nmod_init(c, field);
+    fq_nmod_init(one, field);
+    fq_nmod_one(one, field);
+    fq_nmod_gen(c, field);
+    fq_nmod_add(c, c, one, field);
+    fq_nmod_pow_ui(c, c, 3, field);
+    fq_nmod_sub(c, c, one, field);
+    ulong exp[] = {2402, 3, 2};
+    fq_nmod_mpoly_set_coeff_fq_nmod_ui(expected, c, exp, ctx);
+    fq_nmod_mpoly_gen(x, 0, ctx);
+    fq_nmod_mpoly_gen(y, 1, ctx);
+    fq_nmod_mpoly_add(x, x, y, ctx);
+    assert(fq_nmod_mpoly_pow_ui(x, x, 3, ctx));
+    fq_nmod_mpoly_add(expected, expected, x, ctx);
+    equal_native(&parsed, expected, ctx);
+    fq_nmod_clear(c, field);
+    fq_nmod_clear(one, field);
+    fq_nmod_mpoly_clear(expected, ctx);
+    fq_nmod_mpoly_clear(x, ctx);
+    fq_nmod_mpoly_clear(y, ctx);
+    fq_nmod_mpoly_ctx_clear(ctx);
+    dr_mpoly_clear(&parsed);
+    fq_nmod_clear(state.current.value, field);
+    free(state.current.str);
 }
 
 static void check_field(ulong prime, slong degree)
@@ -102,8 +160,59 @@ static void check_field(ulong prime, slong degree)
         dr_mpoly_normalize(&result);
         equal_native(&result, a, ctx);
     }
+    /* High-degree monomials: nontrivial coefficients, parameters, aliases,
+     * zero powers, and monomial times a many-term polynomial. */
+    for (int trial = 0; trial < 5; trial++) {
+        slong exponent = trial == 0 ? 0 : trial == 1 ? 1 : 2402;
+        ulong exp[3] = {2, 1, 3};
+        fq_nmod_randtest_not_zero(coefficient, random, field);
+        fq_nmod_mpoly_zero(a, ctx);
+        fq_nmod_mpoly_set_coeff_fq_nmod_ui(a, coefficient, exp, ctx);
+        fq_nmod_mpoly_to_dr_mpoly(&x, a, 2, 1, ctx, field);
+        assert(fq_nmod_mpoly_pow_ui(reference, a, exponent, ctx));
+        dr_mpoly_pow(&result, &x, exponent);
+        equal_native(&result, reference, ctx);
+        dr_mpoly_copy(&moved, &x);
+        fmpz_t power;
+        fmpz_init_set_ui(power, exponent);
+        assert(unified_mpoly_pow_fmpz(&moved, &moved, power));
+        fmpz_clear(power);
+        equal_native(&moved, reference, ctx);
+        dr_mpoly_pow(&x, &x, exponent);
+        equal_native(&x, reference, ctx);
+        fq_nmod_mpoly_randtest_bound(b, random, 27, 3, ctx);
+        fq_nmod_mpoly_to_dr_mpoly(&y, b, 2, 1, ctx, field);
+        fq_nmod_mpoly_mul(reference, reference, b, ctx);
+        dr_mpoly_mul(&x, &x, &y);
+        equal_native(&x, reference, ctx);
+        dr_mpoly_pow(&y, &y, 0);
+        assert(unified_mpoly_is_one(&y));
+    }
+    /* Noncanonical cancellation and a genuinely polynomial power. */
+    dr_mpoly_init(&x, 2, 1, field);
+    slong zero_exp[3] = {0, 0, 0};
+    fq_nmod_one(coefficient, field);
+    dr_mpoly_add_term_fast(&x, zero_exp, zero_exp + 2, coefficient);
+    fq_nmod_neg(coefficient, coefficient, field);
+    dr_mpoly_add_term_fast(&x, zero_exp, zero_exp + 2, coefficient);
+    dr_mpoly_pow(&x, &x, 7);
+    assert(unified_mpoly_is_zero(&x));
+    dr_mpoly_pow(&x, &x, 0);
+    assert(unified_mpoly_is_one(&x));
+    fq_nmod_mpoly_randtest_bound(a, random, 5, 3, ctx);
+    fq_nmod_mpoly_to_dr_mpoly(&x, a, 2, 1, ctx, field);
+    assert(fq_nmod_mpoly_pow_ui(reference, a, 3, ctx));
+    dr_mpoly_copy(&moved, &x);
+    fmpz_t cube;
+    fmpz_init_set_ui(cube, 3);
+    assert(unified_mpoly_pow_fmpz(&moved, &moved, cube));
+    fmpz_clear(cube);
+    equal_native(&moved, reference, ctx);
+    dr_mpoly_pow(&x, &x, 3);
+    equal_native(&x, reference, ctx);
+
     /* Explicit field-equation reduction, including the parameter coordinate. */
-    if (prime < 300 && degree <= 2) {
+    if (prime < 300 && degree <= 8) {
         ulong q = 1;
         for (slong i = 0; i < degree; i++)
             q *= prime;
@@ -124,6 +233,14 @@ static void check_field(ulong prime, slong degree)
         fq_nmod_mpoly_zero(reference, ctx);
         fq_nmod_mpoly_set_coeff_fq_nmod_ui(reference, coefficient, reduced, ctx);
         equal_native(&result, reference, ctx);
+        dr_mpoly_set_field_equation_reduction(1);
+        dr_mpoly_pow(&result, &x, 19);
+        dr_mpoly_set_field_equation_reduction(0);
+        reduced[0] = 1 + (19 * (1 + q % (q - 1)) - 1) % (q - 1);
+        reduced[2] = 1 + 18 % (q - 1);
+        fq_nmod_mpoly_zero(reference, ctx);
+        fq_nmod_mpoly_set_coeff_fq_nmod_ui(reference, coefficient, reduced, ctx);
+        equal_native(&result, reference, ctx);
     }
     dr_mpoly_clear(&moved);
     dr_mpoly_clear(&result);
@@ -134,6 +251,7 @@ static void check_field(ulong prime, slong degree)
     fq_nmod_mpoly_clear(reference, ctx);
     fq_nmod_mpoly_clear(b, ctx);
     fq_nmod_mpoly_clear(a, ctx);
+    check_parser(field);
     flint_rand_clear(random);
     fq_nmod_mpoly_ctx_clear(ctx);
     fq_nmod_ctx_clear(field);
@@ -193,6 +311,10 @@ int main(void)
     check_field(2, 4);
     check_field(2, 8);
     check_field(65537, 2);
+    check_field(2, 16);
+    check_field(2, 32);
+    check_field(2, 64);
+    check_field(2, 128);
     check_zech();
     puts("Native polynomial storage: arithmetic, aliasing, ownership, division and reduction PASS");
     flint_cleanup_master();
