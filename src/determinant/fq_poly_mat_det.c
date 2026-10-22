@@ -445,6 +445,8 @@ static int dixonres_nmod_poly_mat_det_hnf_exact(nmod_poly_t det,
     return 1;
 }
 
+#endif
+
 static void fq_nmod_poly_mat_convert_to_nmod(nmod_poly_mat_t nmod_mat,
                                              fq_nmod_poly_mat_t mat,
                                              const fq_nmod_ctx_t ctx) {
@@ -483,7 +485,6 @@ static void fq_nmod_poly_convert_from_nmod(fq_nmod_poly_t det,
         }
     }
 }
-#endif
 
 /* ============================================================================
    MAIN ENTRY POINT - IMPLEMENTATION

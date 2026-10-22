@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Compare explicitly enabled grouped quotient resultants with Dixon."""
+import argparse
 import os
 from pathlib import Path
 import subprocess
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--binary", default="./drsolve")
+args = parser.parse_args()
 
 output = Path("out/degree_quotient_cli")
 output.mkdir(parents=True, exist_ok=True)
@@ -14,7 +19,7 @@ def check(name, arguments, grouped, fallback=False):
     for enabled in (False, True):
         path = output / f"{name}_{enabled}.dr"
         p = subprocess.run(
-            ["./drsolve", *arguments, "--quotient" if enabled else "--no-quotient",
+            [args.binary, *arguments, "--quotient" if enabled else "--no-quotient",
              "--threads", "1", "-v", "1", "-o", str(path)],
             capture_output=True, text=True, env=env, timeout=120, check=True)
         log = p.stdout + p.stderr
@@ -41,7 +46,7 @@ check("extension", ["-r", "[3]*3", "2^8", "--seed", "12345"], True)
 check("singular", ["x^3+y^3+z,x^3+y^3+x+1,x^3+y^3+y+2", "x,y", "65537"], True, True)
 
 # Non-MQ automatic selection stays on the established Dixon path.
-p = subprocess.run(["./drsolve", "-r", "[3]*3", "65537", "--seed", "12345",
+p = subprocess.run([args.binary, "-r", "[3]*3", "65537", "--seed", "12345",
                     "--threads", "1", "-v", "1"], env=env, capture_output=True,
                    text=True, timeout=30, check=True)
 assert "grouped quotient recurrence" not in p.stdout
@@ -51,7 +56,7 @@ solutions = []
 for enabled in (False, True):
     path = output / f"solve_{enabled}.dr"
     p = subprocess.run(
-        ["./drsolve", "-r", "[3]*3", "257", "--seed", "12345", "-s",
+        [args.binary, "-r", "[3]*3", "257", "--seed", "12345", "-s",
          "--quotient" if enabled else "--no-quotient", "--threads", "4", "-v", "3",
          "-o", str(path)],
         env=env, capture_output=True, text=True, timeout=30, check=True)

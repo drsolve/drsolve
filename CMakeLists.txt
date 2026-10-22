@@ -448,6 +448,7 @@ if(DRSOLVE_ENABLE_PML)
 
     # Create PML library target
     add_library(pml STATIC ${PML_FILTERED_SOURCES})
+    set_target_properties(pml PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     # PML include directories
     target_include_directories(pml PUBLIC
@@ -635,6 +636,7 @@ set(MATH_SOURCES
   src/dixon/dixon_recursive.c
   src/dixon/dixon_flint.c
   src/dixon/dixon_interface_flint.c
+  src/dixon/unified_dixon.c
   src/test/dixon/dixon_test.c
   src/test/solver/polynomial_system_solver_test.c
   src/dixon/dixon_with_ideal_reduction.c
@@ -670,6 +672,7 @@ set(MATH_SOURCES
   src/solver/polynomial_system_solver.c
   src/solver/quotient_solver.c
   src/solver/quotient_extension.c
+  src/solver/quotient_large_prime.c
   src/solver/rational_system_solver.c
   ${MATH_INTERNAL_HEADERS}
 )
@@ -749,13 +752,21 @@ set(CLI_SOURCES
   apps/drsolve_cli.c
 )
 
-# Keep the CLI sources outside libdrsolve; the executable compiles the math
-# sources directly, matching the existing LTO-oriented build arrangement.
+# Keep CLI sources outside libdrsolve; direct compilation remains the default.
 
-add_executable(drsolve_exe
-  ${CLI_SOURCES}
-  ${MATH_SOURCES}
-)
+set(DRSOLVE_CLI_LINK_MODE "direct" CACHE STRING "CLI math linkage: direct, static, shared")
+set_property(CACHE DRSOLVE_CLI_LINK_MODE PROPERTY STRINGS direct static shared)
+add_executable(drsolve_exe ${CLI_SOURCES})
+if(DRSOLVE_CLI_LINK_MODE STREQUAL "direct")
+  target_sources(drsolve_exe PRIVATE ${MATH_SOURCES})
+elseif(DRSOLVE_CLI_LINK_MODE MATCHES "^(static|shared)$")
+  if(NOT TARGET drsolve_${DRSOLVE_CLI_LINK_MODE})
+    message(FATAL_ERROR "DRSOLVE_CLI_LINK_MODE requires the corresponding library to be enabled")
+  endif()
+  target_link_libraries(drsolve_exe PRIVATE drsolve_${DRSOLVE_CLI_LINK_MODE})
+else()
+  message(FATAL_ERROR "DRSOLVE_CLI_LINK_MODE must be direct, static, or shared")
+endif()
 drsolve_target_common(drsolve_exe)
 target_include_directories(drsolve_exe PRIVATE ${CMAKE_SOURCE_DIR}/apps)
 target_compile_definitions(drsolve_exe PRIVATE
@@ -930,7 +941,6 @@ endif()
 # ============================================================
 # CTest
 # ============================================================
-enable_testing()
 
 if(BUILD_TESTING)
   add_executable(dixon_scalar_screen_test src/test/dixon/dixon_scalar_screen_test.c)
@@ -1204,7 +1214,174 @@ if(BUILD_TESTING)
       ENVIRONMENT "OMP_NUM_THREADS=4"
       FAIL_REGULAR_EXPRESSION "ERROR:;Error:;do not match")
   endforeach()
-endif()
+
+  # Tests that include implementation .c files must not compile those files twice
+  # when neither library is enabled. Keep instrumentation local to each target.
+  function(drsolve_add_test_program name source)
+    add_executable(${name} ${source})
+    drsolve_target_common(${name})
+    target_compile_options(${name} PRIVATE -UNDEBUG)
+    if(TARGET drsolve_static)
+      target_link_libraries(${name} PRIVATE drsolve_static)
+    elseif(TARGET drsolve_shared)
+      target_link_libraries(${name} PRIVATE drsolve_shared)
+    else()
+      set(_sources ${MATH_SOURCES})
+      list(REMOVE_ITEM _sources ${ARGN})
+      target_sources(${name} PRIVATE ${_sources})
+    endif()
+  endfunction()
+
+  drsolve_add_test_program(degree_quotient_experiment src/test/mq/degree_quotient_experiment.c)
+  set_target_properties(degree_quotient_experiment PROPERTIES EXCLUDE_FROM_ALL TRUE)
+  drsolve_add_test_program(dixon_mq_filter_test src/test/dixon/dixon_mq_filter_test.c
+    src/dixon/dixon_flint.c)
+  add_test(NAME drsolve_dixon_mq_filter COMMAND dixon_mq_filter_test)
+  set_tests_properties(drsolve_dixon_mq_filter PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
+  drsolve_add_test_program(dixon_mq_step4_test src/test/dixon/dixon_mq_step4_test.c
+    src/dixon/dixon_flint.c
+    src/test/dixon/dixon_mq_filter_test.c)
+  add_test(NAME drsolve_dixon_mq_step4 COMMAND dixon_mq_step4_test)
+  set_tests_properties(drsolve_dixon_mq_step4 PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
+  drsolve_add_test_program(dixon_pipeline_test src/test/dixon/dixon_pipeline_test.c
+    src/dixon/dixon_recursive.c
+    src/test/dixon/dixon_recursive_native_test.c)
+  add_test(NAME drsolve_dixon_pipeline COMMAND dixon_pipeline_test)
+  set_tests_properties(drsolve_dixon_pipeline PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
+  drsolve_add_test_program(dixon_projected_matrix_test src/test/dixon/dixon_projected_matrix_test.c
+    src/dixon/dixon_flint.c
+    src/test/dixon/dixon_mq_filter_test.c)
+  add_test(NAME drsolve_dixon_projected_matrix COMMAND dixon_projected_matrix_test)
+  set_tests_properties(drsolve_dixon_projected_matrix PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
+  drsolve_add_test_program(dixon_recursive_native_test src/test/dixon/dixon_recursive_native_test.c
+    src/dixon/dixon_recursive.c)
+  add_test(NAME drsolve_dixon_recursive_native COMMAND dixon_recursive_native_test)
+  set_tests_properties(drsolve_dixon_recursive_native PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
+  drsolve_add_test_program(dixon_schur_repair_test src/test/dixon/dixon_schur_repair_test.c
+    src/dixon/dixon_flint.c)
+  add_test(NAME drsolve_dixon_schur_repair COMMAND dixon_schur_repair_test)
+  set_tests_properties(drsolve_dixon_schur_repair PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
+  drsolve_add_test_program(fmpz_mat_poly_test src/test/matrix/fmpz_mat_poly_test.c)
+  add_test(NAME drsolve_fmpz_mat_poly COMMAND fmpz_mat_poly_test)
+  set_tests_properties(drsolve_fmpz_mat_poly PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
+  drsolve_add_test_program(fmpz_unified_test src/test/field/fmpz_unified_test.c)
+  add_test(NAME drsolve_fmpz_unified COMMAND fmpz_unified_test)
+  set_tests_properties(drsolve_fmpz_unified PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
+  drsolve_add_test_program(mq_compact_test src/test/mq/mq_compact_test.c
+    src/dixon/dixon_flint.c
+    src/test/dixon/dixon_mq_filter_test.c)
+  add_test(NAME drsolve_mq_compact COMMAND mq_compact_test)
+  set_tests_properties(drsolve_mq_compact PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
+  drsolve_add_test_program(mq_core_interpolation_test src/test/mq/mq_core_interpolation_test.c
+    src/determinant/mq_poly_mat_det.c
+    src/dixon/dixon_flint.c
+    src/test/dixon/dixon_mq_filter_test.c
+    src/test/mq/mq_direct_core_test.c
+    src/test/mq/mq_shared_core_test.c)
+  set_target_properties(mq_core_interpolation_test PROPERTIES EXCLUDE_FROM_ALL TRUE)
+  drsolve_add_test_program(mq_dag_core_test src/test/mq/mq_dag_core_test.c
+    src/determinant/fq_mpoly_mat_det.c
+    src/determinant/mq_poly_mat_det.c
+    src/dixon/dixon_flint.c
+    src/test/dixon/dixon_mq_filter_test.c
+    src/test/mq/mq_direct_core_test.c
+    src/test/mq/mq_shared_core_test.c)
+  set_target_properties(mq_dag_core_test PROPERTIES EXCLUDE_FROM_ALL TRUE)
+  drsolve_add_test_program(mq_direct_core_test src/test/mq/mq_direct_core_test.c
+    src/determinant/mq_poly_mat_det.c
+    src/dixon/dixon_flint.c
+    src/test/dixon/dixon_mq_filter_test.c)
+  add_test(NAME drsolve_mq_direct_core COMMAND mq_direct_core_test)
+  set_tests_properties(drsolve_mq_direct_core PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
+  drsolve_add_test_program(mq_filter_kernel_test src/test/mq/mq_filter_kernel_test.c
+    src/determinant/fq_mpoly_mat_det.c)
+  add_test(NAME drsolve_mq_filter_kernel COMMAND mq_filter_kernel_test)
+  set_tests_properties(drsolve_mq_filter_kernel PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
+  drsolve_add_test_program(mq_overdetermined_rank_test src/test/mq/mq_overdetermined_rank_test.c)
+  set_target_properties(mq_overdetermined_rank_test PROPERTIES EXCLUDE_FROM_ALL TRUE)
+  drsolve_add_test_program(mq_pencil_test src/test/mq/mq_pencil_test.c
+    src/dixon/dixon_flint.c
+    src/test/dixon/dixon_mq_filter_test.c)
+  add_test(NAME drsolve_mq_pencil COMMAND mq_pencil_test)
+  set_tests_properties(drsolve_mq_pencil PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
+  drsolve_add_test_program(mq_poly_mat_det_test src/test/mq/mq_poly_mat_det_test.c)
+  add_test(NAME drsolve_mq_poly_mat_det COMMAND mq_poly_mat_det_test)
+  set_tests_properties(drsolve_mq_poly_mat_det PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
+  drsolve_add_test_program(mq_quotient_api_test src/test/mq/mq_quotient_api_test.c)
+  add_test(NAME drsolve_mq_quotient_api COMMAND mq_quotient_api_test)
+  set_tests_properties(drsolve_mq_quotient_api PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
+  drsolve_add_test_program(mq_quotient_bezout_test src/test/mq/mq_quotient_bezout_test.c)
+  set_target_properties(mq_quotient_bezout_test PROPERTIES EXCLUDE_FROM_ALL TRUE)
+  drsolve_add_test_program(mq_quotient_extra_equation_test src/test/mq/mq_quotient_extra_equation_test.c)
+  set_target_properties(mq_quotient_extra_equation_test PROPERTIES EXCLUDE_FROM_ALL TRUE)
+  drsolve_add_test_program(mq_rank_kernel_test src/test/mq/mq_rank_kernel_test.c
+    src/determinant/fq_mpoly_mat_det.c)
+  add_test(NAME drsolve_mq_rank_kernel COMMAND mq_rank_kernel_test)
+  set_tests_properties(drsolve_mq_rank_kernel PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
+  drsolve_add_test_program(mq_shared_core_test src/test/mq/mq_shared_core_test.c
+    src/determinant/mq_poly_mat_det.c
+    src/dixon/dixon_flint.c
+    src/test/dixon/dixon_mq_filter_test.c
+    src/test/mq/mq_direct_core_test.c)
+  set_target_properties(mq_shared_core_test PROPERTIES EXCLUDE_FROM_ALL TRUE)
+  if(TARGET pml)
+    drsolve_add_test_program(pml_kernel_certificate_test src/test/matrix/pml_kernel_certificate_test.c
+      pml_det/src/nmod_poly_mat_extra/kernel.c)
+    add_test(NAME drsolve_pml_kernel_certificate COMMAND pml_kernel_certificate_test)
+    set_tests_properties(drsolve_pml_kernel_certificate PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
+  endif()
+  drsolve_add_test_program(quotient_back_substitution_test src/test/solver/quotient_back_substitution_test.c)
+  add_test(NAME drsolve_quotient_back_substitution COMMAND quotient_back_substitution_test)
+  set_tests_properties(drsolve_quotient_back_substitution PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
+  drsolve_add_test_program(quotient_large_prime_test src/test/solver/quotient_large_prime_test.c)
+  add_test(NAME drsolve_quotient_large_prime COMMAND quotient_large_prime_test)
+  set_tests_properties(drsolve_quotient_large_prime PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
+  drsolve_add_test_program(unified_dixon_matrix_test src/test/dixon/unified_dixon_matrix_test.c)
+  add_test(NAME drsolve_unified_dixon_matrix COMMAND unified_dixon_matrix_test)
+  set_tests_properties(drsolve_unified_dixon_matrix PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
+  add_library(mq_dag_backend OBJECT EXCLUDE_FROM_ALL src/determinant/fq_mpoly_mat_det.c)
+  drsolve_target_common(mq_dag_backend)
+  target_compile_definitions(mq_dag_backend PRIVATE DRSOLVE_MQ_DAG_TEST)
+  target_compile_options(mq_dag_backend PRIVATE
+    -include ${CMAKE_CURRENT_SOURCE_DIR}/src/test/mq/mq_dag_hook.h)
+  target_sources(mq_dag_core_test PRIVATE $<TARGET_OBJECTS:mq_dag_backend>)
+
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME drsolve_help_cli
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/help_cli_test.py
+              $<TARGET_FILE:drsolve_exe>)
+    add_test(NAME drsolve_mq_quotient_cli
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/mq_quotient_cli_test.py
+              --binary $<TARGET_FILE:drsolve_exe>)
+    add_test(NAME drsolve_degree_quotient_cli
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/degree_quotient_cli_test.py
+              --binary $<TARGET_FILE:drsolve_exe>)
+    add_test(NAME drsolve_degree_quotient_parallel
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/degree_quotient_parallel_test.py
+              --binary $<TARGET_FILE:drsolve_exe> --seeds 1 --threads 1 4 --cases "[3]*3" "[2,3,4]")
+    add_test(NAME drsolve_large_prime_schur_cli
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/large_prime_schur_cli_test.py
+              $<TARGET_FILE:drsolve_exe>)
+    add_test(NAME drsolve_large_prime_subres_cli
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/large_prime_subres_cli_test.py
+              $<TARGET_FILE:drsolve_exe>)
+    add_test(NAME drsolve_pair_dispatch_cli
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/pair_dispatch_cli_test.py
+              $<TARGET_FILE:drsolve_exe>)
+    add_test(NAME drsolve_quotient_large_prime_cli
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/quotient_large_prime_cli_test.py
+              $<TARGET_FILE:drsolve_exe>)
+    add_test(NAME drsolve_quotient_sift_cli
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/quotient_sift_cli_test.py
+              $<TARGET_FILE:drsolve_exe>)
+  endif()
+  find_program(SAGE_EXECUTABLE sage)
+  if(SAGE_EXECUTABLE)
+    add_test(NAME drsolve_quotient_sift_sage
+      COMMAND ${SAGE_EXECUTABLE} -python
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/quotient_sift_sage_test.py
+        $<TARGET_FILE:drsolve_exe>)
+  endif()
 
 # Helper to register a test and route output files to a tmp dir
 set(_test_wd "${CMAKE_BINARY_DIR}")
@@ -1316,6 +1493,8 @@ add_test(NAME drsolve_extension_field
   COMMAND drsolve_exe --silent "x+y^2+t, x*y+t*y+1" "x" "2^8"
   WORKING_DIRECTORY ${_test_wd}
 )
+
+endif() # BUILD_TESTING
 
 # ============================================================
 # Configuration summary

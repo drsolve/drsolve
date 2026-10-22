@@ -3450,14 +3450,14 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         } else if ((strcmp(argv[i], "--verbose") == 0 ||
                     strcmp(argv[i], "-v")        == 0) && i + 1 < argc) {
             if (!parse_verbose_level(argv[i + 1], &verbose_level)) {
-                fprintf(stderr, "Error: invalid verbose level '%s'; expected 0, 1, 2, or 3.\n",
+                fprintf(stderr, "Error: invalid verbose level '%s'; expected a non-negative integer (levels 0-4 are documented).\n",
                         argv[i + 1]);
                 return 1;
             }
             i++;
         } else if (strcmp(argv[i], "--verbose") == 0 ||
                    strcmp(argv[i], "-v")        == 0) {
-            fprintf(stderr, "Error: %s requires an integer argument 0, 1, or 2.\n", argv[i]);
+            fprintf(stderr, "Error: %s requires a non-negative integer argument (levels 0-4 are documented).\n", argv[i]);
             return 1;
         } else if (strcmp(argv[i], "--dixon") == 0) {
             resultant_method = RESULTANT_METHOD_DIXON;
@@ -3696,10 +3696,11 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         } else if (strcmp(argv[i], "--test") == 0 ||
                    strcmp(argv[i], "--test-solver") == 0 ||
                    strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0 ||
+                   strcmp(argv[i], "--help-full") == 0 ||
                    strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-V") == 0) {
             positional_args[positional_count++] = argv[i];
         } else if (argv[i][0] == '-' && argv[i][1] != '\0') {
-            fprintf(stderr, "Error: Unknown option '%s'. Use --help to list supported options.\n",
+            fprintf(stderr, "Error: Unknown option '%s'. Use --help-full to list supported options.\n",
                     argv[i]);
             return 1;
         } else {
@@ -3735,10 +3736,14 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     /* ---- help ---- */
     if (positional_count >= 1 &&
         (strcmp(positional_args[0], "--help") == 0 ||
-         strcmp(positional_args[0], "-h")     == 0)) {
+         strcmp(positional_args[0], "-h")     == 0 ||
+         strcmp(positional_args[0], "--help-full") == 0)) {
         if (!silent_mode) {
             drsolve_cli_print_version();
-            drsolve_cli_print_usage(prog_name);
+            if (strcmp(positional_args[0], "--help-full") == 0)
+                drsolve_cli_print_full_usage(prog_name);
+            else
+                drsolve_cli_print_usage(prog_name);
         }
         return 0;
     }

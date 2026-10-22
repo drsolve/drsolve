@@ -106,12 +106,20 @@ static int quotient_compute(unified_mpoly_struct *result,
         int determinant_attempted=ok;
         if(ok) {
             quotient_info("\nStep 4: Compute Dixon resultant from the core determinant\n");
+#ifdef HAVE_PML
             quotient_info("  Determinant method: fast HNF\n");
+#else
+            quotient_info("  Determinant method: FLINT\n");
+#endif
             quotient_info("  Expected resultant degree: %ld\n",1L<<N);
         }
         cpu_start=clock();t=now();
         stats->reason="core degree or determinant check failed";
+#ifdef HAVE_PML
         if(ok)ok=nmod_poly_mat_det_hnf(det,polynomial);
+#else
+        if(ok)nmod_poly_mat_det(det,polynomial);
+#endif
         if(ok)ok=nmod_poly_degree(det)==(1L<<N);
         stats->determinant=now()-t;
         cpu_elapsed=(double)(clock()-cpu_start)/CLOCKS_PER_SEC;

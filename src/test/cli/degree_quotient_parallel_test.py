@@ -15,6 +15,7 @@ def main():
     parser.add_argument("--seeds", nargs="+", type=int, default=[1, 12345])
     parser.add_argument("--threads", nargs="+", type=int, default=[1, 2, 4, 8])
     parser.add_argument("--cases", nargs="+", default=["[3]*5", "[8]*3", "[2,3,4]"])
+    parser.add_argument("--binary", default="./drsolve")
     args = parser.parse_args()
     assert args.repeat > 0 and min(args.threads) > 0
     out = Path("out/degree_quotient_parallel")
@@ -32,7 +33,7 @@ def main():
                         stem = f"{case}_{seed}_{repeat}_{threads}_{quotient}"
                         path = out / (stem + ".dr")
                         p = subprocess.run(
-                            ["./drsolve", "-r", case, "65537", "--seed", str(seed),
+                            [args.binary, "-r", case, "65537", "--seed", str(seed),
                              "--quotient" if quotient else "--no-quotient",
                              "--threads", str(threads), "--time", "-v", "1", "-o", str(path)],
                             env=env, capture_output=True, text=True, timeout=120, check=True)

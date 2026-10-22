@@ -30,7 +30,7 @@ void drsolve_cli_print_version(void)
     printf("===============================================\n");
 }
 
-static void print_short_usage(const char *prog_name)
+void drsolve_cli_print_usage(const char *prog_name)
 {
     printf("USAGE:\n");
     printf("  %s \"polynomials\" \"eliminate_vars\" field_size\n", prog_name);
@@ -80,246 +80,207 @@ static void print_short_usage(const char *prog_name)
     printf("  --test <n>        Run built-in tests (1: Dixon matrix size, 2: Bezout bound, 3: solver correctness, 4: performance)\n");
     printf("  --time            Print per-step timing information\n");
     printf("  -v, --verbose <n> Verbosity level (0:silent, 1:default, 2:detailed, 3:debug, 4:matrix)\n");
-    printf("  -h, --help        Show full detailed help information\n");
+    printf("  -h, --help        Show this help\n");
+    printf("  --help-full       Show all options, defaults, file format and examples\n");
     printf("  -V, --version     Print version and build information\n");
 }
 
-void drsolve_cli_print_usage(const char *prog_name)
+void drsolve_cli_print_full_usage(const char *prog_name)
 {
-    printf("USAGE:\n");
-    printf("  Elimination / resultant mode:\n");
-    printf("    %s \"polynomials\" \"eliminate_vars\" field_size\n", prog_name);
-    printf("    %s -o output.dr \"polynomials\" \"eliminate_vars\" field_size\n", prog_name);
-    printf("    Example: %s \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
-    printf("    Example: %s \"x^2+y^2+z^2-1, x^2+y^2-2*z^2, x+y+z\" \"x,y\" 0\n", prog_name);
-    printf("    Example: %s --resultant-only \"x^2+y^2-1, x-y\" \"x\" 0\n", prog_name);
-    printf("    Example: %s --approx-roots --root-precision 256 \"x+y, x-y^2+2\" \"x\" 0\n", prog_name);
-    printf("    Example: %s -o out/elimination.dr \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
-    printf("    -> Default output file: %s/solution_YYYYMMDD_HHMMSS.dr\n", DEFAULT_OUTPUT_DIR);
-    printf("\n");
-
-    printf("  Polynomial system solver:\n");
-    printf("    %s \"polynomials\" field_size\n", prog_name);
-    printf("    %s -s \"polynomials\" field_size\n", prog_name);
-    printf("    %s --solve-rational-only \"polynomials\" 0\n", prog_name);
-    printf("    %s -v 2 -s \"polynomials\" field_size\n", prog_name);
-    printf("    %s -v 3 \"polynomials\" \"eliminate_vars\" field_size\n", prog_name);
-    printf("    Example: %s \"x^2-1, y-x\" 257\n", prog_name);
-    printf("    Example: %s -s \"x^2+y^2-1, x-y\" 0\n", prog_name);
-    printf("    Example: %s --solve-rational-only \"x^2-1, y-x\" 0\n", prog_name);
-    printf("    Example: %s -v 2 -s \"x^2-1, y-x\" 257\n", prog_name);
-    printf("    Example: %s -v 3 \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
-    printf("    Example: %s \"x^2 + t*y, x*y + t^2\" \"2^8: t^8 + t^4 + t^3 + t + 1\"\n", prog_name);
-    printf("    Example: %s -s --specialize-vars \"z=0,w=1\" \"x+z, y+w\" 257\n", prog_name);
-    printf("    -> Writes all solutions to %s/solution_YYYYMMDD_HHMMSS.dr\n", DEFAULT_OUTPUT_DIR);
-    printf("    -> `-s` / `--solve` is optional here; `--solve-rational-only` keeps only exact rational solutions\n");
-    printf("    -> `--specialize-vars a=0,b=1` fixes variables before solving; in extension fields integers use the generator expansion (F_2^k: 2=t, 3=1+t, 4=t^2)\n");
-    printf("    -> Random n+1 equations in n variables default to Dixon scalar consistency screening\n");
-    printf("    -> -s uses Bezoutian for supported square MQ systems and quotient closure for overdetermined systems; --solver dixon forces Dixon\n");
-    printf("    -> --solver auto|dixon|quotient selects the solver; quotient requires at least as many equations as variables\n");
-    printf("    -> Quotient uses the new Bezoutian method for supported square MQ systems; overdetermined systems use quotient closure\n");
-    printf("    -> --no-quotient (alias --no-mq-quotient) or explicit nonzero quotient limits retain quotient closure for square systems\n");
-    printf("    -> Add --sift to remove extraneous resultant factors using quotient algebra (finite fields)\n");
-    printf("    -> No degree or memory budget by default; optional --quotient-max-degree <D> and --quotient-memory <MiB> (0 = unlimited)\n");
-    printf("    -> Quotient limits cause AUTO to fall back to Dixon; explicit quotient returns an incomplete-solve error\n");
-    printf("    -> `-v 2` matches the old debug / verbose solver output\n");
-    printf("    -> `-v 3` also dumps small Step 1/2/3 matrices (<= 10 x 10)\n");
-    printf("    -> In extension fields, 't' is the field generator; in Q and prime fields it is an ordinary variable\n");
-    printf("\n");
-
-    printf("  File input:\n");
-    printf("    %s input_file\n", prog_name);
-    printf("    %s -f input_file\n", prog_name);
-    printf("    %s -s input_file\n", prog_name);
-    printf("    %s -s -f input_file -o output.dr\n", prog_name);
-    printf("    Example: %s example.dr\n", prog_name);
-    printf("    Example: %s -f example.dr\n", prog_name);
-    printf("    Example: %s -s example_solve.dr\n", prog_name);
-    printf("    Example: %s -s -f example_solve.dr -o out/example_solve_copy.dr\n", prog_name);
-    printf("    -> Without flags, auto-detects solver mode when line 1 starts with a digit; otherwise uses elimination mode\n");
-    printf("    -> If elimination vars count equals equation count n, auto-adjusts to eliminate the first n-1 variables\n");
-    printf("    -> Input file may be given directly or with `-f`; output file must be given with `-o` when overriding the default\n");
-    printf("    -> Default file-mode outputs are input_file_solution.dr or input_file_comp.dr\n");
-    printf("\n");
-
-    printf("FILE FORMAT (auto-detected for input_file):\n");
-    printf("  Optional comment line: # options: --method 5 --fq-det-method iter\n");
-    printf("  Solver mode (line 1 starts with a digit):\n");
-    printf("    Line 1 : field size\n");
-    printf("    Line 2+: polynomials (one per line or comma-separated)\n");
-    printf("  Elimination / complexity / ideal mode (otherwise):\n");
-    printf("    Line 1 : variables TO ELIMINATE (comma-separated)\n");
-    printf("    Line 2 : field size (prime or p^k; generator defaults to 't')\n");
-    printf("    Line 3+: polynomials (comma-separated, may span multiple lines)\n");
-    printf("    -> If line 1 lists n vars for n equations, compatibility mode uses the first n-1 variables\n");
-    printf("\n");
-
-    printf("MODES:\n");
-    printf("  Complexity analysis:\n");
-    printf("    %s --comp|--complexity \"polynomials\" \"eliminate_vars\" field_size\n", prog_name);
-    printf("    %s -c    \"polynomials\" \"eliminate_vars\" field_size\n", prog_name);
-    printf("    %s --comp -f input.dr\n", prog_name);
-    printf("    Example: %s --comp \"x^2+y^2+1, x*y+z, x+y+z^2\" \"x,y\" 257\n", prog_name);
-    printf("    Example: %s -c \"x^2+y^2+1, x*y+z, x+y+z^2\" \"x,y\" 257\n", prog_name);
-    printf("    Example: %s --comp -f example.dr\n", prog_name);
-    printf("    Example: %s -r --comp --omega 2.81 \"[2]*3\" 257\n", prog_name);
-    printf("    -> Prints complexity info; saves to %s/comp_YYYYMMDD_HHMMSS.dr by default\n",
-           DEFAULT_OUTPUT_DIR);
-    printf("    Add --omega <value> (or -w <value>) to set omega (default: %.4g)\n",
-           DIXON_OMEGA);
-    printf("    Add --rank-pred to enable the experimental rank prediction model; it is skipped by default\n");
-    printf("    Add --time to print per-step timing; use -v 2 for the old debug-level diagnostics\n");
-    printf("\n");
-
-    printf("  Dixon with ideal reduction:\n");
-    printf("    %s --ideal \"ideal_generators\" \"polynomials\" \"eliminate_vars\" field_size\n", prog_name);
-    printf("    %s --ideal -f input.dr\n", prog_name);
-    printf("    Example: %s --ideal \"a2^3=2*a1+1, a3^3=a1*a2+3\" \"a1^2+a2^2+a3^2-10, a3^3-a1*a2-3\" \"a3\" 257\n", prog_name);
-    printf("    Example: %s --ideal -f example.dr\n", prog_name);
-    printf("    -> ideal_generators: comma-separated relations with '=' (e.g. \"a2^3=2*a1+1, a3^3=a1*a2+3\")\n");
-    printf("    -> In file mode, lines after the first two lines containing '=' are ideal generators; others are polynomials\n");
-    printf("\n");
-
-    printf("  Field-equation reduction mode (combine with any compute flag):\n");
-    printf("    %s --field-equation \"polynomials\" \"eliminate_vars\" field_size\n", prog_name);
-    printf("    %s --field-equation input_file\n", prog_name);
-    printf("    %s --field-equation -r \"[d1,d2,...,dn]\" field_size\n", prog_name);
-    printf("    Example: %s --field-equation \"x0*x2+x1, x0*x1*x2+x2+1, x1*x2+x0+1\" \"x0,x1\" 2\n", prog_name);
-    printf("    Example: %s --field-equation example.dr\n", prog_name);
-    printf("    Example: %s --field-equation -r \"[2]*3\" 257\n", prog_name);
-    printf("    -> After each multiplication, reduces x^q -> x for every variable\n");
-    printf("    %s --field-equation-s \"polynomials\" \"eliminate_vars\" field_size\n", prog_name);
-    printf("    %s --field-equation-s input_file\n", prog_name);
-    printf("    %s --field-equation-s -r \"[d1,d2,...,dn]\" field_size\n", prog_name);
-    printf("    Example: %s --field-equation-s \"x0*x2+x1, x0*x1*x2+x2+1, x1*x2+x0+1\" \"x0,x1\" 2\n", prog_name);
-    printf("    Example: %s --field-equation-s example.dr\n", prog_name);
-    printf("    Example: %s --field-equation-s -r \"[2]*3\" 257\n", prog_name);
-    printf("    -> Reduce only the final resultant/output via x^q -> x\n");
-    printf("\n");
-
-    printf("  Random mode (combine with any compute flag):\n");
-    printf("    %s --random \"[d1,d2,...,dn]\" field_size\n", prog_name);
-    printf("    %s -r       \"[d]*n\"          field_size\n", prog_name);
-    printf("    %s -r -n 4 --density 0.5 \"[d]*3\" field_size\n", prog_name);
-    printf("    %s -r -s    \"[d1,...,dn]\" field_size\n", prog_name);
-    printf("    %s -r --comp  \"[d]*n\"        field_size\n", prog_name);
-    printf("    Example: %s --random \"[3,3,2]\" 257\n", prog_name);
-    printf("    Example: %s -r \"[3]*3\" 257\n", prog_name);
-    printf("    Example: %s -r -n 4 --density 0.5 \"[3]*3\" 257\n", prog_name);
-    printf("    Example: %s -r --seed 12345 \"[3]*3\" 257\n", prog_name);
-    printf("    Example: %s -r --homogeneous --density 0.5 \"[3]*3\" 257\n", prog_name);
-    printf("    Example: %s -r \"[2]*4+[3]*2\" 257\n", prog_name);
-    printf("    Example: %s -r -s \"[2]*3\" 257\n", prog_name);
-    printf("    Example: %s -r --comp --omega 2.81 \"[2]*3\" 257\n", prog_name);
-    printf("    -> Add -n <num_vars> to set the total variable count; fewer variables than equations auto-enables solver mode\n");
-    printf("    -> Example: %s -r -n 3 \"[2]*5\" 257 --seed 123\n", prog_name);
-    printf("    -> Overdetermined random systems include a guaranteed solution in the input field\n");
-    printf("    -> Add --pure-random to skip planting a solution; --seed remains reproducible\n");
-    printf("    -> Resultant/complexity mode still requires num_vars >= #equations-1\n");
-    printf("    -> Add --density <ratio> with 0 <= ratio <= 1 to choose the fraction of all monomials used (default: 0.5 over F2, otherwise 1)\n");
-    printf("    -> Add --homogeneous (alias --hom) to use only monomials whose total degree equals the requested degree\n");
-    printf("    -> Add --seed <num> to generate the same random system reproducibly across runs\n");
-    printf("    -> Add --vardeg to interpret the list as one exponent bound per variable; generates n equations for n variables by default\n");
-    printf("    -> Add -m/--num-equations <m> with --vardeg to choose the equation count (mutually exclusive with --homogeneous)\n");
-    printf("    -> Mixed degree specs such as \"[2]*5+[3]*6\" are supported\n");
-    printf("\n");
-
-    printf("OPTIONS:\n");
-    printf("  Verbosity:\n");
-    printf("    %s -v 0 <args>\n", prog_name);
-    printf("    %s -v 1 <args>\n", prog_name);
-    printf("    %s -v 2 <args>\n", prog_name);
-    printf("    %s -v 3 <args>\n", prog_name);
-    printf("    %s -v 4 <args>\n", prog_name);
-    printf("    Example: %s -v 0 \"x+y^2+t, x*y+t*y+1\" \"y\" 2^8\n", prog_name);
-    printf("    Example: %s -v 1 \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
-    printf("    Example: %s -v 2 -s \"x^2-1, y-x\" 257\n", prog_name);
-    printf("    Example: %s -v 3 \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
-    printf("    Example: %s -v 4 -r \"[3]*3\" 257\n", prog_name);
-    printf("    -> `-v 0` matches `--silent` and prints nothing\n");
-    printf("    -> `-v 1` is the default output level\n");
-    printf("    -> `-v 2` matches the old `--debug` output and also enables per-step timing\n");
-    printf("    -> `-v 3` prints detailed profiling for Dixon construction\n");
-    printf("    -> `-v 4` additionally prints the cancellation matrix, Dixon matrix, maximal-rank submatrix when each is <= 100 x 100, plus recursive fast-Dixon trace lines\n");
-    printf("\n");
-
-    printf("  Diagnostics:\n");
-    printf("    %s --test <n>\n", prog_name);
-    printf("    %s --complex \"f1, f2\" 0\n", prog_name);
-    printf("    %s --time <args>\n", prog_name);
-    printf("    %s -v 2 <args>\n", prog_name);
-    printf("    Example: %s --test 0\n", prog_name);
-    printf("    Example: %s --complex \"x^2+y^2-1, x-y\" 0\n", prog_name);
-    printf("    Example: %s --time \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
-    printf("    Example: %s -v 2 \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
-    printf("    -> --test values: 0 help, 1 matrix size, 2 Bezout bound, 3 solver correctness, 4 solver performance, 5 XHash\n");
-    printf("    -> --complex supports Q-only 2x2 solver mode; in elimination mode it prints complex roots when the resultant is univariate\n");
-    printf("    -> --time prints per-step timing; interpolation steps also show CPU/Wall/Threads\n");
-    printf("    -> `--silent`, `--debug`, `--solve-verbose` and `--solve` remain accepted for compatibility\n");
-    printf("\n");
-
-    printf("  Root search controls:\n");
-    printf("    %s --rational-root-scan <auto|off|force> <args>\n", prog_name);
-    printf("    %s --no-rational-root-scan <args>\n", prog_name);
-    printf("    %s --force-rational-root-scan <args>\n", prog_name);
-    printf("    Example: %s --rational-root-scan off \"x^2-1, y-x\" 0\n", prog_name);
-    printf("    Example: %s --no-rational-root-scan \"x^2-1, y-x\" 0\n", prog_name);
-    printf("    Example: %s --force-rational-root-scan \"x^2-1, y-x\" 0\n", prog_name);
-    printf("    -> controls the exhaustive Rational Root Theorem scan used before approximate real-root finding\n");
-    printf("    -> default `auto` skips the scan when candidate count exceeds %d; `off` disables it; `force` runs it up to the hard cap %d\n",
+    printf("USAGE:\n"
+           "  %s \"polynomials\" \"eliminate_vars\" FIELD [options]\n"
+           "  %s \"polynomials\" FIELD [options]\n"
+           "  %s [-f] FILE [-o OUTPUT] [options]\n"
+           "  %s -r \"degree_spec\" FIELD [options]\n\n",
+           prog_name, prog_name, prog_name, prog_name);
+    puts("INPUT AND OUTPUT:");
+    puts("  Polynomials are comma-separated; quote polynomial and variable lists.");
+    puts("  FIELD: 0 for Q, a prime p for F_p, or p^k for an extension field.");
+    puts("  An explicit modulus is accepted, e.g. \"2^8: t^8+t^4+t^3+t+1\".");
+    puts("  In extensions, t is the field generator; in Q/F_p it is a variable.");
+    puts("  -f FILE                       Read input (or give FILE as the sole operand).");
+    puts("  -o FILE                       Override the output filename.");
+    puts("  Inline output: out/solution_YYYYMMDD_HHMMSS.dr (comp_... for complexity).");
+    puts("  File output: input_file_solution.dr (input_file_comp.dr for complexity).");
+    puts("  Examples:");
+    printf("    %s \"x^2-1, y-x\" 257 -o solutions.dr\n", prog_name);
+    printf("    %s \"x^2+t*y, x*y+t^2\" \"2^8: t^8+t^4+t^3+t+1\"\n", prog_name);
+    puts("");
+    puts("FILE FORMAT:");
+    puts("  Solver:      line 1 FIELD; remaining lines polynomials.");
+    puts("  Elimination: line 1 elimination variables; line 2 FIELD; then polynomials.");
+    puts("  Polynomials may span lines or be comma-separated. A digit on the first");
+    puts("  data line selects solver format. For n equations with n listed elimination");
+    puts("  variables, compatibility mode retains only the first n-1 variables.");
+    puts("  Optional comment: # options: --method 5 --fq-det-method iter");
+    puts("  With --ideal, lines containing '=' after the headers supply relations.");
+    puts("  Examples:");
+    printf("    %s -f examples/example.dr -o elimination.dr\n", prog_name);
+    printf("    %s -s -f examples/example_solve.dr -o solutions.dr\n", prog_name);
+    puts("");
+    puts("SOLVING:");
+    puts("  -s, --solve                    Solve the system; automatic without elim vars.");
+    puts("  --solver auto|dixon|quotient    Select solver and enable solving (default auto).");
+    puts("  --solve-rational-only          Solve over Q, keeping exact rational solutions.");
+    puts("  --specialize-vars \"z=0,w=1\"    Fix variables before solving. In extensions,");
+    puts("                                integers encode generator coefficients:");
+    puts("                                in F_2^k, 2=t, 3=1+t, 4=t^2.");
+    puts("  --quotient-max-degree D        Quotient closure degree budget (0 = unlimited).");
+    puts("  --quotient-memory MiB          Quotient memory budget (0 = unlimited).");
+    puts("  Both budgets default to 0. Reaching a limit makes auto fall back to Dixon;");
+    puts("  explicit --solver quotient reports an incomplete solve.");
+    puts("  Quotient solving requires at least as many equations as variables. Supported");
+    puts("  square MQ systems use Bezoutian construction; overdetermined systems use");
+    puts("  quotient closure. --no-quotient or nonzero budgets retain closure for square");
+    puts("  systems. Random n+1 equations in n variables default to scalar consistency");
+    puts("  screening; use -s to request solving.");
+    puts("  --sift / --no-sift             Enable/disable extraneous-factor removal using");
+    puts("                                quotient algebra over finite fields (default off).");
+    puts("  --sift-max-degree D            Positive sift degree limit (default 4).");
+    puts("  Examples:");
+    printf("    %s --solver quotient \"x^2-1, y-x\" 257\n", prog_name);
+    printf("    %s --solve-rational-only \"x^2-1, y-x\" 0\n", prog_name);
+    printf("    %s -s --specialize-vars \"z=0,w=1\" \"x+z, y+w\" 257\n", prog_name);
+    puts("");
+    puts("RESULTANTS AND DETERMINANTS:");
+    puts("  --dixon                       Dixon resultant (default).");
+    puts("  --macaulay                    Macaulay resultant.");
+    puts("  --subres                      Subresultant: 2 polynomials, 1 elimination var.");
+    puts("  --resultant NAME              dixon|macaulay|subres (alias --resultant-method).");
+    puts("  --method N                    Set Step 1/4 methods (5 selects recursive Dixon).");
+    puts("  --step1 N / --step4 N          Override the corresponding step.");
+    puts("    0 minor expansion; 1 HNF; 2 interpolation; 3 sparse interpolation;");
+    puts("    4 Bareiss; 5 recursive Dixon construction; 6 balanced split Laplace");
+    puts("    (experimental). Applicability depends on the step and coefficient field.");
+    puts("  Finite-field elimination of 2 variables from 3 equations in 3 variables");
+    puts("  defaults to method 5; explicit method options take precedence.");
+    puts("  --fq-det-method MODE          auto|hnf|iter|interp (default auto): univariate");
+    puts("                                determinant backend; interp is prime-field only.");
+    puts("  --quotient                    Enable quotient/Bezoutian resultant construction;");
+    puts("                                unlike --solver quotient, does not select solving.");
+    puts("                                Alias: --mq-quotient.");
+    puts("  --no-quotient                  Disable it (alias --no-mq-quotient).");
+    puts("  Automatic for supported prime/extension-field square MQ systems (3+ vars).");
+    puts("  Explicit --quotient also supports general degrees with one parameter;");
+    puts("  rejected inputs or rank/degree checks fall back to Dixon. Samples can use");
+    puts("  --threads. Resultant construction has no quotient memory budget.");
+    puts("  Examples:");
+    printf("    %s --subres \"x^2+y, x+y+1\" \"x\" 257\n", prog_name);
+    printf("    %s --step1 0 --step4 1 \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
+    printf("    %s --quotient -r \"[3]*3\" 65537 --seed 1234\n", prog_name);
+    puts("");
+    puts("ROOTS AND RECONSTRUCTION:");
+    puts("  --resultant-only               Output the resultant without root finding");
+    puts("                                (alias --no-roots).");
+    puts("  --approx-roots                Use approximate real-root finding over Q.");
+    puts("  --root-precision BITS         Precision, default 128; range 32..1048576.");
+    puts("                                Also enables --approx-roots.");
+    puts("  --complex                     Complex solutions for the Q-only 2x2 solver;");
+    puts("                                complex roots for univariate Q resultants.");
+    puts("  --rational-root-scan MODE     auto|off|force: exhaustive rational-root scan");
+    puts("                                before approximate real-root finding.");
+    puts("  --no-rational-root-scan       Alias for --rational-root-scan off.");
+    puts("  --force-rational-root-scan    Alias for --rational-root-scan force.");
+    printf("  Default auto skips scans above %d candidates; force has a hard cap of %d.\n",
            FMPQ_ROOT_SEARCH_AUTO_MAX_CANDIDATES,
            FMPQ_ROOT_SEARCH_HARD_MAX_CANDIDATES);
-    printf("\n");
-
-    printf("  Method selection:\n");
-    printf("    %s --method <num> <args>\n", prog_name);
-    printf("    %s --fq-det-method <auto|hnf|iter|interp> <args>\n", prog_name);
-    printf("    %s --step1 <num> --step4 <num> <args>\n", prog_name);
-    printf("    Example: %s --method 4 \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
-    printf("    Example: %s --fq-det-method hnf \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
-    printf("    Example: %s --step1 4 --step4 4 \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
-    printf("    Example: %s --cache 256 \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
-    printf("    Example: %s --array-limit-k 16 \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
-    printf("    Example: %s --fast-ksy --fast-ksy-col 0 --method 5 \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
-    printf("    Example: %s --step3-verify-second \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
-    printf("    -> Available methods: 0.Minor expansion; 1.HNF; 2.Interpolation; 3.Sparse interpolation; 4.Bareiss; 5.Recursive Dixon construction; 6.Balanced split Laplace (experimental)\n");
-    printf("    -> Finite-field elimination of two variables from three equations in three variables defaults to method 5; explicit method options take precedence\n");
-    printf("    -> --method sets both step 1 and step 4 for backward compatibility\n");
-    printf("    -> Dixon quotient / Bezoutian is automatic for supported prime- and extension-field square MQ systems (3+ variables); --no-quotient disables it; --quotient / --mq-quotient explicitly enable it; rejected inputs fall back to Dixon\n");
-    printf("    -> Explicit --quotient also supports quadratic and general degrees over extension fields, and general degrees over prime fields, via shared-frame MQ or grouped quotient recurrence (one parameter; no fixed equation-count cutoff); --threads parallelizes samples; no memory budget; rank/degree checks may fall back to Dixon.\n");
-    printf("    -> MQ direct indices for eligible projected shared DP are default on; --no-mq-step1-rank disables them\n");
-    printf("    -> MQ shared-index Step 1 DP is default on when eligible; --no-mq-step1-shared disables it\n");
-    printf("    -> --mq-step1-pencil enables experimental MQ degree recurrence (default off); --no-mq-step1-pencil disables it\n");
-    printf("    -> --mq-step1-simplex enables parallel total-degree MQ interpolation (default off); --no-mq-step1-simplex disables it\n");
-    printf("    -> --no-mq-step1-filter disables the default Step 1 coefficient filtering for prime and extension fields, single-parameter MQ systems\n");
-    printf("    -> --mq-step4-schur enables checked Schur compression for single-parameter systems of any degree over prime and extension fields, automatic/HNF Step 4 (default on); --no-mq-step4-schur disables it\n");
-    printf("    -> Complement-first minor selection is default on for eligible prime and extension-field systems; --no-schur-seed disables it while retaining Step 4 Schur compression\n");
-    printf("    -> --fq-det-method (auto|hnf|iter|interp) controls the univariate determinant backend: prime-field PML or extension-field unified HNF; interp is prime-field only\n");
-    printf("    -> --cache limits live minor DP entries (method 0); smaller subproblems are used when full layers do not fit; 0 disables DP\n");
-    printf("    -> --array-limit-k <k> caps optimized extension-field array multiplication tables at 2^k entries (0-62)\n");
-    printf("    -> --fast-ksy enables a KSY precondition check for method 5 submatrix extraction; --no-fast-ksy disables it\n");
-    printf("    -> --fast-ksy-col <idx> selects which fast-Dixon column is treated as the constant column for the KSY check (default: 0)\n");
-    printf("    -> --step3-verify-second enables the second Step 3 verification pass; default is off\n");
-    printf("    -> --no-step3-verify-second disables the second Step 3 verification pass\n");
-    printf("\n");
-
-    printf("  Resultant construction:\n");
-    printf("    %s --dixon <args>\n", prog_name);
-    printf("    %s --macaulay <args>\n", prog_name);
-    printf("    %s --subres <args>\n", prog_name);
-    printf("    Example: %s --dixon \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
-    printf("    Example: %s --macaulay \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
-    printf("    Example: %s --subres \"x^2+y, x+y+1\" \"x\" 257\n", prog_name);
-    printf("    -> --dixon / --macaulay / --subres are direct method selectors\n");
-    printf("    -> --subres is for exactly 2 polynomials and 1 elimination variable\n");
-    printf("\n");
-
-    printf("  Parallelism:\n");
-    printf("    %s --threads <num> <args>\n", prog_name);
-    printf("    Example: %s --threads 2 \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
-    printf("    -> Set number of threads for parallel computation\n");
+    puts("  --max-primes N                Reconstruction prime budget, 1..1048576");
+    puts("                                (default 64 for rational reconstruction).");
+    puts("  --large-prime-reconstruct     Opt in to reconstruction for primes exceeding");
+    puts("                                the nmod limit; incompatible with --subres.");
+    puts("  Examples:");
+    printf("    %s --resultant-only \"x+y, x-y^2+2\" \"x\" 0\n", prog_name);
+    printf("    %s --approx-roots --root-precision 256 \"x+y, x-y^2+2\" \"x\" 0\n", prog_name);
+    printf("    %s --complex \"x^2+y^2-1, x-y\" 0\n", prog_name);
+    puts("");
+    puts("RANDOM INPUT:");
+    puts("  -r, --random                  Generate polynomials from a degree specification:");
+    puts("                                \"[2,3,4]\", \"[3]*4\", or \"[2]*4+[3]*2\".");
+    puts("  -n, --num-vars N              Total variables (alias --nvars).");
+    puts("  --vardeg                      Interpret degrees as per-variable exponent bounds;");
+    puts("                                default: n equations in n variables.");
+    puts("  -m, --num-equations M         Equation count with --vardeg (alias --m).");
+    puts("  --density R                   Fraction of monomials, 0..1; default 0.5 over F2,");
+    puts("                                otherwise 1.");
+    puts("  --homogeneous                 Use only terms of the requested total degree");
+    puts("                                (alias --hom); incompatible with --vardeg.");
+    puts("  --seed N                      Reproducible random input.");
+    puts("  --pure-random                 Do not plant a guaranteed solution.");
+    puts("  Fewer variables than equations auto-enables solving. Overdetermined random");
+    puts("  input normally contains a planted solution. Resultant/complexity mode needs");
+    puts("  at least (#equations - 1) variables. Combine -r with -s or -c as needed.");
+    puts("  Examples:");
+    printf("    %s -r -s \"[2,3,4]\" 257 --seed 1234\n", prog_name);
+    printf("    %s -r --homogeneous --density 0.5 \"[3]*3\" 257\n", prog_name);
+    printf("    %s -r --vardeg -m 3 \"[2,3]\" 257 --seed 1234\n", prog_name);
+    puts("");
+    puts("COMPLEXITY AND REDUCTION:");
+    puts("  -c, --comp                    Complexity analysis (alias --complexity).");
+    printf("  -w, --omega VALUE             Matrix exponent (default %.4g).\n", DIXON_OMEGA);
+    puts("  --rank-pred                   Experimental rank prediction (default off;");
+    puts("                                alias --rank-prediction).");
+    puts("  --ideal \"a^3=b+1,...\"         Reduce by substitution relations after products.");
+    puts("                                With file input, read relations from the file.");
+    puts("  --field-equation              Reduce x^q -> x after each multiplication.");
+    puts("  --field-equation-s            Apply x^q -> x only to the final output.");
+    puts("  Examples:");
+    printf("    %s -c -r --omega 2.81 \"[2]*3\" 257\n", prog_name);
+    printf("    %s --field-equation \"x*y+z, y*z+x, x*z+y\" \"x,y\" 2\n", prog_name);
+    printf("    %s --ideal \"a^3=b+1\" \"a^3+b, a+b^2\" \"a\" 257\n", prog_name);
+    puts("");
+    puts("PERFORMANCE AND DIAGNOSTICS:");
+    puts("  --threads N                   Positive parallel thread count; otherwise use");
+    puts("                                the runtime default.");
+    puts("  --cache N                     Live minor-DP entry limit for method 0");
+    puts("                                (default 1024; 0 disables DP).");
+    puts("  --array-limit-k K             Cap extension-field multiplication tables at");
+    puts("                                2^K entries, K in 0..62.");
+    puts("  -v, --verbose N               Output level (default 1):");
+    puts("                                0 silent; 1 normal; 2 detailed with timing;");
+    puts("                                3 profiling; 4 matrix dumps (up to 100 x 100)");
+    puts("                                and recursive fast-Dixon traces.");
+    puts("  --silent / --debug            Aliases for -v 0 / -v 2.");
+    puts("  --solve-verbose               Enable solving with -v 2.");
+    puts("  --time                        Per-step timing; interpolation shows CPU/wall time");
+    puts("                                and threads.");
+    puts("  --test N                      Built-in checks: 0 help; 1 matrix size;");
+    puts("                                2 Bezout bound; 3 solver correctness;");
+    puts("                                4 performance; 5 XHash.");
+    puts("  --test-solver                 Built-in solver correctness check.");
+    puts("  -h, --help                    Show the quick reference.");
+    puts("  --help-full                   Show this complete help.");
+    puts("  -V, --version                 Show version and build information.");
+    puts("  Examples:");
+    printf("    %s --threads 4 --time -r \"[2]*3\" 257 --seed 1234\n", prog_name);
+    printf("    %s -v 4 \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
+    puts("");
+    puts("ADVANCED AND EXPERIMENTAL:");
+    puts("  The following optimizations apply only to eligible inputs.");
+    puts("  --mq-step1-rank / --no-mq-step1-rank");
+    puts("                                Projected MQ direct indices (default on).");
+    puts("  --mq-step1-shared / --no-mq-step1-shared");
+    puts("                                Shared-index Step 1 DP (default on).");
+    puts("  --no-mq-step1-filter           Disable Step 1 coefficient filtering (default on)");
+    puts("                                for single-parameter prime/extension-field MQ.");
+    puts("  --mq-step1-pencil / --no-mq-step1-pencil");
+    puts("                                Experimental degree recurrence (default off).");
+    puts("  --mq-step1-simplex / --no-mq-step1-simplex");
+    puts("                                Experimental total-degree interpolation (off).");
+    puts("  --mq-step4-schur / --no-mq-step4-schur");
+    puts("                                Checked Schur compression (default on) for");
+    puts("                                single-parameter prime/extension-field systems,");
+    puts("                                any degree, automatic/HNF Step 4.");
+    puts("  --no-schur-seed                Disable complement-first minor selection");
+    puts("                                (default on), retaining Step 4 compression.");
+    puts("  --fast-ksy / --no-fast-ksy      KSY precondition check for method 5 (default off;");
+    puts("                                enable alias --ksy-precondition).");
+    puts("  --fast-ksy-col I               KSY constant-column index (default 0).");
+    puts("  --step3-verify-second / --no-step3-verify-second");
+    puts("                                Second Step 3 verification pass (default off).");
+    puts("  Examples:");
+    printf("    %s --no-quotient --no-mq-step4-schur -r \"[2]*3\" 257 --seed 1234\n", prog_name);
+    printf("    %s --method 5 --fast-ksy --step3-verify-second \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
 }
-
 
 static const char *display_prog_name(const char *argv0)
 {
@@ -410,6 +371,7 @@ static int validate_cli_options(int argc, char *argv[])
         {"pure-random", no_argument, NULL, OPT_FLAG},
         {"specialize-vars", required_argument, NULL, OPT_FLAG},
         {"help", no_argument, NULL, 'h'},
+        {"help-full", no_argument, NULL, OPT_FLAG},
         {"version", no_argument, NULL, 'V'},
         {"test", no_argument, NULL, OPT_FLAG},
         {"test-solver", no_argument, NULL, OPT_FLAG},
@@ -428,7 +390,7 @@ static int validate_cli_options(int argc, char *argv[])
                                   &option_index)) != -1) {
         if (parsed == '?') {
             const char *bad = (optind > 0 && optind <= argc) ? args[optind - 1] : "";
-            fprintf(stderr, "Error: Unknown option or missing argument '%s'. Use --help to list supported options.\n",
+            fprintf(stderr, "Error: Unknown option or missing argument '%s'. Use --help-full to list supported options.\n",
                     bad);
             optind = 1;
             return 0;
@@ -445,14 +407,18 @@ int main(int argc, char *argv[])
 
     if (argc == 1) {
         drsolve_cli_print_version();
-        print_short_usage(prog_name);
+        drsolve_cli_print_usage(prog_name);
         return 0;
     }
 
     if (argc == 2 &&
-        (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)) {
+        (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0 ||
+         strcmp(argv[1], "--help-full") == 0)) {
         drsolve_cli_print_version();
-        drsolve_cli_print_usage(prog_name);
+        if (strcmp(argv[1], "--help-full") == 0)
+            drsolve_cli_print_full_usage(prog_name);
+        else
+            drsolve_cli_print_usage(prog_name);
         return 0;
     }
 

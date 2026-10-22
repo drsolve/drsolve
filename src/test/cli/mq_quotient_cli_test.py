@@ -15,6 +15,7 @@ import subprocess
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repeat", type=int, default=1)
+    parser.add_argument("--binary", default="./drsolve")
     args = parser.parse_args()
     out = Path("out/jouanolou/cli")
     out.mkdir(parents=True, exist_ok=True)
@@ -27,7 +28,7 @@ def main():
             for enabled in (False, True):
                 stem = f"{name}_{trial}_{int(enabled)}"
                 path = out / (stem + ".dr")
-                cmd = ["./drsolve", *arguments, "--time", "--threads", "16", "-o", str(path)]
+                cmd = [args.binary, *arguments, "--time", "--threads", "16", "-o", str(path)]
                 if enabled:
                     cmd.append("--mq-quotient")
                 else:

@@ -20,7 +20,9 @@
 #ifdef _OPENMP
 #include <omp.h>
 #endif
+#ifdef HAVE_PML
 #include <nmod_vec_extra.h>
+#endif
 #include "gf2n_field.h"
 
 #define SPARSE_BASE_RECOVERY_ATTEMPTS 24

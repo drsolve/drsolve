@@ -2,6 +2,7 @@
 /* Keep private certificate counters and helper visible only in this executable. */
 #include "../../../pml_det/src/nmod_poly_mat_extra/kernel.c"
 #include <assert.h>
+#include <string.h>
 
 static int certificate(const nmod_poly_mat_t A, slong *input_shift, slong order,
                         slong expected, int should_pass)

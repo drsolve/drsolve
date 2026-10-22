@@ -205,7 +205,12 @@ static int compute(unified_mpoly_struct *result,const unified_mpoly_struct *poly
     info("\nStep 4: Compute Dixon resultant from the quotient core determinant\n");
     t=seconds();nmod_poly_init(det,prime);det_live=1;
     stats->reason="core determinant or expected resultant degree check failed";
-    if(!nmod_poly_mat_det_hnf(det,matrix) || nmod_poly_degree(det)!=expected_degree)goto done;
+#ifdef HAVE_PML
+    if(!nmod_poly_mat_det_hnf(det,matrix))goto done;
+#else
+    nmod_poly_mat_det(det,matrix);
+#endif
+    if(nmod_poly_degree(det)!=expected_degree)goto done;
     nmod_poly_make_monic(det,det);
     stats->determinant=seconds()-t;dixon_maybe_print_step_time("Step 4",stats->determinant);
     info("  Resultant degree: %ld; normalize to monic.\n",nmod_poly_degree(det));

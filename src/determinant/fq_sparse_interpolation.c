@@ -700,7 +700,9 @@ static void BM_timed_incremental(nmod_poly_t C,
         state->s_rev[i] = s[2 * N - 1 - i];
     }
 
+#ifdef HAVE_PML
     ulong mod_bits = FLINT_BIT_COUNT(mod.n);
+#endif
     int inner_timing = (timing != NULL && sparse_bm_inner_timing_enabled());
     int hist_enabled = (timing != NULL && sparse_bm_hist_enabled());
 
@@ -712,12 +714,19 @@ static void BM_timed_incremental(nmod_poly_t C,
         }
         if (state->L > 0) {
             d = nmod_add(d,
+#ifdef HAVE_PML
                          nmod_vec_dot_product_unbalanced(state->c + 1,
                                                          state->s_rev + (2 * N - n),
                                                          (ulong) state->L,
                                                          mod_bits,
                                                          mod_bits,
                                                          mod),
+#else
+                         _nmod_vec_dot(state->c + 1,
+                                       state->s_rev + (2 * N - n),
+                                       state->L, mod,
+                                       _nmod_vec_dot_params(state->L, mod)),
+#endif
                          mod);
         }
         if (inner_timing) {

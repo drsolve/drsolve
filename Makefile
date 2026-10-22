@@ -1307,3 +1307,6 @@ test-large-prime-subres-cli: $(DIXON_TARGET)
 .PHONY: test-pair-dispatch-cli
 test-pair-dispatch-cli: $(DIXON_TARGET)
 	python3 $(SRC_DIR)/test/cli/pair_dispatch_cli_test.py ./$(DIXON_TARGET)
+.PHONY: test-help-cli
+test-help-cli: $(DIXON_TARGET)
+	python3 $(SRC_DIR)/test/cli/help_cli_test.py ./$(DIXON_TARGET)
