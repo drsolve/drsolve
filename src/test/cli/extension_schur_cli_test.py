@@ -15,7 +15,8 @@ with tempfile.TemporaryDirectory(prefix='extension-schur-') as work:
              ('[3]*4', '256', []), ('[2]*4', '256', ['--step1', '5']), ('[3]*3', '256', ['--step1', '0'])]
     cases += [('[3]*3', field, []) for field in
               ('2^4', '2^4:t^4+t^3+1', '2^16', '2^32', '2^64', '2^128', '2^5',
-               '2^8:t^8+t^4+t^3+t+1')]
+               '2^8:t^8+t^4+t^3+t+1', '2^9', '2^17', '2^65', '2^127',
+               '2^64:t^64+t^4+t^3+t+1')]
     for degrees, field, extra in cases:
         results = []
         for enabled, threads, no_seed in ((False, 1, False), (True, 1, False),

@@ -18,6 +18,23 @@ int has_pclmulqdq(void) {
     return 0;
 }
 
+/* Shared binary addition chain for a^(2^n-2). */
+#define DEFINE_GF2_INVERSE(F,N) \
+F##_t F##_inv(const F##_t *a) { \
+    if (F##_is_zero(a)) return F##_zero(); \
+    if (!F##_mul) init_##F(); \
+    unsigned target=(N)-1,k=1,bit=1; \
+    while (bit<=target/2) bit<<=1; \
+    F##_t r=*a; \
+    while ((bit>>=1)) { \
+        F##_t t=r; \
+        for (unsigned i=0;i<k;i++) t=F##_sqr(&t); \
+        r=F##_mul(&r,&t); k*=2; \
+        if (target&bit) { r=F##_sqr(&r); r=F##_mul(&r,a); k++; } \
+    } \
+    return F##_sqr(&r); \
+}
+
 /* Global multiplication function pointers */
 gf232_mul_func gf232_mul = NULL;
 gf264_mul_func gf264_mul = NULL;
@@ -562,29 +579,8 @@ gf232_t gf232_mul_pclmul(const gf232_t *a, const gf232_t *b) {
 
 /* Fast squaring in GF(2^32) with new polynomial */
 gf232_t gf232_sqr(const gf232_t *a) {
-    uint64_t result = 0;
-    uint32_t val = a->value;
-    
-    /* Expand bits */
-    for (int i = 0; i < 16; i++) {
-        if ((val >> i) & 1) {
-            result |= (uint64_t)1 << (2 * i);
-        }
-    }
-    for (int i = 16; i < 32; i++) {
-        if ((val >> i) & 1) {
-            result |= (uint64_t)1 << (2 * i);
-        }
-    }
-    
-    /* Reduction modulo x^32 + x^15 + x^9 + x^7 + x^4 + x^3 + 1 */
-    for (int i = 63; i >= 32; i--) {
-        if ((result >> i) & 1) {
-            result ^= ((uint64_t)GF232_MODULUS << (i - 32));
-        }
-    }
-    
-    return gf232_create((uint32_t)result);
+    if (!gf232_mul) init_gf232();
+    return gf232_mul(a,a);
 }
 /* Initialize multiplication function */
 void init_gf232(void) {
@@ -601,28 +597,7 @@ void init_gf232(void) {
 
 
 /* Inversion using repeated squaring */
-gf232_t gf232_inv(const gf232_t *a) {
-    if (gf232_is_zero(a)) {
-        return gf232_zero();
-    }
-    
-    // In GF(2^32), a^(2^32-1) = 1, so a^(2^32-2) = a^(-1)
-    // Using square-and-multiply algorithm
-    
-    gf232_t a_pow = *a;
-    
-    // Start from a^2
-    a_pow = gf232_sqr(&a_pow);
-    gf232_t result = a_pow;
-    
-    // Continue with a^4, a^8, ..., a^(2^31)
-    for (int i = 2; i < 32; i++) {
-        a_pow = gf232_sqr(&a_pow);
-        result = gf232_mul(&result, &a_pow);
-    }
-    
-    return result;
-}
+DEFINE_GF2_INVERSE(gf232, 32)
 
 /* Division in GF(2^32) */
 inline gf232_t gf232_div(const gf232_t *a, const gf232_t *b) {
@@ -752,8 +727,16 @@ gf264_t gf264_mul_pclmul(const gf264_t *a, const gf264_t *b) {
     uint64_t lo = _mm_extract_epi64(prod, 0);
     uint64_t hi = _mm_extract_epi64(prod, 1);
     
-    /* Reduce using the helper function */
-    gf264_reduce_128(&lo, &hi);
+    /* Fold x^64 into the degree-33 remainder twice. The last overflow
+     * has at most two bits and needs only shifts/XOR, no bitwise division. */
+    __m128i modulus = _mm_set_epi64x(0, GF264_MODULUS);
+    prod = _mm_clmulepi64_si128(_mm_set_epi64x(0,hi),modulus,0);
+    lo ^= (uint64_t)_mm_extract_epi64(prod,0);
+    hi = (uint64_t)_mm_extract_epi64(prod,1);
+    prod = _mm_clmulepi64_si128(_mm_set_epi64x(0,hi),modulus,0);
+    lo ^= (uint64_t)_mm_extract_epi64(prod,0);
+    hi = (uint64_t)_mm_extract_epi64(prod,1);
+    lo ^= (-(hi&1)&GF264_MODULUS) ^ (-((hi>>1)&1)&(GF264_MODULUS<<1));
     
     return gf264_create(lo);
 #else
@@ -763,26 +746,8 @@ gf264_t gf264_mul_pclmul(const gf264_t *a, const gf264_t *b) {
 
 /* Fast squaring in GF(2^64) */
 gf264_t gf264_sqr(const gf264_t *a) {
-    uint64_t result_low = 0, result_high = 0;
-    uint64_t val = a->value;
-    
-    /* Expand bits: a^2 spreads bits apart
-     * bit i goes to bit 2i */
-    for (int i = 0; i < 32; i++) {
-        if ((val >> i) & 1) {
-            result_low |= (1ULL << (2 * i));
-        }
-    }
-    for (int i = 32; i < 64; i++) {
-        if ((val >> i) & 1) {
-            result_high |= (1ULL << (2 * (i - 32)));
-        }
-    }
-    
-    /* Reduce modulo the polynomial */
-    gf264_reduce_128(&result_low, &result_high);
-    
-    return gf264_create(result_low);
+    if (!gf264_mul) init_gf264();
+    return gf264_mul(a,a);
 }
 
 
@@ -801,29 +766,7 @@ void init_gf264(void) {
 }
 
 /* Inversion using addition chain optimized for GF(2^64) */
-gf264_t gf264_inv(const gf264_t *a) {
-    if (gf264_is_zero(a)) {
-        return gf264_zero();
-    }
-    
-    /* In GF(2^64), we need to compute a^(2^64-2) = a^(0xFFFFFFFFFFFFFFFE) */
-    /* a^(2^64-2) = a^2 * a^4 * a^8 * ... * a^(2^63) */
-    
-    gf264_t result = *a;
-    gf264_t a_power = *a;
-    
-    /* Start with a^2 */
-    a_power = gf264_sqr(&a_power);
-    result = a_power;
-    
-    /* Multiply by a^4, a^8, ..., a^(2^63) */
-    for (int i = 2; i <= 63; i++) {
-        a_power = gf264_sqr(&a_power);  /* a_power = a^(2^i) */
-        result = gf264_mul(&result, &a_power);
-    }
-    
-    return result;
-}
+DEFINE_GF2_INVERSE(gf264, 64)
 
 /* Division in GF(2^64) */
 inline gf264_t gf264_div(const gf264_t *a, const gf264_t *b) {
@@ -1032,134 +975,15 @@ void init_gf2128(void) {
 
 /* Fast squaring in GF(2^128) */
 gf2128_t gf2128_sqr(const gf2128_t *a) {
-    uint64_t r0 = 0, r1 = 0, r2 = 0, r3 = 0;
-    
-    /* Expand low 64 bits */
-    for (int i = 0; i < 32; i++) {
-        if ((a->low >> i) & 1) {
-            r0 |= 1ULL << (2 * i);
-        }
-    }
-    for (int i = 32; i < 64; i++) {
-        if ((a->low >> i) & 1) {
-            r1 |= 1ULL << (2 * (i - 32));
-        }
-    }
-    
-    /* Expand high 64 bits */
-    for (int i = 0; i < 32; i++) {
-        if ((a->high >> i) & 1) {
-            r2 |= 1ULL << (2 * i);
-        }
-    }
-    for (int i = 32; i < 64; i++) {
-        if ((a->high >> i) & 1) {
-            r3 |= 1ULL << (2 * (i - 32));
-        }
-    }
-    
-    /* Reduction modulo x^128 + x^7 + x^2 + x + 1 */
-    for (int i = 63; i >= 0; i--) {
-        if ((r3 >> i) & 1) {
-            int pos = 64 + i;
-            r3 ^= (1ULL << i);
-            
-            if (pos + 7 < 128) {
-                r1 ^= (1ULL << (pos + 7 - 64));
-            } else {
-                r2 ^= (1ULL << (pos + 7 - 128));
-            }
-            
-            if (pos + 2 < 128) {
-                r1 ^= (1ULL << (pos + 2 - 64));
-            } else {
-                r2 ^= (1ULL << (pos + 2 - 128));
-            }
-            
-            if (pos + 1 < 128) {
-                r1 ^= (1ULL << (pos + 1 - 64));
-            } else {
-                r2 ^= (1ULL << (pos + 1 - 128));
-            }
-            
-            if (pos < 128) {
-                r1 ^= (1ULL << (pos - 64));
-            } else {
-                r2 ^= (1ULL << (pos - 128));
-            }
-        }
-    }
-    
-    for (int i = 63; i >= 0; i--) {
-        if ((r2 >> i) & 1) {
-            int pos = i;
-            r2 ^= (1ULL << i);
-            
-            if (pos + 7 < 64) {
-                r0 ^= (1ULL << (pos + 7));
-            } else {
-                r1 ^= (1ULL << (pos + 7 - 64));
-            }
-            
-            if (pos + 2 < 64) {
-                r0 ^= (1ULL << (pos + 2));
-            } else {
-                r1 ^= (1ULL << (pos + 2 - 64));
-            }
-            
-            if (pos + 1 < 64) {
-                r0 ^= (1ULL << (pos + 1));
-            } else {
-                r1 ^= (1ULL << (pos + 1 - 64));
-            }
-            
-            if (pos < 64) {
-                r0 ^= (1ULL << pos);
-            } else {
-                r1 ^= (1ULL << (pos - 64));
-            }
-        }
-    }
-    
-    return gf2128_create(r0, r1);
+    if (!gf2128_mul) init_gf2128();
+    return gf2128_mul(a,a);
 }
 
 /* Forward declaration for conversion function */
 gf2128_t fq_nmod_to_gf2128(const fq_nmod_t elem, const fq_nmod_ctx_t ctx);
 
-/* Inversion using FLINT as a correctness-preserving fallback. */
-gf2128_t gf2128_inv(const gf2128_t *a) {
-    if (gf2128_is_zero(a)) {
-        return gf2128_zero();
-    }
-
-    fq_nmod_ctx_t ctx;
-    nmod_poly_t mod;
-    nmod_poly_init(mod, 2);
-    nmod_poly_set_coeff_ui(mod, 0, 1);
-    nmod_poly_set_coeff_ui(mod, 1, 1);
-    nmod_poly_set_coeff_ui(mod, 2, 1);
-    nmod_poly_set_coeff_ui(mod, 7, 1);
-    nmod_poly_set_coeff_ui(mod, 128, 1);
-
-    fq_nmod_ctx_init_modulus(ctx, mod, "t");
-
-    fq_nmod_t a_flint, inv_flint;
-    fq_nmod_init(a_flint, ctx);
-    fq_nmod_init(inv_flint, ctx);
-
-    gf2128_to_fq_nmod(a_flint, a, ctx);
-    fq_nmod_inv(inv_flint, a_flint, ctx);
-
-    gf2128_t result = fq_nmod_to_gf2128(inv_flint, ctx);
-
-    fq_nmod_clear(a_flint, ctx);
-    fq_nmod_clear(inv_flint, ctx);
-    fq_nmod_ctx_clear(ctx);
-    nmod_poly_clear(mod);
-
-    return result;
-}
+/* Inversion stays in the native representation. */
+DEFINE_GF2_INVERSE(gf2128, 128)
 
 /* Division in GF(2^128) */
 inline gf2128_t gf2128_div(const gf2128_t *a, const gf2128_t *b) {

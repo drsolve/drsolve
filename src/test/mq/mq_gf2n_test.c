@@ -54,7 +54,10 @@ static void check_projection(const fq_nmod_ctx_t ctx, flint_rand_t state)
     assert(dr_mpoly_length(&zero) == 0); dr_mpoly_clear(&zero);
     unified_mpoly_struct projected = {0};
     int verified = dixon_try_mq_projection(&projected, modified, polys, n, 1, DET_METHOD_RECURSIVE);
-    assert(verified);
+    /* Over GF(4), a valid projection can be singular at all three
+     * certification points; conservative rejection is expected. */
+    if (fq_nmod_ctx_degree(ctx)>2) assert(verified);
+    else if (!verified) assert(!projected.ring);
     dr_mpoly_clear(&projected);
     slong saved_limit = g_dixon_det_cache_limit;
     g_dixon_det_cache_limit = 1;
@@ -208,6 +211,15 @@ int main(void)
         check_projection(ctx,state); check_schur(ctx,state);
         printf("MQ GF(2^%ld): exact projection, rank verification, Schur, fallback PASS\n",degrees[f]);
         fq_nmod_ctx_clear(ctx);
+    }
+    const slong arbitrary[]={2,7,9,16,17,31,33,63,65,95,127};
+    for(unsigned i=0;i<sizeof(arbitrary)/sizeof(*arbitrary);i++) {
+        nmod_poly_t mod; nmod_poly_init(mod,2);
+        nmod_poly_randtest_monic_irreducible(mod,state,arbitrary[i]+1);
+        fq_nmod_ctx_t ctx; fq_nmod_ctx_init_modulus(ctx,mod,"a");
+        field_ctx_t field; field_ctx_init(&field,ctx); assert(field_id_is_binary_dynamic(field.field_id));
+        field_ctx_clear(&field); check_projection(ctx,state); check_schur(ctx,state);
+        fq_nmod_ctx_clear(ctx); nmod_poly_clear(mod);
     }
     flint_rand_clear(state); flint_cleanup_master(); return 0;
 }

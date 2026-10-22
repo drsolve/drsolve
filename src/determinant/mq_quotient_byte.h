@@ -6,13 +6,13 @@
 typedef struct {slong r,c;uint8_t *data;} mq_byte_matrix;
 #define mq_byte_tables extension_byte_tables
 static int mq_byte_enabled(void)
-{return extension_field.field_id==FIELD_ID_GF24 || extension_field.field_id==FIELD_ID_GF28;}
+{return dq_is_byte();}
 static mq_byte_matrix mq_byte_pack(const dq_mat_struct *m)
 {
     mq_byte_matrix out={m->r,m->c,NULL};
     if(m->r) {
         out.data=flint_malloc(m->r*m->c);
-        for(slong i=0;i<m->r*m->c;i++)out.data[i]=extension_field.field_id==FIELD_ID_GF24 ? m->entries[i].gf24:m->entries[i].gf28;
+        for(slong i=0;i<m->r*m->c;i++)out.data[i]=dq_byte_get(m->entries+i);
     }
     return out;
 }
@@ -55,8 +55,7 @@ static void mq_byte_det(dq_mat_struct *out,const grade *g,const dq_coeff *q)
     }
     const mq_byte_matrix *last=state+(masks-1)*stride+M;
     for(slong i=0;i<out->r*out->c;i++) {
-        if(extension_field.field_id==FIELD_ID_GF24)out->entries[i].gf24=last->data[i];
-        else out->entries[i].gf28=last->data[i];
+        dq_byte_set(out->entries+i,last->data[i]);
     }
     flint_free(last->data);flint_free(state);
 }

@@ -3,6 +3,7 @@
 
 #include "unified_mpoly_interface.h"
 #include "zech_mpoly_access.h"
+#include "gf2n_native_mpoly.h"
 extern int g_field_equation_reduction;
 
 /* ============================================================================
@@ -479,6 +480,13 @@ int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
         return 1;
     }
 
+    if (field_id_is_binary_dynamic(poly1->field_id)) {
+        int ok=gf2n_native_mpoly_mul(GET_FQ_POLY(poly1),GET_FQ_POLY(poly2),GET_FQ_POLY(poly3),
+            GET_FQ_CTX(ctx),(const gf2n_native_ctx *)ctx->field_ctx->ctx.fq_ctx);
+        if (!ok) fq_nmod_mpoly_mul(GET_FQ_POLY(poly1),GET_FQ_POLY(poly2),GET_FQ_POLY(poly3),GET_FQ_CTX(ctx));
+        if (g_field_equation_reduction) unified_mpoly_reduce_field_equation_inplace(poly1);
+        return 1;
+    }
     switch (poly1->field_id) {
         case FIELD_ID_NMOD:
             nmod_mpoly_mul(GET_NMOD_POLY(poly1), GET_NMOD_POLY(poly2),
@@ -1224,6 +1232,17 @@ void unified_mpoly_set_fmpz(unified_mpoly_t poly, const fmpz_t c) {
     ulong *exp = (ulong *)calloc(ctx->nvars, sizeof(ulong));
     
     switch (poly->field_id) {
+        case FIELD_ID_GF2N8:
+        case FIELD_ID_GF2N16:
+        case FIELD_ID_GF2N64:
+        case FIELD_ID_GF2N128:
+        {
+            fq_nmod_t value; fq_nmod_init(value,ctx->field_ctx->ctx.fq_ctx);
+            fq_nmod_set_fmpz(value,c,ctx->field_ctx->ctx.fq_ctx);
+            fq_nmod_to_field_elem(&coeff,value,ctx->field_ctx);
+            fq_nmod_clear(value,ctx->field_ctx->ctx.fq_ctx); break;
+        }
+
         case FIELD_ID_NMOD:
             coeff.nmod = fmpz_get_ui(c) % GET_NMOD_CTX(ctx)->mod.n;
             break;
@@ -1648,6 +1667,12 @@ void unified_mpoly_set_zech_limit(unified_mpoly_ctx_t ctx, ulong limit) {
 /* Get information about the field representation being used */
 const char* unified_mpoly_get_field_info(const unified_mpoly_t poly) {
     switch (poly->field_id) {
+        case FIELD_ID_GF2N8:
+        case FIELD_ID_GF2N16:
+        case FIELD_ID_GF2N64:
+        case FIELD_ID_GF2N128:
+            return "GF(2^n) native polynomial basis";
+
         case FIELD_ID_NMOD:
             return "Prime field (nmod)";
         case FIELD_ID_GF24:
@@ -1674,6 +1699,12 @@ const char* unified_mpoly_get_field_info(const unified_mpoly_t poly) {
 /* Get information about the field representation being used by context */
 const char* unified_mpoly_get_field_info_by_ctx(unified_mpoly_ctx_t ctx) {
     switch (ctx->field_ctx->field_id) {
+        case FIELD_ID_GF2N8:
+        case FIELD_ID_GF2N16:
+        case FIELD_ID_GF2N64:
+        case FIELD_ID_GF2N128:
+            return "GF(2^n) native polynomial basis";
+
         case FIELD_ID_NMOD:
             return "Prime field (nmod)";
         case FIELD_ID_GF24:
@@ -1719,6 +1750,17 @@ void unified_mpoly_randtest(unified_mpoly_t poly, flint_rand_t state,
         
         /* Generate random coefficient */
         switch (poly->field_id) {
+        case FIELD_ID_GF2N8:
+        case FIELD_ID_GF2N16:
+        case FIELD_ID_GF2N64:
+        case FIELD_ID_GF2N128:
+            {
+                fq_nmod_t value; fq_nmod_init(value,ctx->field_ctx->ctx.fq_ctx);
+                fq_nmod_randtest_not_zero(value,state,ctx->field_ctx->ctx.fq_ctx);
+                fq_nmod_to_field_elem(&coeff,value,ctx->field_ctx);
+                fq_nmod_clear(value,ctx->field_ctx->ctx.fq_ctx); break;
+            }
+
             case FIELD_ID_NMOD:
                 coeff.nmod = n_randint(state, GET_NMOD_CTX(ctx)->mod.n);
                 if (coeff.nmod == 0) coeff.nmod = 1;
@@ -1734,6 +1776,19 @@ void unified_mpoly_randtest(unified_mpoly_t poly, flint_rand_t state,
                 if (coeff.gf28 == 0) coeff.gf28 = 1;
                 break;
                 
+            case FIELD_ID_GF216:
+                coeff.gf216 = n_randint(state, UWORD(1) << 16);
+                if (!coeff.gf216) coeff.gf216 = 1;
+                break;
+            case FIELD_ID_GF232:
+                coeff.gf232 = gf232_create((uint32_t)n_randtest(state));
+                if (gf232_is_zero(&coeff.gf232)) coeff.gf232 = gf232_one();
+                break;
+            case FIELD_ID_GF264:
+                coeff.gf264 = gf264_create(n_randtest(state));
+                if (gf264_is_zero(&coeff.gf264)) coeff.gf264 = gf264_one();
+                break;
+
             case FIELD_ID_GF2128:
                 coeff.gf2128.low = n_randtest(state);
                 coeff.gf2128.high = n_randtest(state);

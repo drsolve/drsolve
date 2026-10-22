@@ -416,9 +416,9 @@ static void check_schur_seed(void)
     for(int trial=0;trial<140;trial++) {
         slong nr=trial<120 ? 5+trial%3 : 65+trial%4;
         slong nc=trial<120 ? 4+trial%4 : 73+trial%5,m=1;
-        const ulong primes[] = {2,101,2,2,2,2,2,2,2,3};
-        const slong ext[] = {1,1,4,8,16,32,64,128,5,3};
-        int field=trial<120 ? trial%10 : 2+trial%2;
+        const ulong primes[] = {2,101,2,2,2,2,2,2,2,3,2,2,2,2};
+        const slong ext[] = {1,1,4,8,16,32,64,128,5,3,9,17,65,127};
+        int field=trial<120 ? trial%14 : 2+trial%2;
         fq_nmod_ctx_t ctx;fq_nmod_ctx_init_ui(ctx,primes[field],ext[field],"a");
         ulong prime=fq_nmod_ctx_prime(ctx);
         monom_t *rm=flint_calloc(nr,sizeof(monom_t)),*cm=flint_calloc(nc,sizeof(monom_t));

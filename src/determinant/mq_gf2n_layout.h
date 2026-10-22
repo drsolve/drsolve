@@ -54,6 +54,12 @@
 #define MQGF_MUL(a,b) gf2128_mul(&(a), &(b))
 #include "mq_gf2n_template.h"
 
+
+#define MQGF_PREFIX mq_shared
+#define MQGF_CONTEXT field->ctx.fq_ctx
+#define MQGF_TEMPLATE "determinant/mq_gf2n_template.h"
+#include "gf2n_native_instances.h"
+
 #include "mq_fq_layout.h"
 
 static int mq_extension_projected(unified_mpoly_struct *result,
@@ -64,7 +70,7 @@ static int mq_extension_projected(unified_mpoly_struct *result,
         g_dixon_det_cache_limit <= 0) return 0;
     field_ctx_t field;
     field_ctx_init(&field, matrix[0][0].ctx);
-    int native = field.field_id >= FIELD_ID_GF24 && field.field_id <= FIELD_ID_GF2128;
+    int native = field_id_is_gf2n(field.field_id);
     slong degree = fq_nmod_ctx_degree(matrix[0][0].ctx);
     if (degree <= 1 || (size_t)degree > SIZE_MAX/sizeof(ulong)) {
         field_ctx_clear(&field); return 0;
@@ -119,6 +125,10 @@ static int mq_extension_projected(unified_mpoly_struct *result,
         case FIELD_ID_GF232: ok = mq_shared_gf232(result, matrix, supports, n, ctx, parallel, filter, choose, &field); break;
         case FIELD_ID_GF264: ok = mq_shared_gf264(result, matrix, supports, n, ctx, parallel, filter, choose, &field); break;
         case FIELD_ID_GF2128: ok = mq_shared_gf2128(result, matrix, supports, n, ctx, parallel, filter, choose, &field); break;
+    case FIELD_ID_GF2N8: ok = mq_shared_gf2n8(result, matrix, supports, n, ctx, parallel, filter, choose, &field); break;
+    case FIELD_ID_GF2N16: ok = mq_shared_gf2n16(result, matrix, supports, n, ctx, parallel, filter, choose, &field); break;
+    case FIELD_ID_GF2N64: ok = mq_shared_gf2n64(result, matrix, supports, n, ctx, parallel, filter, choose, &field); break;
+    case FIELD_ID_GF2N128: ok = mq_shared_gf2n128(result, matrix, supports, n, ctx, parallel, filter, choose, &field); break;
         default: ok = mq_shared_fq(result, matrix, supports, n, ctx, parallel, filter, choose, matrix[0][0].ctx); break;
         }
     }

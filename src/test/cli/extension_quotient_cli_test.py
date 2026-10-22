@@ -35,7 +35,9 @@ with tempfile.TemporaryDirectory(prefix='extension-bezoutian-') as work:
                 assert 'normalize to monic.' in log, log
         print('PASS', ' '.join(arguments), flush=True)
 
-    for field in ('2^4', '2^8', '2^8:t^8+t^4+t^3+t+1', '2^16', '2^32', '2^64', '2^128', '101^3'):
+    for field in ('2^4', '2^8', '2^8:t^8+t^4+t^3+t+1', '2^16', '2^32', '2^64', '2^128', '101^3',
+                  '2^7', '2^9', '2^17', '2^31', '2^63', '2^65', '2^127',
+                  '2^64:t^64+t^4+t^3+t+1'):
         compare(['-r', '[2]*3', field, '--seed', '12345'])
     for degrees, field in (('[3]*3', '2^8'), ('[2,3,4]', '2^8'),
                            ('[1,3,5]', '2^8'), ('[1,1,1,1,1,1,1,2,3]', '2^8'), ('[3]*3', '3^3'),

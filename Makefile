@@ -171,6 +171,7 @@ MATH_SOURCES = $(SRC_DIR)/dixon/dixon_complexity.c \
                $(SRC_DIR)/matrix/unified_mat_poly.c \
                $(SRC_DIR)/determinant/unified_hnf.c \
                $(SRC_DIR)/field/gf2n_field.c \
+               $(SRC_DIR)/field/gf2n_native.c \
                $(SRC_DIR)/field/gf2n_mpoly.c \
                $(SRC_DIR)/field/gf2n_poly.c \
                $(SRC_DIR)/field/unified_mpoly_interface.c \
@@ -1093,7 +1094,7 @@ $(BUILD_DIR)/gf2n_sparse_mpoly_test: $(SRC_DIR)/test/field/gf2n_sparse_mpoly_tes
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 .PHONY: test-gf2n-sparse
 test-gf2n-sparse: $(BUILD_DIR)/gf2n_sparse_mpoly_test
-	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/gf2n_sparse_mpoly_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=4 ./$(BUILD_DIR)/gf2n_sparse_mpoly_test
 
 $(BUILD_DIR)/byte_poly_mat_det_test: $(SRC_DIR)/test/matrix/byte_poly_mat_det_test.c $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
@@ -1101,11 +1102,11 @@ $(BUILD_DIR)/byte_poly_mat_det_test: $(SRC_DIR)/test/matrix/byte_poly_mat_det_te
 test-byte-poly-det: $(BUILD_DIR)/byte_poly_mat_det_test
 	./$(BUILD_DIR)/byte_poly_mat_det_test
 
-$(BUILD_DIR)/det_minor_dp_test: $(SRC_DIR)/determinant/gf28_minor_dp.h
+$(BUILD_DIR)/det_minor_dp_test: $(SRC_DIR)/determinant/gf2n_minor_dp.h $(SRC_DIR)/determinant/gf2n_minor_dp_template.h $(SRC_DIR)/determinant/gf2n_minor_dynamic.h
 
 .PHONY: test-mq-gf2n
 test-mq-gf2n: $(BUILD_DIR)/mq_gf2n_test
-	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/mq_gf2n_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=4 ./$(BUILD_DIR)/mq_gf2n_test
 
 $(BUILD_DIR)/mq_gf2n_test: $(SRC_DIR)/test/mq/mq_gf2n_test.c $(SRC_DIR)/dixon/dixon_flint.c $(wildcard $(SRC_DIR)/dixon/dixon_gf2n*.h) $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq/mq_gf2n_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
@@ -1246,3 +1247,11 @@ $(BUILD_DIR)/unified_hnf_test: $(SRC_DIR)/test/matrix/unified_hnf_test.c $(DIXON
 .PHONY: test-unified-hnf
 test-unified-hnf: $(BUILD_DIR)/unified_hnf_test
 	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=1 ./$(BUILD_DIR)/unified_hnf_test
+
+$(BUILD_DIR)/gf2n_native_test: $(SRC_DIR)/test/field/gf2n_native_test.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+.PHONY: test-gf2n-native
+test-gf2n-native: $(BUILD_DIR)/gf2n_native_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=4 ./$(BUILD_DIR)/gf2n_native_test
+
+$(BUILD_DIR)/dixon_schur_repair_test: $(SRC_DIR)/dixon/dixon_schur_seed_native.h $(SRC_DIR)/dixon/dixon_schur_seed_native_template.h

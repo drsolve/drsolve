@@ -40,6 +40,7 @@
 #undef SEED_ACCUMULATE
 
 #include "dixon_schur_seed_byte.h"
+#include "dixon_schur_seed_native.h"
 
 static int dixon_schur_seed_select(unified_mpoly_struct ***matrix,
     slong nr, slong nc, const monom_t *rm, const monom_t *cm, slong m,
@@ -52,8 +53,7 @@ static int dixon_schur_seed_select(unified_mpoly_struct ***matrix,
         field_ctx_init(&byte.field,ctx);
         if (byte.field.field_id!=FIELD_ID_GF24 && byte.field.field_id!=FIELD_ID_GF28) {
             field_ctx_clear(&byte.field);
-            return dixon_schur_seed_extension(matrix,nr,nc,rm,cm,m,degrees,ctx,
-                out_rows,out_cols,out_size);
+            goto native;
         }
         int small=byte.field.field_id==FIELD_ID_GF24;
         byte.row=small ? gf24_get_scalar_row : gf28_get_scalar_row;
@@ -62,6 +62,20 @@ static int dixon_schur_seed_select(unified_mpoly_struct ***matrix,
         int ok=dixon_schur_seed_byte(matrix,nr,nc,rm,cm,m,degrees,ctx,
             out_rows,out_cols,out_size,&byte);
         field_ctx_clear(&byte.field);
+        return ok;
+    }
+native:
+    if (fq_nmod_ctx_prime(ctx)==2 && fq_nmod_ctx_degree(ctx)>1 && fq_nmod_ctx_degree(ctx)<=128) {
+        gf2n_native_ctx *field=gf2n_native_create(ctx);
+        int ok;
+#define SEED_SELECT(bits) seed_n##bits##_select(matrix,nr,nc,rm,cm,m,degrees,ctx,out_rows,out_cols,out_size,field)
+        if(field->n<=8) ok=SEED_SELECT(8);
+        else if(field->n<=16) ok=SEED_SELECT(16);
+        else if(field->n<=32) ok=SEED_SELECT(32);
+        else if(field->n<=64) ok=SEED_SELECT(64);
+        else ok=SEED_SELECT(128);
+#undef SEED_SELECT
+        gf2n_native_destroy(field);
         return ok;
     }
     return fq_nmod_ctx_degree(ctx) == 1

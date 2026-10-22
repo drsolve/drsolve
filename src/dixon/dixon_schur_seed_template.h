@@ -76,13 +76,29 @@ static int SCHUR_SEED_NAME(unified_mpoly_struct ***matrix,
 #else
             fq_nmod_set_ui(params[0],(trial+1)%prime,ctx);
 #endif
+#ifdef SEED_NATIVE_EVAL
+            SEED_E *powers=flint_malloc((sigma+1)*sizeof(*powers));
+            powers[0]=SEED_FROM_WORD(1);
+            SEED_E point=SEED_FROM_FQ(params[0]);
+            for(slong d=1;d<=sigma;d++) powers[d]=SEED_MUL(powers[d-1],point);
+#endif
             SEED_MAT full,A,B,C,D,X,S,product;
             SEED_INIT(full,nr,nc);
             for(slong i=0;i<nr;i++)for(slong j=0;j<nc;j++) {
                 unified_mpoly_struct *f=matrix[rows[i]][cols[j]];
                 if(f) {
+#ifdef SEED_NATIVE_EVAL
+                    SEED_E v=SEED_FROM_WORD(0);
+                    for(slong t=0;t<dr_mpoly_length(f);t++) {
+                        DR_MPOLY_TERM(term,f,t);
+                        slong d=term.par_exp ? term.par_exp[0] : 0;
+                        v=SEED_ADD(v,SEED_MUL(SEED_FROM_FQ(term.coeff),powers[d]));
+                    }
+                    SEED_ENTRY(full,i,j)=v;
+#else
                     evaluate_dr_mpoly_at_params(value,f,params);
                     SEED_STORE(full,i,j,value);
+#endif
                 }
             }
             SEED_CALL(window_init,A,full,0,0,count,count);
@@ -109,6 +125,9 @@ static int SCHUR_SEED_NAME(unified_mpoly_struct ***matrix,
             SEED_CALL(clear,product);SEED_CALL(clear,S);SEED_CALL(clear,X);
             SEED_CALL(window_clear,D);SEED_CALL(window_clear,C);SEED_CALL(window_clear,B);SEED_CALL(window_clear,A);
             SEED_CALL(clear,full);
+#ifdef SEED_NATIVE_EVAL
+            flint_free(powers);
+#endif
             if(!ok)break;
         }
         fq_nmod_clear(value,ctx);fq_nmod_clear(params[0],ctx);

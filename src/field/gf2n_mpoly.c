@@ -541,6 +541,7 @@ void FIELD##_mpoly_set(FIELD##_mpoly_t res, const FIELD##_mpoly_t poly,        \
     const FIELD##_mpoly_ctx_t ctx)                                              \
 {                                                                               \
     if (res == poly) return;                                                    \
+    if (!poly->length) { res->length=0; res->bits=poly->bits; return; }       \
     slong N = mpoly_words_per_exp(poly->bits, ctx->minfo);                     \
     if (res->coeffs_alloc < poly->length) {                                     \
         res->coeffs = (COEFF_T *)flint_realloc(res->coeffs,                    \
@@ -1064,6 +1065,7 @@ void _gf28_mpoly_set_length(gf28_mpoly_t poly, slong len, const gf28_mpoly_ctx_t
 
 void gf28_mpoly_set(gf28_mpoly_t res, const gf28_mpoly_t poly, const gf28_mpoly_ctx_t ctx) {
     if (res == poly) return;
+    if (!poly->length) { res->length=0; res->bits=poly->bits; return; }
     gf28_mpoly_fit_length_reset_bits(res, poly->length, poly->bits, ctx);
     slong N = mpoly_words_per_exp(poly->bits, ctx->minfo);
     memcpy(res->coeffs, poly->coeffs, poly->length * sizeof(uint8_t));

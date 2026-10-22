@@ -7,6 +7,7 @@
  */
 
 #include "dixon_flint.h"
+#include "drsolve_memory.h"
 #include "mq_poly_mat_det.h"
 #include "mq_quotient.h"
 #include "mq_simplex_det.h"
@@ -209,12 +210,24 @@ static int dixon_get_effective_parallel_threads(void)
 }
 
 
+/* This is the cumulative process peak, not a per-step allocation count. */
+static void dixon_print_step_memory(void)
+{
+    double peak_memory = drsolve_peak_memory_mib();
+    if (peak_memory >= 0.0) {
+        dixon_info_log(" | Memory: %.3f MiB\n", peak_memory);
+    } else {
+        dixon_info_log(" | Memory: unavailable\n");
+    }
+}
+
 void dixon_maybe_print_step_time(const char *step_label, double wall_elapsed)
 {
     if (g_dixon_verbose_level < 1 || !g_dixon_show_step_timing) {
         return;
     }
-    dixon_info_log("%s time: %.3f seconds\n", step_label, wall_elapsed);
+    dixon_info_log("%s time: %.3f seconds", step_label, wall_elapsed);
+    dixon_print_step_memory();
 }
 
 void dixon_maybe_print_parallel_step_time(const char *step_label,
@@ -225,9 +238,10 @@ void dixon_maybe_print_parallel_step_time(const char *step_label,
         return;
     }
 
-    dixon_info_log("%s time: CPU time: %.3f seconds | Wall time: %.3f seconds | Threads: %d\n",
+    dixon_info_log("%s time: CPU time: %.3f seconds | Wall time: %.3f seconds | Threads: %d",
                    step_label, cpu_elapsed, wall_elapsed,
                    dixon_get_effective_parallel_threads());
+    dixon_print_step_memory();
 }
 
 static void dixon_maybe_print_step_detail_time(const char *label,
@@ -238,11 +252,12 @@ static void dixon_maybe_print_step_detail_time(const char *label,
         return;
     }
 
-    dixon_info_log("  %s time: CPU time: %.3f seconds | Wall time: %.3f seconds | Threads: %d\n",
+    dixon_info_log("  %s time: CPU time: %.3f seconds | Wall time: %.3f seconds | Threads: %d",
                    label,
                    (double) (clock() - cpu_start) / CLOCKS_PER_SEC,
                    get_wall_time() - wall_start,
                    dixon_get_effective_parallel_threads());
+    dixon_print_step_memory();
 }
 
 void dixon_maybe_print_step_method_time(const char *step_label,
@@ -261,12 +276,13 @@ void dixon_maybe_print_step_method_time(const char *step_label,
                            method == DET_METHOD_RECURSIVE);
 
     if (show_parallel_style) {
-        dixon_info_log("%s time: CPU time: %.3f seconds | Wall time: %.3f seconds | Threads: %d\n",
+        dixon_info_log("%s time: CPU time: %.3f seconds | Wall time: %.3f seconds | Threads: %d",
                        step_label, cpu_elapsed, wall_elapsed,
                        dixon_get_effective_interpolation_threads());
     } else {
-        dixon_info_log("%s time: %.3f seconds\n", step_label, wall_elapsed);
+        dixon_info_log("%s time: %.3f seconds", step_label, wall_elapsed);
     }
+    dixon_print_step_memory();
 }
 
 static void dixon_debug_log(const char *fmt, ...)
@@ -1640,8 +1656,7 @@ static int unified_try_add_row_to_basis(unified_row_basis_tracker_t *tracker,
             
             // Perform elimination: work_row -= factor * basis_row[i]
             // Optimization: pre-determine if neg_temp is needed to avoid conditional branches in inner loop
-            int use_direct_add = (tracker->ctx->field_id >= FIELD_ID_GF28 && 
-                                 tracker->ctx->field_id <= FIELD_ID_GF2128);
+            int use_direct_add = field_id_is_gf2n(tracker->ctx->field_id);
             
             for (slong j = 0; j < ncols; j++) {
                 slong idx = i * ncols + j;
@@ -5012,7 +5027,7 @@ static int dixon_try_mq_projection_from_full(unified_mpoly_struct *result,
     if (!g_dixon_mq_step1_filter ||
         method != DET_METHOD_RECURSIVE || npars != 1 || nvars < 2 ||
         nvars >= FLINT_BITS) return 0;
-    int native_extension = polys[0].field_id >= FIELD_ID_GF24 && polys[0].field_id <= FIELD_ID_GF2128;
+    int native_extension = field_id_is_gf2n(polys[0].field_id);
     int extension = fq_nmod_ctx_degree(polys[0].ctx) > 1;
     if (extension) compact = NULL;
     long *degrees = flint_malloc((size_t) (nvars + 1) * sizeof(long));
@@ -6027,6 +6042,7 @@ static void extract_fq_coefficient_matrix_from_dixon_impl(
     int projected_verified, dixon_mq_step4_profile *mq_profile, nmod_poly_mat_t *prime_matrix_out,
     unified_mpoly_struct *consume)
 {
+    const fq_nmod_ctx_struct *coefficient_ctx = dixon_poly->ctx;
     dixon_info_log("\nStep 2: Construct Dixon matrix\n");
     if (extracted_x_power)
         *extracted_x_power = 0;
@@ -6103,7 +6119,7 @@ static void extract_fq_coefficient_matrix_from_dixon_impl(
 #ifdef DRSOLVE_MQ_STEP2_TEST
     if (dixon_step2_test_force_generic) direct_projected = 0;
 #endif
-    FLINT_ASSERT(!prime_matrix_out || (npars == 1 && fq_nmod_ctx_degree(dixon_poly->ctx) == 1));
+    FLINT_ASSERT(!prime_matrix_out || (npars == 1 && fq_nmod_ctx_degree(coefficient_ctx) == 1));
     if (direct_projected) {
         int own_indices = row_indices == NULL;
         if (own_indices) {
@@ -6114,6 +6130,7 @@ static void extract_fq_coefficient_matrix_from_dixon_impl(
         slong content = dixon_projected_poly_matrix(poly_matrix_out ? *poly_matrix_out : NULL,
                              prime_matrix_out, consume, row_indices,
                              col_indices, nx_monoms, dixon_poly, term_rows, term_cols);
+        if (consume) dr_mpoly_clear(consume);
         *coeff_matrix = NULL;
         *matrix_size = nx_monoms;
         if (extracted_x_power) *extracted_x_power = content;
@@ -6159,6 +6176,9 @@ static void extract_fq_coefficient_matrix_from_dixon_impl(
                                      dixon_poly, npars, term_rows, term_cols);
     flint_free(term_rows);
     flint_free(term_cols);
+    /* The matrix owns its coefficients now; release the consumed source
+       before selection and HNF allocate their workspaces. */
+    if (consume) dr_mpoly_clear(consume);
     dixon_debug_log("  Coefficient matrix filled in %.3f seconds\n",
                     get_wall_time() - phase_start);
     slong preselection_x_power = extract_fq_full_matrix_x_content(full_matrix,
@@ -6205,7 +6225,7 @@ static void extract_fq_coefficient_matrix_from_dixon_impl(
 
     dixon_select_submatrix(full_matrix, nx_monoms, ndual_monoms,
         x_monoms, dual_monoms, nvars, npars, degrees, num_polys, -1,
-        dixon_poly->ctx, &row_idx_array, &col_idx_array, &num_rows);
+        coefficient_ctx, &row_idx_array, &col_idx_array, &num_rows);
     num_cols = num_rows;
 
 coefficient_matrix_selected: ;
@@ -6284,9 +6304,9 @@ coefficient_matrix_selected: ;
 
     if ((poly_matrix_out != NULL || prime_matrix_out != NULL) && npars == 1) {
         if (prime_matrix_out)
-            nmod_poly_mat_init(*prime_matrix_out, submat_rank, submat_rank, fq_nmod_ctx_prime(dixon_poly->ctx));
+            nmod_poly_mat_init(*prime_matrix_out, submat_rank, submat_rank, fq_nmod_ctx_prime(coefficient_ctx));
         else
-            fq_nmod_poly_mat_init(*poly_matrix_out, submat_rank, submat_rank, dixon_poly->ctx);
+            fq_nmod_poly_mat_init(*poly_matrix_out, submat_rank, submat_rank, coefficient_ctx);
         for (slong i = 0; i < submat_rank; i++) {
             slong src_row = row_idx_array[i];
             for (slong j = 0; j < submat_rank; j++) {
@@ -6302,7 +6322,7 @@ coefficient_matrix_selected: ;
                                                    nmod_poly_get_coeff_ui(term_24.coeff, 0));
                         else
                             fq_nmod_poly_set_coeff(fq_nmod_poly_mat_entry(*poly_matrix_out, i, j),
-                                                   degree, term_24.coeff, dixon_poly->ctx);
+                                                   degree, term_24.coeff, coefficient_ctx);
                     }
                 }
             }
@@ -6335,7 +6355,7 @@ coefficient_matrix_selected: ;
                     flint_free(source);
                     full_matrix[src_row][src_col] = NULL;
                 } else {
-                    dr_mpoly_init(&(*coeff_matrix)[i][j], 0, npars, dixon_poly->ctx);
+                    dr_mpoly_init(&(*coeff_matrix)[i][j], 0, npars, coefficient_ctx);
                 }
             }
             /* All selected entries in this source row have been moved. */
@@ -6912,7 +6932,7 @@ void fq_dixon_resultant(unified_mpoly_struct *result, unified_mpoly_struct *poly
                                             NULL, NULL, NULL, rank_degrees, nvars + 1, projected_verified,
                                             try_mq_step4 ? &mq_profile : NULL,
                                             use_prime_matrix ? &prime_matrix : NULL,
-                                            use_prime_matrix ? &d_poly : NULL);
+                                            &d_poly);
     flint_free(rank_degrees);
 
     if (matrix_size > 0 && use_poly_matrix) {
@@ -7050,7 +7070,7 @@ void fq_dixon_resultant_with_names(unified_mpoly_struct *result, unified_mpoly_s
                                             rank_degrees, nvars + 1, projected_verified,
                                             try_mq_step4 ? &mq_profile : NULL,
                                             use_prime_matrix ? &prime_matrix : NULL,
-                                            use_prime_matrix ? &d_poly : NULL);
+                                            &d_poly);
     flint_free(rank_degrees);
 
     if (matrix_size > 0 && use_poly_matrix) {

@@ -254,8 +254,8 @@ static void check_field(ulong prime, slong degree, ulong zech_limit)
     fq_nmod_ctx_clear(fq);
 }
 
-/* Exercise native-byte merges across packing widths and monomial orders. */
-static void check_byte_packing(slong degree)
+/* Exercise native merges across packing widths and monomial orders. */
+static void check_native_packing(slong degree)
 {
     fq_nmod_ctx_t fq;
     fq_nmod_ctx_init_ui(fq, 2, degree, "a");
@@ -310,7 +310,12 @@ int main(void)
     check_field(2, 1, 0);
     check_field(2, 4, 0);
     check_field(2, 8, 0);
-    check_byte_packing(4);
-    check_byte_packing(8);
+    const slong binary_degrees[]={7,9,16,17,32,64,65,128};
+    for(size_t i=0;i<sizeof(binary_degrees)/sizeof(*binary_degrees);i++)
+        check_field(2,binary_degrees[i],0);
+    check_native_packing(4);
+    check_native_packing(8);
+    for(size_t i=0;i<sizeof(binary_degrees)/sizeof(*binary_degrees);i++)
+        check_native_packing(binary_degrees[i]);
     return 0;
 }

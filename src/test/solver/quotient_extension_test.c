@@ -146,7 +146,7 @@ int main(void)
     for (int i=0;i<4;i++) {
         fq_nmod_ctx_init_ui(field,ps[i],degrees[i],"t");
         field_ctx_t backend; field_ctx_init(&backend,field);
-        assert(backend.field_id==FIELD_ID_FQ); /* Zech is disabled by the project policy. */
+        assert(ps[i]==2 ? field_id_is_binary_dynamic(backend.field_id) : backend.field_id==FIELD_ID_FQ);
         field_ctx_clear(&backend); cases(field,i<3);
         if (i==1) {
             char *no_points[]={"x^2-t", "y"};
@@ -166,6 +166,11 @@ int main(void)
             flint_rand_clear(random);
         }
         fq_nmod_ctx_clear(field);
+    }
+    const slong arbitrary[]={7,9,16,17,31,63,65,95,127};
+    for(unsigned i=0;i<sizeof(arbitrary)/sizeof(*arbitrary);i++) {
+        fq_nmod_ctx_init_ui(field,2,arbitrary[i],"t");
+        cases(field,0); fq_nmod_ctx_clear(field);
     }
     flint_cleanup(); puts("Quotient extension fields: native, generic and exhaustive point tests passed");
     return 0;

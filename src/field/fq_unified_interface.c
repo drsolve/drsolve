@@ -3,6 +3,7 @@
 
 #include "fq_unified_interface.h"
 #include <limits.h>
+#include <pthread.h>
 extern int g_field_equation_reduction;
 extern int g_dixon_verbose_level;
 
@@ -109,74 +110,48 @@ void field_ctx_init_enhanced(field_ctx_t *ctx, const fq_nmod_ctx_t fq_ctx, ulong
         ctx->elem_size = sizeof(ulong);
         ctx->description = "Prime field (nmod)";
     } else if (prime == 2) {
-        /* Check for optimized GF(2^n) implementations */
-        switch (degree) {
-            case 4:
-                if (gf24_native_modulus_supported(fq_ctx)) {
-                    ctx->field_id = FIELD_ID_GF24;
-                    ctx->ctx.fq_ctx = fq_ctx;
-                    ctx->elem_size = sizeof(uint8_t);
-                    init_gf24_standard();
-                    init_gf24_conversion(fq_ctx);
-                    ctx->description = "GF(2^4) lookup tables";
-                    break;
-                }
-                goto check_zech;
-            case 8:
-                ctx->field_id = FIELD_ID_GF28;
-                ctx->ctx.fq_ctx = fq_ctx;
-                ctx->elem_size = sizeof(uint8_t);
-                init_gf28_standard();
-                init_gf28_conversion(fq_ctx);
-                ctx->description = "GF(2^8) lookup tables";
-                break;
-            case 16:
-                if (gf216_native_modulus_supported(fq_ctx)) {
-                    ctx->field_id = FIELD_ID_GF216;
-                    ctx->ctx.fq_ctx = fq_ctx;
-                    ctx->elem_size = sizeof(uint16_t);
-                    init_gf216_standard();
-                    init_gf216_conversion(fq_ctx);
-                    ctx->description = "GF(2^16) tower field";
-                    break;
-                }
-                goto check_zech;
-            case 32:
-                if (gf232_native_modulus_supported(fq_ctx)) {
-                    ctx->field_id = FIELD_ID_GF232;
-                    ctx->ctx.fq_ctx = fq_ctx;
-                    ctx->elem_size = sizeof(gf232_t);
-                    init_gf232();
-                    init_gf232_conversion(fq_ctx);
-                    ctx->description = "GF(2^32) PCLMUL";
-                    break;
-                }
-                goto check_zech;
-            case 64:
-                if (gf264_native_modulus_supported(fq_ctx)) {
-                    ctx->field_id = FIELD_ID_GF264;
-                    ctx->ctx.fq_ctx = fq_ctx;
-                    ctx->elem_size = sizeof(gf264_t);
-                    init_gf264();
-                    init_gf264_conversion(fq_ctx);
-                    ctx->description = "GF(2^64) PCLMUL";
-                    break;
-                }
-                goto check_zech;
-            case 128:
-                if (gf2128_native_modulus_supported(fq_ctx)) {
-                    ctx->field_id = FIELD_ID_GF2128;
-                    ctx->ctx.fq_ctx = fq_ctx;
-                    ctx->elem_size = sizeof(gf2128_t);
-                    init_gf2128();
-                    init_gf2128_conversion(fq_ctx);
-                    ctx->description = "GF(2^128) PCLMUL";
-                    break;
-                }
-                goto check_zech;
-            default:
-                goto check_zech;
+        int fixed = (degree==4 && gf24_native_modulus_supported(fq_ctx)) ||
+            (degree==8 && extract_irred_poly(fq_ctx)==0x11D) ||
+            (degree==16 && gf216_native_modulus_supported(fq_ctx)) ||
+            (degree==32 && gf232_native_modulus_supported(fq_ctx)) ||
+            (degree==64 && gf264_native_modulus_supported(fq_ctx)) ||
+            (degree==128 && gf2128_native_modulus_supported(fq_ctx));
+        if (degree<=128 && !fixed) {
+            gf2n_native_ctx *native=gf2n_native_create(fq_ctx);
+            ctx->ctx.fq_ctx=&native->fq;
+            ctx->field_id=degree<=8 ? FIELD_ID_GF2N8 : degree<=16 ? FIELD_ID_GF2N16 :
+                          degree<=64 ? FIELD_ID_GF2N64 : FIELD_ID_GF2N128;
+            ctx->elem_size=degree<=8 ? 1 : degree<=16 ? 2 : degree<=64 ? 8 : 16;
+            ctx->description="GF(2^n) native polynomial basis";
+            field_ctx_report_backend_once(ctx,prime,degree);
+            return;
         }
+        if (!fixed) goto check_zech;
+        /* Only initialization of the shared, fixed-modulus tables is mutable. */
+        static pthread_mutex_t fixed_lock=PTHREAD_MUTEX_INITIALIZER;
+        pthread_mutex_lock(&fixed_lock);
+        ctx->ctx.fq_ctx=fq_ctx;
+        switch (degree) {
+        case 4:
+            ctx->field_id=FIELD_ID_GF24; ctx->elem_size=sizeof(uint8_t);
+            init_gf24_standard(); init_gf24_conversion(fq_ctx); ctx->description="GF(2^4) lookup tables"; break;
+        case 8:
+            ctx->field_id=FIELD_ID_GF28; ctx->elem_size=sizeof(uint8_t);
+            init_gf28_standard(); init_gf28_conversion(fq_ctx); ctx->description="GF(2^8) lookup tables"; break;
+        case 16:
+            ctx->field_id=FIELD_ID_GF216; ctx->elem_size=sizeof(uint16_t);
+            init_gf216_standard(); init_gf216_conversion(fq_ctx); ctx->description="GF(2^16) lookup tables"; break;
+        case 32:
+            ctx->field_id=FIELD_ID_GF232; ctx->elem_size=sizeof(gf232_t);
+            init_gf232(); init_gf232_conversion(fq_ctx); ctx->description="GF(2^32) native CLMUL"; break;
+        case 64:
+            ctx->field_id=FIELD_ID_GF264; ctx->elem_size=sizeof(gf264_t);
+            init_gf264(); init_gf264_conversion(fq_ctx); ctx->description="GF(2^64) native CLMUL"; break;
+        case 128:
+            ctx->field_id=FIELD_ID_GF2128; ctx->elem_size=sizeof(gf2128_t);
+            init_gf2128(); init_gf2128_conversion(fq_ctx); ctx->description="GF(2^128) native CLMUL"; break;
+        }
+        pthread_mutex_unlock(&fixed_lock);
     } else {
 check_zech:
         /* Check if Zech logarithm is suitable */
@@ -235,6 +210,15 @@ int field_ctx_is_using_zech(const field_ctx_t *ctx) {
 
 ulong field_ctx_get_size(const field_ctx_t *ctx) {
     switch (ctx->field_id) {
+        case FIELD_ID_GF2N8:
+        case FIELD_ID_GF2N16:
+        case FIELD_ID_GF2N64:
+        case FIELD_ID_GF2N128:
+        {
+            slong n=fq_nmod_ctx_degree(ctx->ctx.fq_ctx);
+            return n<FLINT_BITS ? UWORD(1)<<n : 0;
+        }
+
         case FIELD_ID_NMOD:
             return ctx->ctx.nmod_ctx.n;
         case FIELD_ID_GF24:
@@ -267,6 +251,14 @@ ulong field_ctx_get_size(const field_ctx_t *ctx) {
 }
 
 void field_ctx_clear(field_ctx_t *ctx) {
+    if (g_unified_workspace.initialized && g_unified_workspace.tmp.ctx==ctx)
+        cleanup_unified_workspace();
+    if (field_id_is_binary_dynamic(ctx->field_id)) {
+        gf2n_native_destroy((gf2n_native_ctx *)ctx->ctx.fq_ctx);
+        ctx->ctx.fq_ctx=NULL;
+        return;
+    }
+
     if (ctx->field_id == FIELD_ID_FQ_ZECH && ctx->ctx.zech_ctx) {
         fq_zech_ctx_clear(ctx->ctx.zech_ctx);
         free(ctx->ctx.zech_ctx);
@@ -282,6 +274,11 @@ void field_ctx_clear(field_ctx_t *ctx) {
 void field_neg(field_elem_u *res, const field_elem_u *a,
                field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_GF2N8: res->binary8=a->binary8; break;
+        case FIELD_ID_GF2N16: res->binary16=a->binary16; break;
+        case FIELD_ID_GF2N64: res->binary64=a->binary64; break;
+        case FIELD_ID_GF2N128: res->binary128=a->binary128; break;
+
         case FIELD_ID_GF24:
         case FIELD_ID_GF28:
         case FIELD_ID_GF216:
@@ -305,6 +302,11 @@ void field_neg(field_elem_u *res, const field_elem_u *a,
 void field_inv(field_elem_u *res, const field_elem_u *a,
                field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_GF2N8: res->binary8=gf2n_native_inv_word(a->binary8,ctx); break;
+        case FIELD_ID_GF2N16: res->binary16=gf2n_native_inv_word(a->binary16,ctx); break;
+        case FIELD_ID_GF2N64: res->binary64=gf2n_native_inv_word(a->binary64,ctx); break;
+        case FIELD_ID_GF2N128: res->binary128=gf2n_native_inv(a->binary128,ctx); break;
+
         case FIELD_ID_GF24:
             res->gf24 = gf24_inv(a->gf24);
             break;
@@ -337,6 +339,11 @@ void field_inv(field_elem_u *res, const field_elem_u *a,
 
 void field_set_zero(field_elem_u *res, field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_GF2N8: res->binary8=0; break;
+        case FIELD_ID_GF2N16: res->binary16=0; break;
+        case FIELD_ID_GF2N64: res->binary64=0; break;
+        case FIELD_ID_GF2N128: res->binary128=(gf2128_t){0,0}; break;
+
         case FIELD_ID_GF24:
             res->gf24 = 0;
             break;
@@ -369,6 +376,11 @@ void field_set_zero(field_elem_u *res, field_id_t field_id, const void *ctx) {
 
 void field_set_one(field_elem_u *res, field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_GF2N8: res->binary8=1; break;
+        case FIELD_ID_GF2N16: res->binary16=1; break;
+        case FIELD_ID_GF2N64: res->binary64=1; break;
+        case FIELD_ID_GF2N128: res->binary128=(gf2128_t){1,0}; break;
+
         case FIELD_ID_GF24:
             res->gf24 = 1;
             break;
@@ -402,6 +414,11 @@ void field_set_one(field_elem_u *res, field_id_t field_id, const void *ctx) {
 int field_equal(const field_elem_u *a, const field_elem_u *b, 
                 field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_GF2N8: return a->binary8==b->binary8;
+        case FIELD_ID_GF2N16: return a->binary16==b->binary16;
+        case FIELD_ID_GF2N64: return a->binary64==b->binary64;
+        case FIELD_ID_GF2N128: return a->binary128.low==b->binary128.low && a->binary128.high==b->binary128.high;
+
         case FIELD_ID_GF24:
             return a->gf24 == b->gf24;
         case FIELD_ID_GF28:
@@ -426,6 +443,11 @@ int field_equal(const field_elem_u *a, const field_elem_u *b,
 
 void field_init_elem(field_elem_u *elem, field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_GF2N8: elem->binary8=0; break;
+        case FIELD_ID_GF2N16: elem->binary16=0; break;
+        case FIELD_ID_GF2N64: elem->binary64=0; break;
+        case FIELD_ID_GF2N128: elem->binary128=(gf2128_t){0,0}; break;
+
         case FIELD_ID_GF24:
             elem->gf24 = 0;
             break;
@@ -473,6 +495,11 @@ void field_clear_elem(field_elem_u *elem, field_id_t field_id, const void *ctx) 
 void field_set_elem(field_elem_u *res, const field_elem_u *a,
                     field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_GF2N8: res->binary8=a->binary8; break;
+        case FIELD_ID_GF2N16: res->binary16=a->binary16; break;
+        case FIELD_ID_GF2N64: res->binary64=a->binary64; break;
+        case FIELD_ID_GF2N128: res->binary128=a->binary128; break;
+
         case FIELD_ID_GF24:
             res->gf24 = a->gf24;
             break;
@@ -506,6 +533,11 @@ void field_set_elem(field_elem_u *res, const field_elem_u *a,
 void field_sub(field_elem_u *res, const field_elem_u *a, const field_elem_u *b,
                field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_GF2N8: field_add(res,a,b,field_id,ctx); break;
+        case FIELD_ID_GF2N16: field_add(res,a,b,field_id,ctx); break;
+        case FIELD_ID_GF2N64: field_add(res,a,b,field_id,ctx); break;
+        case FIELD_ID_GF2N128: field_add(res,a,b,field_id,ctx); break;
+
         case FIELD_ID_GF24:
         case FIELD_ID_GF28:
         case FIELD_ID_GF216:
@@ -534,26 +566,31 @@ void field_sub(field_elem_u *res, const field_elem_u *a, const field_elem_u *b,
 void fq_nmod_to_field_elem(field_elem_u *res, const fq_nmod_t elem, 
                           const field_ctx_t *ctx) {
     switch (ctx->field_id) {
+        case FIELD_ID_GF2N8: res->binary8=gf2n_native_from_fq(elem).low; break;
+        case FIELD_ID_GF2N16: res->binary16=gf2n_native_from_fq(elem).low; break;
+        case FIELD_ID_GF2N64: res->binary64=gf2n_native_from_fq(elem).low; break;
+        case FIELD_ID_GF2N128: res->binary128=gf2n_native_from_fq(elem); break;
+
         case FIELD_ID_NMOD:
             res->nmod = nmod_poly_get_coeff_ui(elem, 0);
             break;
         case FIELD_ID_GF24:
-            res->gf24 = fq_nmod_to_gf24_elem(elem, ctx->ctx.fq_ctx);
+            res->gf24 = (uint8_t){gf2n_native_from_fq(elem).low};
             break;
         case FIELD_ID_GF28:
-            res->gf28 = fq_nmod_to_gf28_elem(elem, ctx->ctx.fq_ctx);
+            res->gf28 = (uint8_t){gf2n_native_from_fq(elem).low};
             break;
         case FIELD_ID_GF216:
-            res->gf216 = fq_nmod_to_gf216_elem(elem, ctx->ctx.fq_ctx);
+            res->gf216 = (uint16_t){gf2n_native_from_fq(elem).low};
             break;
         case FIELD_ID_GF232:
-            res->gf232 = fq_nmod_to_gf232(elem, ctx->ctx.fq_ctx);
+            res->gf232 = (gf232_t){gf2n_native_from_fq(elem).low};
             break;
         case FIELD_ID_GF264:
-            res->gf264 = fq_nmod_to_gf264(elem, ctx->ctx.fq_ctx);
+            res->gf264 = (gf264_t){gf2n_native_from_fq(elem).low};
             break;
         case FIELD_ID_GF2128:
-            res->gf2128 = fq_nmod_to_gf2128(elem, ctx->ctx.fq_ctx);
+            res->gf2128 = gf2n_native_from_fq(elem);
             break;
         case FIELD_ID_FQ_ZECH:
             fq_zech_set_fq_nmod(&res->fq_zech, elem, ctx->ctx.zech_ctx);
@@ -567,27 +604,32 @@ void fq_nmod_to_field_elem(field_elem_u *res, const fq_nmod_t elem,
 void field_elem_to_fq_nmod(fq_nmod_t res, const field_elem_u *elem,
                           const field_ctx_t *ctx) {
     switch (ctx->field_id) {
+        case FIELD_ID_GF2N8: gf2n_native_to_fq(res,(gf2128_t){elem->binary8,0},ctx->ctx.fq_ctx); break;
+        case FIELD_ID_GF2N16: gf2n_native_to_fq(res,(gf2128_t){elem->binary16,0},ctx->ctx.fq_ctx); break;
+        case FIELD_ID_GF2N64: gf2n_native_to_fq(res,(gf2128_t){elem->binary64,0},ctx->ctx.fq_ctx); break;
+        case FIELD_ID_GF2N128: gf2n_native_to_fq(res,elem->binary128,ctx->ctx.fq_ctx); break;
+
         case FIELD_ID_NMOD:
             fq_nmod_zero(res, ctx->ctx.fq_ctx);
             nmod_poly_set_coeff_ui(res, 0, elem->nmod);
             break;
         case FIELD_ID_GF24:
-            gf24_elem_to_fq_nmod(res, elem->gf24, ctx->ctx.fq_ctx);
+            gf2n_native_to_fq(res,(gf2128_t){elem->gf24,0},ctx->ctx.fq_ctx);
             break;
         case FIELD_ID_GF28:
-            gf28_elem_to_fq_nmod(res, elem->gf28, ctx->ctx.fq_ctx);
+            gf2n_native_to_fq(res,(gf2128_t){elem->gf28,0},ctx->ctx.fq_ctx);
             break;
         case FIELD_ID_GF216:
-            gf216_elem_to_fq_nmod(res, elem->gf216, ctx->ctx.fq_ctx);
+            gf2n_native_to_fq(res,(gf2128_t){elem->gf216,0},ctx->ctx.fq_ctx);
             break;
         case FIELD_ID_GF232:
-            gf232_to_fq_nmod(res, &elem->gf232, ctx->ctx.fq_ctx);
+            gf2n_native_to_fq(res,(gf2128_t){elem->gf232.value,0},ctx->ctx.fq_ctx);
             break;
         case FIELD_ID_GF264:
-            gf264_to_fq_nmod(res, &elem->gf264, ctx->ctx.fq_ctx);
+            gf2n_native_to_fq(res,(gf2128_t){elem->gf264.value,0},ctx->ctx.fq_ctx);
             break;
         case FIELD_ID_GF2128:
-            gf2128_to_fq_nmod(res, &elem->gf2128, ctx->ctx.fq_ctx);
+            gf2n_native_to_fq(res,elem->gf2128,ctx->ctx.fq_ctx);
             break;
         case FIELD_ID_FQ_ZECH:
             fq_zech_get_fq_nmod(res, &elem->fq_zech, ctx->ctx.zech_ctx);
@@ -1500,7 +1542,7 @@ field_ctx_t* field_init(field_id_t field_id, ulong characteristic) {
                 
                 ctx->ctx.fq_ctx = fq_ctx;
                 ctx->elem_size = sizeof(uint16_t);
-                ctx->description = "GF(2^16) tower field";
+                ctx->description = "GF(2^16) lookup tables";
                 
                 /* Initialize GF(2^16) conversion */
                 init_gf216_standard();
@@ -1602,6 +1644,12 @@ void field_clear(field_ctx_t *ctx) {
     if (!ctx) return;
     
     switch (ctx->field_id) {
+        case FIELD_ID_GF2N8:
+        case FIELD_ID_GF2N16:
+        case FIELD_ID_GF2N64:
+        case FIELD_ID_GF2N128:
+            field_ctx_clear(ctx); break;
+
         case FIELD_ID_NMOD:
             /* Nothing to clear for nmod */
             break;

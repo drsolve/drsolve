@@ -27,6 +27,8 @@ static void extension_init(extension_t *e, const fq_nmod_ctx_t fq)
         (const void *)&e->field.ctx.nmod_ctx :
         e->field.field_id==FIELD_ID_FQ_ZECH ?
         (const void *)e->field.ctx.zech_ctx : (const void *)e->field.ctx.fq_ctx;
+    if (e->field.field_id==FIELD_ID_GF2N8)
+        memcpy(e->byte_tables,((const gf2n_native_ctx *)e->arithmetic)->byte_simd,sizeof(e->byte_tables));
     if (e->field.field_id==FIELD_ID_GF24)
         quotient_byte_tables(e->byte_tables,16,gf24_get_scalar_row);
     else if (e->field.field_id==FIELD_ID_GF28)
@@ -143,6 +145,10 @@ static void insert_relation(extension_closure_t *cl, field_elem_u *row,
     case FIELD_ID_GF232: quotient_insert_gf232(cl,row,e); return;
     case FIELD_ID_GF264: quotient_insert_gf264(cl,row,e); return;
     case FIELD_ID_GF2128: quotient_insert_gf2128(cl,row,e); return;
+    case FIELD_ID_GF2N8: quotient_insert_gf2n8(cl,row,e); return;
+    case FIELD_ID_GF2N16: quotient_insert_gf2n16(cl,row,e); return;
+    case FIELD_ID_GF2N64: quotient_insert_gf2n64(cl,row,e); return;
+    case FIELD_ID_GF2N128: quotient_insert_gf2n128(cl,row,e); return;
     default: break;
     }
     slong N=cl->basis.count;

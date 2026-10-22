@@ -603,7 +603,9 @@ list(APPEND _drsolve_deps ${_sys_libs})
 # Included implementation fragments; shared by all math targets and kept
 # visible to CMake/IDE source lists without compiling them independently.
 set(MATH_INTERNAL_HEADERS
-  src/determinant/gf28_minor_dp.h
+  src/determinant/gf2n_minor_dp.h
+  src/determinant/gf2n_minor_dp_template.h
+  src/determinant/gf2n_minor_dynamic.h
   src/determinant/gf28_poly_mat_det.h
   src/determinant/mq_fq_layout.h
   src/determinant/mq_gf2n_layout.h
@@ -613,6 +615,8 @@ set(MATH_INTERNAL_HEADERS
   src/dixon/dixon_gf2n_projection.h
   src/dixon/dixon_schur_seed.h
   src/dixon/dixon_schur_seed_byte.h
+  src/dixon/dixon_schur_seed_native.h
+  src/dixon/dixon_schur_seed_native_template.h
   src/dixon/dixon_schur_seed_template.h
   src/dixon/dixon_recursive_extension_schur.h
   src/dixon/dixon_gf2n_schur.h
@@ -650,6 +654,7 @@ set(MATH_SOURCES
   src/matrix/unified_mat_poly.c
   src/determinant/unified_hnf.c
   src/field/gf2n_field.c
+  src/field/gf2n_native.c
   src/field/gf2n_mpoly.c
   src/field/gf2n_poly.c
   src/field/unified_mpoly_interface.c
@@ -1088,6 +1093,17 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME drsolve_byte_poly_det COMMAND byte_poly_mat_det_test)
 
+  add_executable(gf2n_native_test src/test/field/gf2n_native_test.c)
+  drsolve_target_common(gf2n_native_test)
+  target_compile_options(gf2n_native_test PRIVATE -UNDEBUG)
+  if(TARGET drsolve_static)
+    target_link_libraries(gf2n_native_test PRIVATE drsolve_static)
+  elseif(TARGET drsolve_shared)
+    target_link_libraries(gf2n_native_test PRIVATE drsolve_shared)
+  else()
+    target_sources(gf2n_native_test PRIVATE ${MATH_SOURCES})
+  endif()
+  add_test(NAME drsolve_gf2n_native COMMAND gf2n_native_test)
   add_executable(unified_hnf_test src/test/matrix/unified_hnf_test.c)
   drsolve_target_common(unified_hnf_test)
   target_compile_options(unified_hnf_test PRIVATE -UNDEBUG)

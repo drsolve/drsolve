@@ -222,5 +222,8 @@ int main(void)
     check(3,2,0,0);check(3,2,0,1);check(257,1,0,0);
     check(2,16,0x1002d,0);check(2,32,UWORD(0x100008299),0);
     check(2,64,UWORD(0x247f43cb7),0);check(2,128,0x87,0);
+    const slong arbitrary[]={2,7,9,15,17,31,33,63,65,95,127};
+    for(unsigned i=0;i<sizeof(arbitrary)/sizeof(*arbitrary);i++) check(2,arbitrary[i],0,0);
+    check(2,4,0x19,0);check(2,16,0x1002b,0);check(2,64,0x1b,0);
     flint_cleanup_master();return 0;
 }

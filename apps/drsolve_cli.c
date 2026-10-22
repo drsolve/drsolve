@@ -2,6 +2,8 @@
 #include "drsolve_cli.h"
 #include "quotient_solver.h"
 
+#include "drsolve_memory.h"
+
 /* =========================================================================
  * Utility helpers
  * ========================================================================= */
@@ -5112,6 +5114,12 @@ random_done:
     }
 
     if (!silent_mode) {
+        double peak_memory = drsolve_peak_memory_mib();
+        if (peak_memory >= 0.0) {
+            printf("Memory: %.3f MiB\n", peak_memory);
+        } else {
+            printf("Memory: unavailable\n");
+        }
         if (time_mode || verbose_level >= 2) {
             printf("Total - CPU time: %.3f seconds | Wall time: %.3f seconds | Threads: %d\n",
                    cpu_time, wall_time, total_threads);

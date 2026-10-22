@@ -47,6 +47,10 @@ static void check_case(slong degree, uint64_t modulus_low, slong nvars,
     nmod_poly_set_coeff_ui(modulus, degree, 1);
     for (slong i = 0; i < 64; ++i)
         if ((modulus_low >> i) & 1) nmod_poly_set_coeff_ui(modulus, i, 1);
+    if (!modulus_low) {
+        flint_rand_t rng; flint_rand_init(rng); flint_rand_set_seed(rng,degree+31,degree+91);
+        nmod_poly_randtest_monic_irreducible(modulus,rng,degree+1); flint_rand_clear(rng);
+    }
     fq_nmod_ctx_t field;
     fq_nmod_ctx_init_modulus(field, modulus, "a");
     nmod_poly_clear(modulus);
@@ -80,7 +84,7 @@ static void check_case(slong degree, uint64_t modulus_low, slong nvars,
                                       trial % 2 ? 5 : bits[trial - 9], fc);
         }
         fq_nmod_mpoly_mul_johnson(expected, a, b, fc);
-        switch (degree) {
+        if (!field_id_is_binary_dynamic(native_field.field_id)) switch (degree) {
             case 4: assert(native_field.field_id == FIELD_ID_GF24); CHECK_NATIVE(gf24); break;
             case 8: assert(native_field.field_id == FIELD_ID_GF28); CHECK_NATIVE(gf28); break;
             case 16: assert(native_field.field_id == FIELD_ID_GF216); CHECK_NATIVE(gf216); break;
@@ -123,6 +127,9 @@ int main(void)
     /* GF(256) also supports a non-native defining polynomial via conversion. */
     check_case(8, 0x11b, 3, ORD_DEGREVLEX, 0);
     check_case(8, 0x11d, 3, ORD_LEX, 0);
+    const slong arbitrary[]={2,3,7,9,15,16,17,31,33,63,64,65,95,127,128};
+    for (unsigned i=0;i<sizeof(arbitrary)/sizeof(*arbitrary);i++)
+        for (int order=0;order<3;order++) check_case(arbitrary[i],0,3,orders[order],0);
     gf2n_mpoly_set_array_limit_k(-1);
     flint_cleanup_master();
     return 0;

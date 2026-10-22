@@ -9,11 +9,23 @@ typedef field_elem_u dq_coeff;
 static field_ctx_t extension_field;
 static const void *extension_arithmetic;
 static uint8_t extension_byte_tables[256][32];
+static int dq_is_byte(void)
+{ return extension_field.field_id==FIELD_ID_GF24 || extension_field.field_id==FIELD_ID_GF28 || extension_field.field_id==FIELD_ID_GF2N8; }
+static uint8_t dq_byte_get(const dq_coeff *v)
+{ return extension_field.field_id==FIELD_ID_GF24 ? v->gf24 : extension_field.field_id==FIELD_ID_GF28 ? v->gf28 : v->binary8; }
+static void dq_byte_set(dq_coeff *v,uint8_t b)
+{
+    if(extension_field.field_id==FIELD_ID_GF24) v->gf24=b;
+    else if(extension_field.field_id==FIELD_ID_GF28) v->gf28=b;
+    else v->binary8=b;
+}
 static void dq_field_setup(const fq_nmod_ctx_t ctx)
 {
     field_ctx_init(&extension_field,ctx);
     extension_arithmetic=extension_field.field_id==FIELD_ID_FQ_ZECH ?
         (const void *)extension_field.ctx.zech_ctx : (const void *)extension_field.ctx.fq_ctx;
+    if(extension_field.field_id==FIELD_ID_GF2N8)
+        memcpy(extension_byte_tables,((const gf2n_native_ctx *)extension_arithmetic)->byte_simd,sizeof(extension_byte_tables));
     if(extension_field.field_id==FIELD_ID_GF24)
         quotient_byte_tables(extension_byte_tables,16,gf24_get_scalar_row);
     if(extension_field.field_id==FIELD_ID_GF28)
@@ -102,7 +114,11 @@ static void dq_row_addmul(dq_coeff *out,const dq_coeff *in,slong count,
                           const dq_coeff *scalar,dq_coeff *temp)
 {
     if(!dq_nonzero(*scalar))return;
-    if(extension_field.field_id==FIELD_ID_GF28) {
+    if(extension_field.field_id==FIELD_ID_GF2N8) {
+        const gf2n_native_ctx *c=extension_arithmetic;
+        const uint8_t *row=c->byte_mul+((size_t)scalar->binary8<<c->n);
+        for(slong j=0;j<count;j++)out[j].binary8^=row[in[j].binary8];
+    } else if(extension_field.field_id==FIELD_ID_GF28) {
         const uint8_t *row=gf28_get_scalar_row(scalar->gf28);
         for(slong j=0;j<count;j++)out[j].gf28^=row[in[j].gf28];
     } else if(extension_field.field_id==FIELD_ID_GF24) {
@@ -118,18 +134,17 @@ static void dq_row_addmul(dq_coeff *out,const dq_coeff *in,slong count,
 static void dq_mat_mul(dq_mat_struct *out,const dq_mat_struct *a,const dq_mat_struct *b)
 {
     assert(out!=a && out!=b && a->c==b->r && out->r==a->r && out->c==b->c);
-    if(extension_field.field_id==FIELD_ID_GF24 || extension_field.field_id==FIELD_ID_GF28) {
-        int gf16=extension_field.field_id==FIELD_ID_GF24;
+    if(dq_is_byte()) {
         uint8_t *left=flint_malloc(a->r*a->c),*right=flint_malloc(b->r*b->c);
         uint8_t *product=flint_calloc(out->r*out->c,1);
-        for(slong i=0;i<a->r*a->c;i++)left[i]=gf16?a->entries[i].gf24:a->entries[i].gf28;
-        for(slong i=0;i<b->r*b->c;i++)right[i]=gf16?b->entries[i].gf24:b->entries[i].gf28;
+        for(slong i=0;i<a->r*a->c;i++)left[i]=dq_byte_get(a->entries+i);
+        for(slong i=0;i<b->r*b->c;i++)right[i]=dq_byte_get(b->entries+i);
         for(slong i=0;i<a->r;i++)for(slong k=0;k<a->c;k++) {
             uint8_t c=left[i*a->c+k];
             if(c)quotient_byte_addmul(product+i*out->c,right+k*b->c,out->c,extension_byte_tables[c]);
         }
         for(slong i=0;i<out->r*out->c;i++) {
-            if(gf16)out->entries[i].gf24=product[i];else out->entries[i].gf28=product[i];
+            dq_byte_set(out->entries+i,product[i]);
         }
         flint_free(left);flint_free(right);flint_free(product);return;
     }
@@ -185,17 +200,21 @@ static int dq_mat_equal(const dq_mat_struct *a,const dq_mat_struct *b)
 static uint8_t *dq_byte_copy(const dq_mat_struct *m)
 {
     uint8_t *out=flint_malloc(m->r*m->c);
-    for(slong i=0;i<m->r*m->c;i++)out[i]=extension_field.field_id==FIELD_ID_GF24?m->entries[i].gf24:m->entries[i].gf28;
+    for(slong i=0;i<m->r*m->c;i++)out[i]=dq_byte_get(m->entries+i);
     return out;
 }
 static void dq_byte_store(dq_mat_struct *m,const uint8_t *data)
 {
     for(slong i=0;i<m->r*m->c;i++) {
-        if(extension_field.field_id==FIELD_ID_GF24)m->entries[i].gf24=data[i];else m->entries[i].gf28=data[i];
+        dq_byte_set(m->entries+i,data[i]);
     }
 }
 static const uint8_t *dq_byte_inverse_row(uint8_t pivot)
 {
+    if(extension_field.field_id==FIELD_ID_GF2N8) {
+        const gf2n_native_ctx *c=extension_arithmetic;
+        return c->byte_mul+((size_t)c->inverse[pivot]<<c->n);
+    }
     return extension_field.field_id==FIELD_ID_GF24 ?
         gf24_get_scalar_row(gf24_inv(pivot)):gf28_get_scalar_row(gf28_inv(pivot));
 }
@@ -242,7 +261,7 @@ static void dq_byte_solve_tri(dq_mat_struct *out,const dq_mat_struct *a,
 }
 static slong dq_mat_lu(slong *perm,dq_mat_struct *m,int unused)
 {
-    if(extension_field.field_id==FIELD_ID_GF24 || extension_field.field_id==FIELD_ID_GF28)
+    if(dq_is_byte())
         return dq_byte_lu(perm,m);
     (void)unused;slong rank=0;dq_coeff inv,factor,negative,temp;
     dq_init(inv);dq_init(factor);dq_init(negative);dq_init(temp);
@@ -271,7 +290,7 @@ static slong dq_mat_lu(slong *perm,dq_mat_struct *m,int unused)
 static void dq_mat_solve_tri(dq_mat_struct *out,const dq_mat_struct *a,
                              const dq_mat_struct *b,int unit,int upper)
 {
-    if(extension_field.field_id==FIELD_ID_GF24 || extension_field.field_id==FIELD_ID_GF28) {
+    if(dq_is_byte()) {
         dq_byte_solve_tri(out,a,b,unit,upper);return;
     }
     dq_coeff scalar,inv,temp;dq_init(scalar);dq_init(inv);dq_init(temp);

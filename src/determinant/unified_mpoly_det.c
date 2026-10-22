@@ -713,7 +713,7 @@ void compute_unified_mpoly_det_recursive(unified_mpoly_t det_result,
 /* Test-only observation; normal builds contain no callbacks. */
 void drsolve_det_test_event(int event, slong size);
 #endif
-#include "gf28_minor_dp.h"
+#include "gf2n_minor_dp.h"
 
 static int compute_unified_mpoly_det_layered_dp(unified_mpoly_t result, unified_mpoly_t **matrix,
                        slong size, unified_mpoly_ctx_t ctx, int use_parallel, slong limit)
@@ -772,11 +772,10 @@ static int compute_unified_mpoly_det_layered_dp(unified_mpoly_t result, unified_
 
     extern int g_field_equation_reduction;
     if (!g_field_equation_reduction && ctx->nvars > 0 &&
-        (result->field_id == FIELD_ID_GF24 || result->field_id == FIELD_ID_GF28)) {
+        field_id_is_gf2n(result->field_id)) {
         if (g_dixon_verbose_level >= 3)
-            printf("  Minor DP storage: native byte coefficients\n");
-        compute_byte_mpoly_det_dp(result, matrix, size, ctx, use_parallel, choose);
-        return 1;
+            printf("  Minor DP storage: native packed coefficients\n");
+        if (compute_native_mpoly_det_dp(result, matrix, size, ctx, use_parallel, choose)) return 1;
     }
 
     for (slong k = 1; k <= size; k++) {

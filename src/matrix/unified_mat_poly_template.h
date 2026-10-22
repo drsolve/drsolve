@@ -203,7 +203,7 @@ static void UM_NAME(mul)(unified_mat_poly_t out, const unified_mat_poly_t a,
 
 /* dst row -= scalar * src row, optionally shifted. */
 static void UM_NAME(row_submul)(unified_mat_poly_t a, slong dst, slong src,
-                                const UM_E *scalar, slong shift)
+                                const UM_E *scalar, slong shift, slong first, slong last)
 {
     field_ctx_t *ctx=a->ctx;
     UM_E prod; UM_INIT(&prod);
@@ -211,7 +211,7 @@ static void UM_NAME(row_submul)(unified_mat_poly_t a, slong dst, slong src,
 #if UM_BYTE
     const uint8_t *table=unified_byte_multipliers(ctx)[*scalar];
 #endif
-    for(slong d=a->length-1;d>=shift;d--) {
+    for(slong d=FLINT_MIN(last,a->length-1);d>=FLINT_MAX(first,shift);d--) {
         UM_E *to=p+(d*a->r+dst)*a->c;
         const UM_E *from=p+((d-shift)*a->r+src)*a->c;
 #if UM_BYTE
@@ -225,13 +225,13 @@ static void UM_NAME(row_submul)(unified_mat_poly_t a, slong dst, slong src,
     UM_CLEAR(&prod);
 }
 
-static void UM_NAME(row_shift)(unified_mat_poly_t a, slong row)
+static void UM_NAME(row_shift)(unified_mat_poly_t a, slong row, slong first, slong last)
 {
     field_ctx_t *ctx=a->ctx;
     UM_E *p=a->data;
-    for(slong d=a->length-1;d>0;d--) for(slong j=0;j<a->c;j++)
+    for(slong d=FLINT_MIN(last,a->length-1);d>first;d--) for(slong j=0;j<a->c;j++)
         UM_SET(p+(d*a->r+row)*a->c+j,p+((d-1)*a->r+row)*a->c+j);
-    for(slong j=0;j<a->c;j++) UM_ZERO(p+row*a->c+j);
+    for(slong j=0;j<a->c;j++) UM_ZERO(p+(first*a->r+row)*a->c+j);
     (void)ctx;
 }
 
@@ -245,6 +245,8 @@ static void UM_NAME(mbasis)(unified_mat_poly_t out, slong *shift,
     UM_NAME(one)(basis);
     UM_NAME(slice)(residual,a,0,order);UM_NAME(resize)(residual,order);
     unsigned char *used=flint_calloc(n,1);
+    /* Conservative row-degree bounds avoid updating zero padding. */
+    slong *basis_degree=flint_calloc(n,sizeof(slong));
     UM_E inv,scalar; UM_INIT(&inv); UM_INIT(&scalar);
     for(slong d=0;d<order;d++) {
         memset(used,0,n);
@@ -257,18 +259,21 @@ static void UM_NAME(mbasis)(unified_mat_poly_t out, slong *shift,
             UM_INV(&inv,r+pivot*a->c+col);
             for(slong i=0;i<n;i++) if(!used[i] && i!=pivot && !UM_ISZERO(r+i*a->c+col)) {
                 UM_MUL(&scalar,r+i*a->c+col,&inv);
-                UM_NAME(row_submul)(basis,i,pivot,&scalar,0);
-                UM_NAME(row_submul)(residual,i,pivot,&scalar,0);
+                basis_degree[i]=FLINT_MAX(basis_degree[i],basis_degree[pivot]);
+                UM_NAME(row_submul)(basis,i,pivot,&scalar,0,0,basis_degree[i]);
+                /* Earlier residual coefficients are already zero for every row. */
+                UM_NAME(row_submul)(residual,i,pivot,&scalar,0,d,residual->length-1);
             }
             used[pivot]=1;
         }
         UM_NAME(resize)(basis,basis->length+1);
         for(slong i=0;i<n;i++) if(used[i]) {
-            UM_NAME(row_shift)(basis,i);UM_NAME(row_shift)(residual,i);shift[i]++;
+            UM_NAME(row_shift)(basis,i,0,++basis_degree[i]);
+            UM_NAME(row_shift)(residual,i,d,residual->length-1);shift[i]++;
         }
         UM_NAME(normalise)(basis);
     }
-    UM_CLEAR(&inv); UM_CLEAR(&scalar); flint_free(used);
+    UM_CLEAR(&inv); UM_CLEAR(&scalar); flint_free(used); flint_free(basis_degree);
     UM_NAME(swap)(out,basis); UM_NAME(clear)(basis); UM_NAME(clear)(residual);
 }
 
@@ -333,7 +338,7 @@ static slong UM_NAME(weak_popov)(unified_mat_poly_t a)
         UM_E *data=a->data;
         UM_INV(&inv,data+(degree[src]*a->r+src)*a->c+pivot[src]);
         UM_MUL(&scalar,data+(degree[dst]*a->r+dst)*a->c+pivot[dst],&inv);
-        UM_NAME(row_submul)(a,dst,src,&scalar,degree[dst]-degree[src]);
+        UM_NAME(row_submul)(a,dst,src,&scalar,degree[dst]-degree[src],0,degree[dst]);
         degree[dst]=-1;pivot[dst]=-1;
         for(slong j=0;j<a->c;j++) {
             slong d=UM_NAME(entry_degree)(a,dst,j);
@@ -415,7 +420,7 @@ static slong UM_NAME(const_eliminate)(UM_E *det, slong *profile, const unified_m
         UM_MUL(det,det,p+rank*a->c+j); UM_INV(&inv,p+rank*a->c+j);
         for(slong i=rank+1;i<a->r;i++) if(!UM_ISZERO(p+i*a->c+j)) {
             UM_MUL(&scalar,p+i*a->c+j,&inv);
-            UM_NAME(row_submul)(t,i,rank,&scalar,0);
+            UM_NAME(row_submul)(t,i,rank,&scalar,0,0,0);
         }
         rank++;
     }

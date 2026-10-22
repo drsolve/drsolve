@@ -19,6 +19,8 @@ static const void *unified_field_data(const field_ctx_t *ctx)
 
 static const uint8_t (*unified_byte_multipliers(const field_ctx_t *ctx))[32]
 {
+    if(ctx->field_id==FIELD_ID_GF2N8)
+        return ((const gf2n_native_ctx *)ctx->ctx.fq_ctx)->byte_simd;
     /* Native byte arithmetic uses fixed standard fields; fq modulus
      * isomorphisms are applied only at the conversion boundary. */
     static _Thread_local uint8_t tables[2][256][32];
@@ -34,7 +36,7 @@ static const uint8_t (*unified_byte_multipliers(const field_ctx_t *ctx))[32]
 
 int unified_mat_poly_is_byte(const unified_mat_poly_t a)
 {
-    return a->ctx->field_id == FIELD_ID_GF24 || a->ctx->field_id == FIELD_ID_GF28;
+    return a->ctx->field_id == FIELD_ID_GF24 || a->ctx->field_id == FIELD_ID_GF28 || a->ctx->field_id == FIELD_ID_GF2N8;
 }
 
 void unified_mat_poly_init(unified_mat_poly_t a, slong r, slong c, field_ctx_t *ctx)
@@ -105,29 +107,65 @@ void unified_mat_poly_init(unified_mat_poly_t a, slong r, slong c, field_ctx_t *
 #undef UM_MUL
 #undef UM_INV
 
+#include "unified_mat_poly_native.h"
+
+/* Dispatch once per complete operation, outside coefficient loops. */
+#define UM_DISPATCH(a,op,...) do { \
+    switch((a)->ctx->field_id) { \
+    case FIELD_ID_GF24: case FIELD_ID_GF28: byte_##op(__VA_ARGS__); break; \
+    case FIELD_ID_GF2N8: b8_##op(__VA_ARGS__); break; \
+    case FIELD_ID_GF216: u16_##op(__VA_ARGS__); break; \
+    case FIELD_ID_GF232: u32_##op(__VA_ARGS__); break; \
+    case FIELD_ID_GF264: u64_##op(__VA_ARGS__); break; \
+    case FIELD_ID_GF2128: u128_##op(__VA_ARGS__); break; \
+    case FIELD_ID_GF2N16: gf2n16_##op(__VA_ARGS__); break; \
+    case FIELD_ID_GF2N64: gf2n64_##op(__VA_ARGS__); break; \
+    case FIELD_ID_GF2N128: gf2n128_##op(__VA_ARGS__); break; \
+    default: generic_##op(__VA_ARGS__); break; \
+    } \
+} while(0)
+
 void unified_mat_poly_clear(unified_mat_poly_t a)
 {
-    if (unified_mat_poly_is_byte(a)) byte_clear(a); else generic_clear(a);
+    UM_DISPATCH(a,clear,a);
 }
 
 static void unified_mat_poly_resize(unified_mat_poly_t a, slong length)
 {
-    if (unified_mat_poly_is_byte(a)) byte_resize(a,length); else generic_resize(a,length);
+    UM_DISPATCH(a,resize,a,length);
 }
 
 static void unified_mat_poly_put(unified_mat_poly_t a, slong index, const field_elem_u *v)
 {
-    if (unified_mat_poly_is_byte(a))
-        ((uint8_t *)a->data)[index] = a->ctx->field_id==FIELD_ID_GF24 ? v->gf24 : v->gf28;
-    else field_set_elem((field_elem_u *)a->data+index,v,a->ctx->field_id,unified_field_data(a->ctx));
+    switch(a->ctx->field_id) {
+    case FIELD_ID_GF216: ((uint16_t *)a->data)[index]=v->gf216; break;
+    case FIELD_ID_GF232: ((gf232_t *)a->data)[index]=v->gf232; break;
+    case FIELD_ID_GF264: ((gf264_t *)a->data)[index]=v->gf264; break;
+    case FIELD_ID_GF2128: ((gf2128_t *)a->data)[index]=v->gf2128; break;
+    case FIELD_ID_GF2N16: ((uint16_t *)a->data)[index]=v->binary16; break;
+    case FIELD_ID_GF2N64: ((uint64_t *)a->data)[index]=v->binary64; break;
+    case FIELD_ID_GF2N128: ((gf2128_t *)a->data)[index]=v->binary128; break;
+    case FIELD_ID_GF24: ((uint8_t *)a->data)[index]=v->gf24; break;
+    case FIELD_ID_GF28: ((uint8_t *)a->data)[index]=v->gf28; break;
+    case FIELD_ID_GF2N8: ((uint8_t *)a->data)[index]=v->binary8; break;
+    default: field_set_elem((field_elem_u *)a->data+index,v,a->ctx->field_id,unified_field_data(a->ctx)); break;
+    }
 }
-
 static void unified_mat_poly_get(field_elem_u *v, const unified_mat_poly_t a, slong index)
 {
-    if (unified_mat_poly_is_byte(a)) {
-        if (a->ctx->field_id==FIELD_ID_GF24) v->gf24=((uint8_t *)a->data)[index];
-        else v->gf28=((uint8_t *)a->data)[index];
-    } else field_set_elem(v,(field_elem_u *)a->data+index,a->ctx->field_id,unified_field_data(a->ctx));
+    switch(a->ctx->field_id) {
+    case FIELD_ID_GF216: v->gf216=((uint16_t *)a->data)[index]; break;
+    case FIELD_ID_GF232: v->gf232=((gf232_t *)a->data)[index]; break;
+    case FIELD_ID_GF264: v->gf264=((gf264_t *)a->data)[index]; break;
+    case FIELD_ID_GF2128: v->gf2128=((gf2128_t *)a->data)[index]; break;
+    case FIELD_ID_GF2N16: v->binary16=((uint16_t *)a->data)[index]; break;
+    case FIELD_ID_GF2N64: v->binary64=((uint64_t *)a->data)[index]; break;
+    case FIELD_ID_GF2N128: v->binary128=((gf2128_t *)a->data)[index]; break;
+    case FIELD_ID_GF24: v->gf24=((uint8_t *)a->data)[index]; break;
+    case FIELD_ID_GF28: v->gf28=((uint8_t *)a->data)[index]; break;
+    case FIELD_ID_GF2N8: v->binary8=((uint8_t *)a->data)[index]; break;
+    default: field_set_elem(v,(field_elem_u *)a->data+index,a->ctx->field_id,unified_field_data(a->ctx)); break;
+    }
 }
 
 void unified_mat_poly_from_fq(unified_mat_poly_t a, const fq_nmod_poly_mat_t b,
@@ -196,8 +234,7 @@ void unified_mat_poly_mul_window(unified_mat_poly_t out, const unified_mat_poly_
 {
     assert(start>=0 && length>=0 && a->c==b->r && out->r==a->r && out->c==b->c);
     assert(out->ctx==a->ctx && a->ctx==b->ctx);
-    if(unified_mat_poly_is_byte(a)) byte_mul_window(out,a,b,start,length);
-    else generic_mul_window(out,a,b,start,length);
+    UM_DISPATCH(a,mul_window,out,a,b,start,length);
 }
 
 void unified_mat_poly_mul(unified_mat_poly_t out, const unified_mat_poly_t a,
@@ -210,8 +247,7 @@ void unified_mat_poly_pmbasis(unified_mat_poly_t out, slong *shift,
                               const unified_mat_poly_t a, slong order)
 {
     assert(order>=0 && out->r==a->r && out->c==a->r && out->ctx==a->ctx);
-    if(unified_mat_poly_is_byte(a)) byte_pmbasis(out,shift,a,order);
-    else generic_pmbasis(out,shift,a,order);
+    UM_DISPATCH(a,pmbasis,out,shift,a,order);
 }
 
 int unified_mat_poly_kernel(unified_mat_poly_t out, const unified_mat_poly_t a)
@@ -219,12 +255,37 @@ int unified_mat_poly_kernel(unified_mat_poly_t out, const unified_mat_poly_t a)
     assert(a->r>=a->c && out->r==a->r-a->c && out->c==a->r && out->ctx==a->ctx);
     unified_mat_poly_t transpose;unified_mat_poly_init(transpose,a->c,a->r,a->ctx);
     int ok;
-    if(unified_mat_poly_is_byte(a)) {
+    switch(a->ctx->field_id) {
+    case FIELD_ID_GF2N8:
+        b8_select(transpose,a,NULL,NULL,1);
+        ok=b8_weak_popov(transpose)>=0 && b8_kernel(out,a); break;
+    case FIELD_ID_GF24: case FIELD_ID_GF28:
         byte_select(transpose,a,NULL,NULL,1);
-        ok=byte_weak_popov(transpose)>=0 && byte_kernel(out,a);
-    } else {
+        ok=byte_weak_popov(transpose)>=0 && byte_kernel(out,a); break;
+    case FIELD_ID_GF216:
+        u16_select(transpose,a,NULL,NULL,1);
+        ok=u16_weak_popov(transpose)>=0 && u16_kernel(out,a); break;
+    case FIELD_ID_GF232:
+        u32_select(transpose,a,NULL,NULL,1);
+        ok=u32_weak_popov(transpose)>=0 && u32_kernel(out,a); break;
+    case FIELD_ID_GF264:
+        u64_select(transpose,a,NULL,NULL,1);
+        ok=u64_weak_popov(transpose)>=0 && u64_kernel(out,a); break;
+    case FIELD_ID_GF2128:
+        u128_select(transpose,a,NULL,NULL,1);
+        ok=u128_weak_popov(transpose)>=0 && u128_kernel(out,a); break;
+    case FIELD_ID_GF2N16:
+        gf2n16_select(transpose,a,NULL,NULL,1);
+        ok=gf2n16_weak_popov(transpose)>=0 && gf2n16_kernel(out,a); break;
+    case FIELD_ID_GF2N64:
+        gf2n64_select(transpose,a,NULL,NULL,1);
+        ok=gf2n64_weak_popov(transpose)>=0 && gf2n64_kernel(out,a); break;
+    case FIELD_ID_GF2N128:
+        gf2n128_select(transpose,a,NULL,NULL,1);
+        ok=gf2n128_weak_popov(transpose)>=0 && gf2n128_kernel(out,a); break;
+    default:
         generic_select(transpose,a,NULL,NULL,1);
-        ok=generic_weak_popov(transpose)>=0 && generic_kernel(out,a);
+        ok=generic_weak_popov(transpose)>=0 && generic_kernel(out,a); break;
     }
     unified_mat_poly_clear(transpose);return ok;
 }
@@ -233,7 +294,19 @@ int unified_mat_poly_det_hnf(unified_poly_t det, const unified_mat_poly_t a)
 {
     if(a->r!=a->c || det->ctx!=a->ctx) return 0;
     unified_mat_poly_t result; unified_mat_poly_init(result,1,1,a->ctx);
-    int ok=unified_mat_poly_is_byte(a) ? byte_det(result,a) : generic_det(result,a);
+    int ok;
+    switch(a->ctx->field_id) {
+    case FIELD_ID_GF2N8: ok=b8_det(result,a); break;
+    case FIELD_ID_GF24: case FIELD_ID_GF28: ok=byte_det(result,a); break;
+    case FIELD_ID_GF216: ok=u16_det(result,a); break;
+    case FIELD_ID_GF232: ok=u32_det(result,a); break;
+    case FIELD_ID_GF264: ok=u64_det(result,a); break;
+    case FIELD_ID_GF2128: ok=u128_det(result,a); break;
+    case FIELD_ID_GF2N16: ok=gf2n16_det(result,a); break;
+    case FIELD_ID_GF2N64: ok=gf2n64_det(result,a); break;
+    case FIELD_ID_GF2N128: ok=gf2n128_det(result,a); break;
+    default: ok=generic_det(result,a); break;
+    }
     if(ok) {
         unified_poly_fit_length(det,result->length);
         for(slong k=0;k<result->length;k++) unified_mat_poly_get(det->coeffs+k,result,k);

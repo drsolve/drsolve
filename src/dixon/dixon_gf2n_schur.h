@@ -54,6 +54,12 @@
 #define MQGF_MUL(a,b) gf2128_mul(&(a), &(b))
 #include "dixon_gf2n_schur_template.h"
 
+
+#define MQGF_PREFIX dixon_schur
+#define MQGF_CONTEXT field->ctx.fq_ctx
+#define MQGF_TEMPLATE "dixon/dixon_gf2n_schur_template.h"
+#include "gf2n_native_instances.h"
+
 /* Validate the weighted degree certificate before allocating native storage.
  * Sort only the complement; the core keeps the selected row/column order. */
 #include "dixon_fq_schur.h"
@@ -92,6 +98,10 @@ static int dixon_extension_schur(fq_nmod_poly_mat_t core, fq_nmod_t factor,
     case FIELD_ID_GF232: ok = dixon_schur_gf232(core, factor, matrix, p, rows, cols, &field); break;
     case FIELD_ID_GF264: ok = dixon_schur_gf264(core, factor, matrix, p, rows, cols, &field); break;
     case FIELD_ID_GF2128: ok = dixon_schur_gf2128(core, factor, matrix, p, rows, cols, &field); break;
+    case FIELD_ID_GF2N8: ok = dixon_schur_gf2n8(core, factor, matrix, p, rows, cols, &field); break;
+    case FIELD_ID_GF2N16: ok = dixon_schur_gf2n16(core, factor, matrix, p, rows, cols, &field); break;
+    case FIELD_ID_GF2N64: ok = dixon_schur_gf2n64(core, factor, matrix, p, rows, cols, &field); break;
+    case FIELD_ID_GF2N128: ok = dixon_schur_gf2n128(core, factor, matrix, p, rows, cols, &field); break;
     default: ok = dixon_schur_fq(core, factor, matrix, p, rows, cols, ctx); break;
     }
     field_ctx_clear(&field); flint_free(rows); flint_free(cols);

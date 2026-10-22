@@ -56,3 +56,10 @@
 #define MQGF_MUL(a,b) gf2128_mul(&(a), &(b))
 #include "quotient_gf2n_template.h"
 
+
+#define MQGF_PREFIX quotient_insert
+#define MQGF_CONTEXT e->arithmetic
+#define MQGF_TEMPLATE "solver/quotient_gf2n_template.h"
+#define MQGF_USE_BYTE
+#include "gf2n_native_instances.h"
+
