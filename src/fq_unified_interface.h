@@ -11,6 +11,8 @@
 #include <flint/fq_nmod_poly.h>
 #include <flint/fq_zech.h>  /* Add Zech support */
 #include <flint/nmod.h>
+#include <flint/fmpz.h>
+#include <flint/fmpz_mod.h>
 #include <stdatomic.h>
 
 #include "gf2n_field.h"
@@ -35,7 +37,8 @@ typedef enum {
     FIELD_ID_GF2128 = 6,  /* GF(2^128) */
     FIELD_ID_FQ_ZECH = 7, /* Small finite fields with Zech logarithm */
     FIELD_ID_FQ     = 8,  /* General finite field */
-    FIELD_ID_GF2N8, FIELD_ID_GF2N16, FIELD_ID_GF2N64, FIELD_ID_GF2N128
+    FIELD_ID_GF2N8, FIELD_ID_GF2N16, FIELD_ID_GF2N64, FIELD_ID_GF2N128,
+    FIELD_ID_FMPZ_MOD
 } field_id_t;
 
 static inline int field_id_is_gf2n(field_id_t id)
@@ -50,6 +53,7 @@ typedef union field_elem_u {
     uint16_t binary16;
     uint64_t binary64;
     gf2128_t binary128;
+    fmpz big;              /* Owned arbitrary-precision prime-field element */
     ulong nmod;              /* For prime fields */
     uint8_t gf24;            /* For GF(2^4) */
     uint8_t gf28;            /* For GF(2^8) */
@@ -72,6 +76,7 @@ typedef struct field_ctx_struct {
     
     /* Context data */
     union {
+        fmpz_mod_ctx_struct *big_ctx;         /* Owned */
         nmod_t nmod_ctx;                      /* For prime fields */
         const fq_nmod_ctx_struct *fq_ctx;     /* For general fields */
         fq_zech_ctx_struct *zech_ctx;         /* For Zech logarithm fields - owned */
@@ -187,6 +192,16 @@ unified_workspace_t *get_unified_workspace(void);
 /* Try to create Zech context from fq_nmod context */
 int try_create_zech_context(fq_zech_ctx_struct *zech_ctx, const fq_nmod_ctx_t fq_ctx);
 
+/* Prime-field initialization chooses nmod whenever the modulus fits a limb. */
+void field_ctx_init_prime(field_ctx_t *ctx, const fmpz_t prime);
+static inline const void *field_ctx_data(const field_ctx_t *ctx)
+{
+    if (ctx->field_id == FIELD_ID_NMOD) return &ctx->ctx.nmod_ctx;
+    if (ctx->field_id == FIELD_ID_FMPZ_MOD) return ctx->ctx.big_ctx;
+    if (ctx->field_id == FIELD_ID_FQ_ZECH) return ctx->ctx.zech_ctx;
+    return ctx->ctx.fq_ctx;
+}
+
 /* Enhanced field context initialization with Zech support */
 void field_ctx_init_enhanced(field_ctx_t *ctx, const fq_nmod_ctx_t fq_ctx, ulong zech_limit);
 
@@ -281,6 +296,8 @@ void field_clear(field_ctx_t *ctx);
 static inline void field_mul(field_elem_u *res, const field_elem_u *a, const field_elem_u *b, 
                             field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_FMPZ_MOD: fmpz_mod_mul(&res->big, &a->big, &b->big, ctx); break;
+
         case FIELD_ID_GF2N8: res->binary8 = gf2n_native_mul_word(a->binary8,b->binary8,ctx); break;
         case FIELD_ID_GF2N16: res->binary16 = gf2n_native_mul_word(a->binary16,b->binary16,ctx); break;
         case FIELD_ID_GF2N64: res->binary64 = gf2n_native_mul_word(a->binary64,b->binary64,ctx); break;
@@ -321,6 +338,8 @@ static inline void field_mul(field_elem_u *res, const field_elem_u *a, const fie
 static inline void field_add(field_elem_u *res, const field_elem_u *a, const field_elem_u *b,
                             field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_FMPZ_MOD: fmpz_mod_add(&res->big, &a->big, &b->big, ctx); break;
+
         case FIELD_ID_GF2N8: res->binary8 = a->binary8^b->binary8; break;
         case FIELD_ID_GF2N16: res->binary16 = a->binary16^b->binary16; break;
         case FIELD_ID_GF2N64: res->binary64 = a->binary64^b->binary64; break;
@@ -361,6 +380,8 @@ static inline void field_add(field_elem_u *res, const field_elem_u *a, const fie
 /* Check if zero - inline for hot path */
 static inline int field_is_zero(const field_elem_u *a, field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_FMPZ_MOD: return fmpz_is_zero(&a->big);
+
         case FIELD_ID_GF2N8: return a->binary8==0;
         case FIELD_ID_GF2N16: return a->binary16==0;
         case FIELD_ID_GF2N64: return a->binary64==0;
@@ -391,6 +412,8 @@ static inline int field_is_zero(const field_elem_u *a, field_id_t field_id, cons
 /* Check if one - inline for hot path */
 static inline int field_is_one(const field_elem_u *a, field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_FMPZ_MOD: return fmpz_is_one(&a->big);
+
         case FIELD_ID_GF2N8: return a->binary8==1;
         case FIELD_ID_GF2N16: return a->binary16==1;
         case FIELD_ID_GF2N64: return a->binary64==1;
@@ -425,17 +448,7 @@ static inline slong unified_poly_degree_fast(const unified_poly_struct *poly) {
     
     /* Check for trailing zeros for ALL field types, not just GF(2^n) */
     void *ctx_ptr = NULL;
-    switch (poly->ctx->field_id) {
-        case FIELD_ID_NMOD:
-            ctx_ptr = (void*)&poly->ctx->ctx.nmod_ctx;
-            break;
-        case FIELD_ID_FQ_ZECH:
-            ctx_ptr = (void*)poly->ctx->ctx.zech_ctx;
-            break;
-        default:
-            ctx_ptr = (void*)poly->ctx->ctx.fq_ctx;
-            break;
-    }
+    ctx_ptr = (void *)field_ctx_data(poly->ctx);
     
     /* Remove trailing zeros */
     while (len > 0 && field_is_zero(&poly->coeffs[len-1], poly->ctx->field_id, ctx_ptr)) {

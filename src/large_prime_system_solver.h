@@ -8,6 +8,7 @@
 
 #include "dixon_interface_flint.h"
 #include "rational_system_solver.h"
+#include "polynomial_system_solver.h"
 
 #include <ctype.h>
 #include <stdarg.h>
@@ -45,6 +46,9 @@ typedef struct {
 } large_prime_solutions_t;
 
 void large_prime_solver_set_realtime_progress(int enabled);
+void large_prime_solver_set_method(polynomial_solver_method_t method);
+void large_prime_solver_set_subres_auto(int enabled);
+void large_prime_solver_set_quotient_limits(slong degree, slong memory_mb);
 large_prime_solutions_t* solve_large_prime_polynomial_system_string(const char *poly_string,
                                                                    const fmpz_t prime);
 void large_prime_solutions_clear(large_prime_solutions_t *sols);

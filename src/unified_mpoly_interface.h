@@ -14,11 +14,15 @@
 #include <flint/fq_nmod_mpoly.h>
 #include <flint/fq_zech_mpoly.h>
 #include <flint/fmpz.h>
+#include <flint/fmpz_mod_mpoly.h>
 #include <flint/mpoly.h>
 #include <flint/longlong.h>
 #include "fq_unified_interface.h"
 #include "gf2n_mpoly.h"
 
+
+#define GET_BIG_POLY(poly) (&(poly)->data.big_poly)
+#define GET_BIG_CTX(ring) (&(ring)->ctx.big_ctx)
 
 #define GET_NMOD_POLY(poly) (&(poly)->data.nmod_poly)
 #define GET_FQ_POLY(poly) (&(poly)->data.fq_poly)
@@ -54,6 +58,7 @@ typedef struct {
     
     /* Different contexts based on field type */
     union {
+        fmpz_mod_mpoly_ctx_struct big_ctx;
         nmod_mpoly_ctx_struct nmod_ctx;
         fq_nmod_mpoly_ctx_struct fq_ctx;
         fq_zech_mpoly_ctx_struct zech_ctx;
@@ -74,6 +79,7 @@ typedef struct {
     
     /* Storage for different polynomial types */
     union {
+        fmpz_mod_mpoly_struct big_poly;
         nmod_mpoly_struct nmod_poly;
         fq_nmod_mpoly_struct fq_poly;
         fq_zech_mpoly_struct zech_poly;

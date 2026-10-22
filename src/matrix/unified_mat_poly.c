@@ -10,12 +10,6 @@
 extern double get_wall_time(void);
 extern int g_dixon_verbose_level;
 
-static const void *unified_field_data(const field_ctx_t *ctx)
-{
-    if (ctx->field_id == FIELD_ID_NMOD) return &ctx->ctx.nmod_ctx;
-    if (ctx->field_id == FIELD_ID_FQ_ZECH) return ctx->ctx.zech_ctx;
-    return ctx->ctx.fq_ctx;
-}
 
 static const uint8_t (*unified_byte_multipliers(const field_ctx_t *ctx))[32]
 {
@@ -80,17 +74,17 @@ void unified_mat_poly_init(unified_mat_poly_t a, slong r, slong c, field_ctx_t *
 #define UM_NAME(x) generic_##x
 #define UM_E field_elem_u
 #define UM_BYTE 0
-#define UM_INIT(x) field_init_elem(x,ctx->field_id,unified_field_data(ctx))
-#define UM_CLEAR(x) field_clear_elem(x,ctx->field_id,unified_field_data(ctx))
-#define UM_ZERO(x) field_set_zero(x,ctx->field_id,unified_field_data(ctx))
-#define UM_ONE(x) field_set_one(x,ctx->field_id,unified_field_data(ctx))
-#define UM_SET(x,y) field_set_elem(x,y,ctx->field_id,unified_field_data(ctx))
-#define UM_ISZERO(x) field_is_zero(x,ctx->field_id,unified_field_data(ctx))
-#define UM_ADD(x,y,z) field_add(x,y,z,ctx->field_id,unified_field_data(ctx))
-#define UM_SUB(x,y,z) field_sub(x,y,z,ctx->field_id,unified_field_data(ctx))
-#define UM_NEG(x,y) field_neg(x,y,ctx->field_id,unified_field_data(ctx))
-#define UM_MUL(x,y,z) field_mul(x,y,z,ctx->field_id,unified_field_data(ctx))
-#define UM_INV(x,y) field_inv(x,y,ctx->field_id,unified_field_data(ctx))
+#define UM_INIT(x) field_init_elem(x,ctx->field_id,field_ctx_data(ctx))
+#define UM_CLEAR(x) field_clear_elem(x,ctx->field_id,field_ctx_data(ctx))
+#define UM_ZERO(x) field_set_zero(x,ctx->field_id,field_ctx_data(ctx))
+#define UM_ONE(x) field_set_one(x,ctx->field_id,field_ctx_data(ctx))
+#define UM_SET(x,y) field_set_elem(x,y,ctx->field_id,field_ctx_data(ctx))
+#define UM_ISZERO(x) field_is_zero(x,ctx->field_id,field_ctx_data(ctx))
+#define UM_ADD(x,y,z) field_add(x,y,z,ctx->field_id,field_ctx_data(ctx))
+#define UM_SUB(x,y,z) field_sub(x,y,z,ctx->field_id,field_ctx_data(ctx))
+#define UM_NEG(x,y) field_neg(x,y,ctx->field_id,field_ctx_data(ctx))
+#define UM_MUL(x,y,z) field_mul(x,y,z,ctx->field_id,field_ctx_data(ctx))
+#define UM_INV(x,y) field_inv(x,y,ctx->field_id,field_ctx_data(ctx))
 #include "unified_mat_poly_template.h"
 #undef UM_NAME
 #undef UM_E
@@ -108,10 +102,12 @@ void unified_mat_poly_init(unified_mat_poly_t a, slong r, slong c, field_ctx_t *
 #undef UM_INV
 
 #include "unified_mat_poly_native.h"
+#include "unified_mat_poly_fmpz.h"
 
 /* Dispatch once per complete operation, outside coefficient loops. */
 #define UM_DISPATCH(a,op,...) do { \
     switch((a)->ctx->field_id) { \
+    case FIELD_ID_FMPZ_MOD: big_##op(__VA_ARGS__); break; \
     case FIELD_ID_GF24: case FIELD_ID_GF28: byte_##op(__VA_ARGS__); break; \
     case FIELD_ID_GF2N8: b8_##op(__VA_ARGS__); break; \
     case FIELD_ID_GF216: u16_##op(__VA_ARGS__); break; \
@@ -138,6 +134,7 @@ static void unified_mat_poly_resize(unified_mat_poly_t a, slong length)
 static void unified_mat_poly_put(unified_mat_poly_t a, slong index, const field_elem_u *v)
 {
     switch(a->ctx->field_id) {
+    case FIELD_ID_FMPZ_MOD: fmpz_set((fmpz *)a->data+index,&v->big); break;
     case FIELD_ID_GF216: ((uint16_t *)a->data)[index]=v->gf216; break;
     case FIELD_ID_GF232: ((gf232_t *)a->data)[index]=v->gf232; break;
     case FIELD_ID_GF264: ((gf264_t *)a->data)[index]=v->gf264; break;
@@ -148,12 +145,13 @@ static void unified_mat_poly_put(unified_mat_poly_t a, slong index, const field_
     case FIELD_ID_GF24: ((uint8_t *)a->data)[index]=v->gf24; break;
     case FIELD_ID_GF28: ((uint8_t *)a->data)[index]=v->gf28; break;
     case FIELD_ID_GF2N8: ((uint8_t *)a->data)[index]=v->binary8; break;
-    default: field_set_elem((field_elem_u *)a->data+index,v,a->ctx->field_id,unified_field_data(a->ctx)); break;
+    default: field_set_elem((field_elem_u *)a->data+index,v,a->ctx->field_id,field_ctx_data(a->ctx)); break;
     }
 }
 static void unified_mat_poly_get(field_elem_u *v, const unified_mat_poly_t a, slong index)
 {
     switch(a->ctx->field_id) {
+    case FIELD_ID_FMPZ_MOD: fmpz_set(&v->big,(const fmpz *)a->data+index); break;
     case FIELD_ID_GF216: v->gf216=((uint16_t *)a->data)[index]; break;
     case FIELD_ID_GF232: v->gf232=((gf232_t *)a->data)[index]; break;
     case FIELD_ID_GF264: v->gf264=((gf264_t *)a->data)[index]; break;
@@ -164,7 +162,7 @@ static void unified_mat_poly_get(field_elem_u *v, const unified_mat_poly_t a, sl
     case FIELD_ID_GF24: v->gf24=((uint8_t *)a->data)[index]; break;
     case FIELD_ID_GF28: v->gf28=((uint8_t *)a->data)[index]; break;
     case FIELD_ID_GF2N8: v->binary8=((uint8_t *)a->data)[index]; break;
-    default: field_set_elem(v,(field_elem_u *)a->data+index,a->ctx->field_id,unified_field_data(a->ctx)); break;
+    default: field_set_elem(v,(field_elem_u *)a->data+index,a->ctx->field_id,field_ctx_data(a->ctx)); break;
     }
 }
 
@@ -177,7 +175,7 @@ void unified_mat_poly_from_fq(unified_mat_poly_t a, const fq_nmod_poly_mat_t b,
     for(slong i=0;i<a->r;i++) for(slong j=0;j<a->c;j++)
         len=FLINT_MAX(len,fq_nmod_poly_mat_entry(b,i,j)->length);
     unified_mat_poly_resize(a,0); unified_mat_poly_resize(a,len);
-    field_elem_u v; field_init_elem(&v,a->ctx->field_id,unified_field_data(a->ctx));
+    field_elem_u v; field_init_elem(&v,a->ctx->field_id,field_ctx_data(a->ctx));
     for(slong i=0;i<a->r;i++) for(slong j=0;j<a->c;j++) {
         const fq_nmod_poly_struct *p=fq_nmod_poly_mat_entry(b,i,j);
         for(slong k=0;k<p->length;k++) {
@@ -185,14 +183,14 @@ void unified_mat_poly_from_fq(unified_mat_poly_t a, const fq_nmod_poly_mat_t b,
             unified_mat_poly_put(a,(k*a->r+i)*a->c+j,&v);
         }
     }
-    field_clear_elem(&v,a->ctx->field_id,unified_field_data(a->ctx));
+    field_clear_elem(&v,a->ctx->field_id,field_ctx_data(a->ctx));
 }
 
 void unified_mat_poly_to_fq(fq_nmod_poly_mat_t a, const unified_mat_poly_t b,
                             const fq_nmod_ctx_t ctx)
 {
     assert(a->r==b->r && a->c==b->c);
-    field_elem_u v; field_init_elem(&v,b->ctx->field_id,unified_field_data(b->ctx));
+    field_elem_u v; field_init_elem(&v,b->ctx->field_id,field_ctx_data(b->ctx));
     fq_nmod_t x; fq_nmod_init(x,ctx);
     for(slong i=0;i<b->r;i++) for(slong j=0;j<b->c;j++) {
         fq_nmod_poly_struct *p=fq_nmod_poly_mat_entry(a,i,j);
@@ -204,7 +202,7 @@ void unified_mat_poly_to_fq(fq_nmod_poly_mat_t a, const unified_mat_poly_t b,
         }
     }
     fq_nmod_clear(x,ctx);
-    field_clear_elem(&v,b->ctx->field_id,unified_field_data(b->ctx));
+    field_clear_elem(&v,b->ctx->field_id,field_ctx_data(b->ctx));
 }
 
 void unified_mat_poly_from_unified(unified_mat_poly_t a, const unified_poly_mat_t b)
@@ -256,6 +254,9 @@ int unified_mat_poly_kernel(unified_mat_poly_t out, const unified_mat_poly_t a)
     unified_mat_poly_t transpose;unified_mat_poly_init(transpose,a->c,a->r,a->ctx);
     int ok;
     switch(a->ctx->field_id) {
+    case FIELD_ID_FMPZ_MOD:
+        big_select(transpose,a,NULL,NULL,1);
+        ok=big_weak_popov(transpose)>=0 && big_kernel(out,a); break;
     case FIELD_ID_GF2N8:
         b8_select(transpose,a,NULL,NULL,1);
         ok=b8_weak_popov(transpose)>=0 && b8_kernel(out,a); break;
@@ -296,6 +297,7 @@ int unified_mat_poly_det_hnf(unified_poly_t det, const unified_mat_poly_t a)
     unified_mat_poly_t result; unified_mat_poly_init(result,1,1,a->ctx);
     int ok;
     switch(a->ctx->field_id) {
+    case FIELD_ID_FMPZ_MOD: ok=big_det(result,a); break;
     case FIELD_ID_GF2N8: ok=b8_det(result,a); break;
     case FIELD_ID_GF24: case FIELD_ID_GF28: ok=byte_det(result,a); break;
     case FIELD_ID_GF216: ok=u16_det(result,a); break;

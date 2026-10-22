@@ -2,6 +2,7 @@
 /* unified_mpoly_interface.c - Implementation of unified multivariate polynomial interface */
 
 #include "unified_mpoly_interface.h"
+#include <flint/fmpz_vec.h>
 #include "zech_mpoly_access.h"
 #include "gf2n_native_mpoly.h"
 extern int g_field_equation_reduction;
@@ -22,6 +23,8 @@ unified_mpoly_ctx_t unified_mpoly_ctx_init(slong nvars, const ordering_t ord, fi
     ctx->zech_size_limit = 1L << 20;   /* 2^20 field size limit for Zech */
     
     switch (field_ctx->field_id) {
+        case FIELD_ID_FMPZ_MOD: fmpz_mod_mpoly_ctx_init(GET_BIG_CTX(ctx), nvars, ord, fmpz_mod_ctx_modulus(field_ctx->ctx.big_ctx)); break;
+
         case FIELD_ID_NMOD:
             {
                 /* For prime fields, we need the modulus */
@@ -68,6 +71,10 @@ void unified_mpoly_ctx_clear(unified_mpoly_ctx_t ctx) {
     if (!ctx) return;
     
     switch (ctx->field_ctx->field_id) {
+        case FIELD_ID_FMPZ_MOD:
+            fmpz_mod_mpoly_ctx_clear(GET_BIG_CTX(ctx));
+            break;
+
         case FIELD_ID_NMOD:
             nmod_mpoly_ctx_clear(GET_NMOD_CTX(ctx));
             break;
@@ -96,6 +103,10 @@ unified_mpoly_t unified_mpoly_init(unified_mpoly_ctx_t ctx) {
     poly->ctx_ptr = ctx;
     
     switch (poly->field_id) {
+        case FIELD_ID_FMPZ_MOD:
+            fmpz_mod_mpoly_init(GET_BIG_POLY(poly), GET_BIG_CTX(ctx));
+            break;
+
         case FIELD_ID_NMOD:
             nmod_mpoly_init(GET_NMOD_POLY(poly), GET_NMOD_CTX(ctx));
             break;
@@ -118,6 +129,10 @@ void unified_mpoly_clear(unified_mpoly_t poly) {
     unified_mpoly_ctx_t ctx = poly->ctx_ptr;
     
     switch (poly->field_id) {
+        case FIELD_ID_FMPZ_MOD:
+            fmpz_mod_mpoly_clear(GET_BIG_POLY(poly), GET_BIG_CTX(ctx));
+            break;
+
         case FIELD_ID_NMOD:
             nmod_mpoly_clear(GET_NMOD_POLY(poly), GET_NMOD_CTX(ctx));
             break;
@@ -142,6 +157,10 @@ void unified_mpoly_zero(unified_mpoly_t poly) {
     unified_mpoly_ctx_t ctx = poly->ctx_ptr;
     
     switch (poly->field_id) {
+        case FIELD_ID_FMPZ_MOD:
+            fmpz_mod_mpoly_zero(GET_BIG_POLY(poly), GET_BIG_CTX(ctx));
+            break;
+
         case FIELD_ID_NMOD:
             nmod_mpoly_zero(GET_NMOD_POLY(poly), GET_NMOD_CTX(ctx));
             break;
@@ -160,6 +179,10 @@ void unified_mpoly_one(unified_mpoly_t poly) {
     unified_mpoly_ctx_t ctx = poly->ctx_ptr;
     
     switch (poly->field_id) {
+        case FIELD_ID_FMPZ_MOD:
+            fmpz_mod_mpoly_one(GET_BIG_POLY(poly), GET_BIG_CTX(ctx));
+            break;
+
         case FIELD_ID_NMOD:
             nmod_mpoly_one(GET_NMOD_POLY(poly), GET_NMOD_CTX(ctx));
             break;
@@ -178,6 +201,9 @@ int unified_mpoly_is_zero(const unified_mpoly_t poly) {
     unified_mpoly_ctx_t ctx = poly->ctx_ptr;
     
     switch (poly->field_id) {
+        case FIELD_ID_FMPZ_MOD:
+            return fmpz_mod_mpoly_is_zero(GET_BIG_POLY(poly), GET_BIG_CTX(ctx));
+
         case FIELD_ID_NMOD:
             return nmod_mpoly_is_zero(GET_NMOD_POLY(poly), GET_NMOD_CTX(ctx));
             
@@ -193,6 +219,9 @@ int unified_mpoly_is_one(const unified_mpoly_t poly) {
     unified_mpoly_ctx_t ctx = poly->ctx_ptr;
     
     switch (poly->field_id) {
+        case FIELD_ID_FMPZ_MOD:
+            return fmpz_mod_mpoly_is_one(GET_BIG_POLY(poly), GET_BIG_CTX(ctx));
+
         case FIELD_ID_NMOD:
             return nmod_mpoly_is_one(GET_NMOD_POLY(poly), GET_NMOD_CTX(ctx));
             
@@ -208,6 +237,9 @@ slong unified_mpoly_length(const unified_mpoly_t poly) {
     unified_mpoly_ctx_t ctx = poly->ctx_ptr;
     
     switch (poly->field_id) {
+        case FIELD_ID_FMPZ_MOD:
+            return fmpz_mod_mpoly_length(GET_BIG_POLY(poly), GET_BIG_CTX(ctx));
+
         case FIELD_ID_NMOD:
             return nmod_mpoly_length(GET_NMOD_POLY(poly), GET_NMOD_CTX(ctx));
             
@@ -225,6 +257,10 @@ void unified_mpoly_set(unified_mpoly_t poly1, const unified_mpoly_t poly2) {
     unified_mpoly_ctx_t ctx = poly1->ctx_ptr;
     
     switch (poly1->field_id) {
+        case FIELD_ID_FMPZ_MOD:
+            fmpz_mod_mpoly_set(GET_BIG_POLY(poly1), GET_BIG_POLY(poly2), GET_BIG_CTX(ctx));
+            break;
+
         case FIELD_ID_NMOD:
             nmod_mpoly_set(GET_NMOD_POLY(poly1), GET_NMOD_POLY(poly2), GET_NMOD_CTX(ctx));
             break;
@@ -248,6 +284,11 @@ void unified_mpoly_add(unified_mpoly_t poly1, const unified_mpoly_t poly2,
     unified_mpoly_ctx_t ctx = poly1->ctx_ptr;
     
     switch (poly1->field_id) {
+        case FIELD_ID_FMPZ_MOD:
+            fmpz_mod_mpoly_add(GET_BIG_POLY(poly1), GET_BIG_POLY(poly2),
+                          GET_BIG_POLY(poly3), GET_BIG_CTX(ctx));
+            break;
+
         case FIELD_ID_NMOD:
             nmod_mpoly_add(GET_NMOD_POLY(poly1), GET_NMOD_POLY(poly2),
                           GET_NMOD_POLY(poly3), GET_NMOD_CTX(ctx));
@@ -270,6 +311,11 @@ void unified_mpoly_sub(unified_mpoly_t poly1, const unified_mpoly_t poly2,
     unified_mpoly_ctx_t ctx = poly1->ctx_ptr;
     
     switch (poly1->field_id) {
+        case FIELD_ID_FMPZ_MOD:
+            fmpz_mod_mpoly_sub(GET_BIG_POLY(poly1), GET_BIG_POLY(poly2),
+                          GET_BIG_POLY(poly3), GET_BIG_CTX(ctx));
+            break;
+
         case FIELD_ID_NMOD:
             nmod_mpoly_sub(GET_NMOD_POLY(poly1), GET_NMOD_POLY(poly2),
                           GET_NMOD_POLY(poly3), GET_NMOD_CTX(ctx));
@@ -301,6 +347,10 @@ void unified_mpoly_neg(unified_mpoly_t poly1, const unified_mpoly_t poly2) {
     unified_mpoly_ctx_t ctx = poly1->ctx_ptr;
     
     switch (poly1->field_id) {
+        case FIELD_ID_FMPZ_MOD:
+            fmpz_mod_mpoly_neg(GET_BIG_POLY(poly1), GET_BIG_POLY(poly2), GET_BIG_CTX(ctx));
+            break;
+
         case FIELD_ID_NMOD:
             nmod_mpoly_neg(GET_NMOD_POLY(poly1), GET_NMOD_POLY(poly2), GET_NMOD_CTX(ctx));
             break;
@@ -345,6 +395,8 @@ static inline ulong reduce_exp_field_ui(ulong e, ulong q) {
 static ulong unified_field_size_q(unified_mpoly_ctx_t ctx) {
     if (!ctx || !ctx->field_ctx) return 0;
     switch (ctx->field_ctx->field_id) {
+        case FIELD_ID_FMPZ_MOD: return 0; /* Does not fit a limb. */
+
         case FIELD_ID_NMOD:
             return ctx->field_ctx->ctx.nmod_ctx.n;
         case FIELD_ID_FQ_ZECH:
@@ -466,6 +518,8 @@ void unified_mpoly_enable_optimizations(field_id_t field_id, int enable) {
 
 int unified_mpoly_mul(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                      const unified_mpoly_t poly3) {
+    if (poly1->field_id == FIELD_ID_FMPZ_MOD) { fmpz_mod_mpoly_mul(GET_BIG_POLY(poly1), GET_BIG_POLY(poly2), GET_BIG_POLY(poly3), GET_BIG_CTX(poly1->ctx_ptr)); return 1; }
+
     unified_mpoly_ctx_t ctx = poly1->ctx_ptr;
     
     /* A scalar or monomial product is already cheap in FLINT's sparse
@@ -817,6 +871,10 @@ int unified_mpoly_divides(unified_mpoly_t Q, const unified_mpoly_t A,
     unified_mpoly_ctx_t ctx = Q->ctx_ptr;
 
     switch (Q->field_id) {
+        case FIELD_ID_FMPZ_MOD:
+            return fmpz_mod_mpoly_divides(GET_BIG_POLY(Q), GET_BIG_POLY(A),
+                                     GET_BIG_POLY(B), GET_BIG_CTX(ctx));
+
         case FIELD_ID_NMOD:
             return nmod_mpoly_divides(GET_NMOD_POLY(Q), GET_NMOD_POLY(A),
                                      GET_NMOD_POLY(B), GET_NMOD_CTX(ctx));
@@ -1042,6 +1100,8 @@ void unified_mpoly_set_coeff_ui(unified_mpoly_t poly, const field_elem_u *c,
     unified_mpoly_ctx_t ctx = poly->ctx_ptr;
     
     switch (poly->field_id) {
+        case FIELD_ID_FMPZ_MOD: fmpz_mod_mpoly_set_coeff_fmpz_ui(GET_BIG_POLY(poly), &c->big, exp, GET_BIG_CTX(ctx)); break;
+
         case FIELD_ID_NMOD:
             nmod_mpoly_set_coeff_ui_ui(GET_NMOD_POLY(poly), c->nmod, exp,
                                       GET_NMOD_CTX(ctx));
@@ -1069,6 +1129,8 @@ void unified_mpoly_get_coeff_ui(field_elem_u *c, const unified_mpoly_t poly,
     unified_mpoly_ctx_t ctx = poly->ctx_ptr;
     
     switch (poly->field_id) {
+        case FIELD_ID_FMPZ_MOD: fmpz_mod_mpoly_get_coeff_fmpz_ui(&c->big, GET_BIG_POLY(poly), exp, GET_BIG_CTX(ctx)); break;
+
         case FIELD_ID_NMOD:
             c->nmod = nmod_mpoly_get_coeff_ui_ui(GET_NMOD_POLY(poly), exp,
                                                 GET_NMOD_CTX(ctx));
@@ -1099,6 +1161,10 @@ void unified_mpoly_degrees_si(slong *degs, const unified_mpoly_t poly) {
     unified_mpoly_ctx_t ctx = poly->ctx_ptr;
     
     switch (poly->field_id) {
+        case FIELD_ID_FMPZ_MOD:
+            fmpz_mod_mpoly_degrees_si(degs, GET_BIG_POLY(poly), GET_BIG_CTX(ctx));
+            break;
+
         case FIELD_ID_NMOD:
             nmod_mpoly_degrees_si(degs, GET_NMOD_POLY(poly), GET_NMOD_CTX(ctx));
             break;
@@ -1117,6 +1183,9 @@ slong unified_mpoly_total_degree_si(const unified_mpoly_t poly) {
     unified_mpoly_ctx_t ctx = poly->ctx_ptr;
     
     switch (poly->field_id) {
+        case FIELD_ID_FMPZ_MOD:
+            return fmpz_mod_mpoly_total_degree_si(GET_BIG_POLY(poly), GET_BIG_CTX(ctx));
+
         case FIELD_ID_NMOD:
             return nmod_mpoly_total_degree_si(GET_NMOD_POLY(poly), GET_NMOD_CTX(ctx));
             
@@ -1136,6 +1205,10 @@ void unified_mpoly_print_pretty(const unified_mpoly_t poly, const char **vars) {
     unified_mpoly_ctx_t ctx = poly->ctx_ptr;
     
     switch (poly->field_id) {
+        case FIELD_ID_FMPZ_MOD:
+            fmpz_mod_mpoly_print_pretty(GET_BIG_POLY(poly), vars, GET_BIG_CTX(ctx));
+            break;
+
         case FIELD_ID_NMOD:
             nmod_mpoly_print_pretty(GET_NMOD_POLY(poly), vars, GET_NMOD_CTX(ctx));
             break;
@@ -1159,6 +1232,11 @@ void unified_mpoly_scalar_mul_ui(unified_mpoly_t poly1, const unified_mpoly_t po
     unified_mpoly_ctx_t ctx = poly1->ctx_ptr;
     
     switch (poly1->field_id) {
+        case FIELD_ID_FMPZ_MOD:
+            fmpz_mod_mpoly_scalar_mul_ui(GET_BIG_POLY(poly1), GET_BIG_POLY(poly2),
+                                    c, GET_BIG_CTX(ctx));
+            break;
+
         case FIELD_ID_NMOD:
             nmod_mpoly_scalar_mul_ui(GET_NMOD_POLY(poly1), GET_NMOD_POLY(poly2),
                                     c, GET_NMOD_CTX(ctx));
@@ -1206,6 +1284,9 @@ void unified_mpoly_swap(unified_mpoly_t poly1, unified_mpoly_t poly2) {
     assert(poly1->field_id == poly2->field_id);
     unified_mpoly_ctx_t ctx = poly1->ctx_ptr;
     switch (poly1->field_id) {
+    case FIELD_ID_FMPZ_MOD:
+        fmpz_mod_mpoly_swap(GET_BIG_POLY(poly1), GET_BIG_POLY(poly2), GET_BIG_CTX(ctx));
+        break;
     case FIELD_ID_NMOD:
         nmod_mpoly_swap(GET_NMOD_POLY(poly1), GET_NMOD_POLY(poly2), GET_NMOD_CTX(ctx));
         break;
@@ -1222,6 +1303,8 @@ void unified_mpoly_swap(unified_mpoly_t poly1, unified_mpoly_t poly2) {
 }
 
 void unified_mpoly_set_fmpz(unified_mpoly_t poly, const fmpz_t c) {
+    if (poly->field_id == FIELD_ID_FMPZ_MOD) { fmpz_mod_mpoly_set_fmpz(GET_BIG_POLY(poly), c, GET_BIG_CTX(poly->ctx_ptr)); return; }
+
     unified_mpoly_ctx_t ctx = poly->ctx_ptr;
     unified_mpoly_zero(poly);
     
@@ -1244,7 +1327,7 @@ void unified_mpoly_set_fmpz(unified_mpoly_t poly, const fmpz_t c) {
         }
 
         case FIELD_ID_NMOD:
-            coeff.nmod = fmpz_get_ui(c) % GET_NMOD_CTX(ctx)->mod.n;
+            coeff.nmod = fmpz_fdiv_ui(c, GET_NMOD_CTX(ctx)->mod.n);
             break;
             
         case FIELD_ID_GF24:
@@ -1301,6 +1384,8 @@ void unified_mpoly_set_fmpz(unified_mpoly_t poly, const fmpz_t c) {
 
 void unified_mpoly_mul_fmpz(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                            const fmpz_t c) {
+    if (poly1->field_id == FIELD_ID_FMPZ_MOD) { fmpz_mod_mpoly_scalar_mul_fmpz(GET_BIG_POLY(poly1), GET_BIG_POLY(poly2), c, GET_BIG_CTX(poly1->ctx_ptr)); return; }
+
     if (fmpz_is_zero(c)) {
         unified_mpoly_zero(poly1);
         return;
@@ -1355,6 +1440,8 @@ void unified_mpoly_mul_fmpz(unified_mpoly_t poly1, const unified_mpoly_t poly2,
 
 int unified_mpoly_pow_fmpz(unified_mpoly_t poly1, const unified_mpoly_t poly2,
                           const fmpz_t exp) {
+    if (poly1->field_id == FIELD_ID_FMPZ_MOD) { if (fmpz_sgn(exp)<0) return 0; return fmpz_mod_mpoly_pow_fmpz(GET_BIG_POLY(poly1), GET_BIG_POLY(poly2), exp, GET_BIG_CTX(poly1->ctx_ptr)); }
+
     if (fmpz_sgn(exp) < 0) {
         fprintf(stderr, "unified_mpoly_pow_fmpz: negative exponent not supported\n");
         return 0;
@@ -1432,6 +1519,12 @@ void unified_mpoly_divrem(unified_mpoly_t Q, unified_mpoly_t R,
     unified_mpoly_ctx_t ctx = A->ctx_ptr;
     //printf("begin divrem\n");
     switch (A->field_id) {
+        case FIELD_ID_FMPZ_MOD:
+            fmpz_mod_mpoly_divrem(GET_BIG_POLY(Q), GET_BIG_POLY(R),
+                            GET_BIG_POLY(A), GET_BIG_POLY(B),
+                            GET_BIG_CTX(ctx));
+            break;
+
         case FIELD_ID_NMOD:
             nmod_mpoly_divrem(GET_NMOD_POLY(Q), GET_NMOD_POLY(R),
                             GET_NMOD_POLY(A), GET_NMOD_POLY(B),
@@ -1475,6 +1568,10 @@ int unified_mpoly_divexact(unified_mpoly_t Q, const unified_mpoly_t A,
 
 void unified_mpoly_gen(unified_mpoly_t poly, slong var, unified_mpoly_ctx_t ctx) {
     switch (poly->field_id) {
+        case FIELD_ID_FMPZ_MOD:
+            fmpz_mod_mpoly_gen(GET_BIG_POLY(poly), var, GET_BIG_CTX(ctx));
+            break;
+
         case FIELD_ID_NMOD:
             nmod_mpoly_gen(GET_NMOD_POLY(poly), var, GET_NMOD_CTX(ctx));
             break;
@@ -1667,6 +1764,8 @@ void unified_mpoly_set_zech_limit(unified_mpoly_ctx_t ctx, ulong limit) {
 /* Get information about the field representation being used */
 const char* unified_mpoly_get_field_info(const unified_mpoly_t poly) {
     switch (poly->field_id) {
+        case FIELD_ID_FMPZ_MOD: return "Prime field (fmpz_mod)";
+
         case FIELD_ID_GF2N8:
         case FIELD_ID_GF2N16:
         case FIELD_ID_GF2N64:
@@ -1699,6 +1798,8 @@ const char* unified_mpoly_get_field_info(const unified_mpoly_t poly) {
 /* Get information about the field representation being used by context */
 const char* unified_mpoly_get_field_info_by_ctx(unified_mpoly_ctx_t ctx) {
     switch (ctx->field_ctx->field_id) {
+        case FIELD_ID_FMPZ_MOD: return "Prime field (fmpz_mod)";
+
         case FIELD_ID_GF2N8:
         case FIELD_ID_GF2N16:
         case FIELD_ID_GF2N64:
@@ -1735,6 +1836,11 @@ const char* unified_mpoly_get_field_info_by_ctx(unified_mpoly_ctx_t ctx) {
 /* Generate random polynomial for testing */
 void unified_mpoly_randtest(unified_mpoly_t poly, flint_rand_t state,
                            slong length, slong exp_bound) {
+    if (poly->field_id == FIELD_ID_FMPZ_MOD) {
+        fmpz_mod_mpoly_randtest_bound(GET_BIG_POLY(poly), state, length, exp_bound, GET_BIG_CTX(poly->ctx_ptr));
+        return;
+    }
+
     unified_mpoly_ctx_t ctx = poly->ctx_ptr;
     slong nvars = ctx->nvars;
     ulong *exp = (ulong *)calloc(nvars, sizeof(ulong));
@@ -1750,6 +1856,8 @@ void unified_mpoly_randtest(unified_mpoly_t poly, flint_rand_t state,
         
         /* Generate random coefficient */
         switch (poly->field_id) {
+
+
         case FIELD_ID_GF2N8:
         case FIELD_ID_GF2N16:
         case FIELD_ID_GF2N64:
@@ -1833,6 +1941,10 @@ int unified_mpoly_equal(const unified_mpoly_t A, const unified_mpoly_t B) {
     unified_mpoly_ctx_t ctx = A->ctx_ptr;
     
     switch (A->field_id) {
+        case FIELD_ID_FMPZ_MOD:
+            return fmpz_mod_mpoly_equal(GET_BIG_POLY(A), GET_BIG_POLY(B),
+                                   GET_BIG_CTX(ctx));
+
         case FIELD_ID_NMOD:
             return nmod_mpoly_equal(GET_NMOD_POLY(A), GET_NMOD_POLY(B),
                                    GET_NMOD_CTX(ctx));
@@ -1901,6 +2013,14 @@ void unified_mpoly_evaluate_all_ui(field_elem_u *result, const unified_mpoly_t p
     unified_mpoly_ctx_t ctx = poly->ctx_ptr;
     
     switch (poly->field_id) {
+        case FIELD_ID_FMPZ_MOD: {
+            fmpz *v = _fmpz_vec_init(ctx->nvars);
+            fmpz **ptrs = flint_malloc(FLINT_MAX(1, ctx->nvars)*sizeof(fmpz *));
+            for (slong i=0; i<ctx->nvars; i++) { fmpz_set_ui(v+i, values[i]); ptrs[i]=v+i; }
+            fmpz_mod_mpoly_evaluate_all_fmpz(&result->big, GET_BIG_POLY(poly), ptrs, GET_BIG_CTX(ctx));
+            flint_free(ptrs); _fmpz_vec_clear(v,ctx->nvars); break;
+        }
+
         case FIELD_ID_NMOD:
             result->nmod = nmod_mpoly_evaluate_all_ui(GET_NMOD_POLY(poly), values,
                                                      GET_NMOD_CTX(ctx));
@@ -1949,6 +2069,13 @@ void unified_mpoly_evaluate_all_ui(field_elem_u *result, const unified_mpoly_t p
 int unified_mpoly_compose(unified_mpoly_t result, const unified_mpoly_t poly,
                          unified_mpoly_t * const *args, unified_mpoly_ctx_t ctx) {
     switch (poly->field_id) {
+        case FIELD_ID_FMPZ_MOD: {
+            fmpz_mod_mpoly_struct **v = flint_malloc(FLINT_MAX(1,ctx->nvars)*sizeof(*v));
+            for (slong i=0; i<ctx->nvars; i++) v[i]=GET_BIG_POLY(*args[i]);
+            int ok=fmpz_mod_mpoly_compose_fmpz_mod_mpoly(GET_BIG_POLY(result),GET_BIG_POLY(poly),v,GET_BIG_CTX(poly->ctx_ptr),GET_BIG_CTX(ctx));
+            flint_free(v); return ok;
+        }
+
         case FIELD_ID_NMOD:
             return nmod_mpoly_compose_nmod_mpoly(GET_NMOD_POLY(result), GET_NMOD_POLY(poly),
                                                 (nmod_mpoly_struct * const *)args,

@@ -9,7 +9,8 @@ extern "C" {
 #endif
 
 /* Polynomial with matrix coefficients. Coefficient k is a row-major r*c
- * block. Native binary fields use compact coefficients; other fields use field_elem_u.
+ * block. Native binary fields use compact coefficients, big primes use fmpz;
+ * other fields use field_elem_u.
  * The context is borrowed and must outlive the matrix. Do not access data
  * through unified_poly_struct::coeffs: these are different storage formats. */
 typedef struct {

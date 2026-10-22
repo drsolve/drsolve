@@ -10,23 +10,12 @@
 #include <flint/fq_nmod_mpoly_factor.h>
 #include "quotient_byte.h"
 
-typedef struct {
-    field_ctx_t field;
-    const void *arithmetic;
-    const fq_nmod_ctx_struct *fq;
-    uint8_t byte_tables[256][32];
-} extension_t;
+#include "quotient_closure.h"
 
-#define FIELD(e) (e)->field.field_id, (e)->arithmetic
-#define ENTRY(M,i,j) ((M)->entries+(i)*(M)->c+(j))
-
-static void extension_init(extension_t *e, const fq_nmod_ctx_t fq)
+static void extension_init(quotient_field_t *e, const fq_nmod_ctx_t fq)
 {
     memset(e,0,sizeof(*e)); e->fq=fq; field_ctx_init(&e->field,fq);
-    e->arithmetic=e->field.field_id==FIELD_ID_NMOD ?
-        (const void *)&e->field.ctx.nmod_ctx :
-        e->field.field_id==FIELD_ID_FQ_ZECH ?
-        (const void *)e->field.ctx.zech_ctx : (const void *)e->field.ctx.fq_ctx;
+    e->arithmetic=field_ctx_data(&e->field);
     if (e->field.field_id==FIELD_ID_GF2N8)
         memcpy(e->byte_tables,((const gf2n_native_ctx *)e->arithmetic)->byte_simd,sizeof(e->byte_tables));
     if (e->field.field_id==FIELD_ID_GF24)
@@ -35,327 +24,22 @@ static void extension_init(extension_t *e, const fq_nmod_ctx_t fq)
         quotient_byte_tables(e->byte_tables,256,gf28_get_scalar_row);
 }
 
-static field_elem_u *vector_init(slong n, const extension_t *e)
+static slong extension_input_length(const quotient_input_t *input, slong i)
 {
-    field_elem_u *v=flint_calloc(n,sizeof(*v));
-    for (slong i=0;i<n;i++) {
-        field_init_elem(v+i,FIELD(e));
-        field_set_zero(v+i,FIELD(e)); /* Zech zero is not integer zero. */
-    }
-    return v;
+    return ((const fq_nmod_mpoly_struct *)input->polys)[i].length;
 }
 
-static void vector_clear(field_elem_u *v, slong n, const extension_t *e)
+static void extension_input_term(field_elem_u *c, ulong *exp,
+                                const quotient_input_t *input, slong i, slong t,
+                                const quotient_field_t *e)
 {
-    for (slong i=0;i<n;i++) field_clear_elem(v+i,FIELD(e));
-    flint_free(v);
-}
-
-static void vector_zero(field_elem_u *v, slong n, const extension_t *e)
-{
-    for (slong i=0;i<n;i++) field_set_zero(v+i,FIELD(e));
-}
-
-static void vector_set(field_elem_u *v, const field_elem_u *w, slong n,
-                       const extension_t *e)
-{
-    for (slong i=0;i<n;i++) field_set_elem(v+i,w+i,FIELD(e));
-}
-
-/* Hot row kernel: retain native binary arithmetic, including the existing
- * scalar multiplication tables for GF(16) and GF(256). */
-static void vector_addmul(field_elem_u *v, const field_elem_u *w, slong n,
-                         const field_elem_u *a, const extension_t *e)
-{
-    if (field_is_zero(a,FIELD(e))) return;
-    if (e->field.field_id==FIELD_ID_GF28) {
-        const uint8_t *row=gf28_get_scalar_row(a->gf28);
-        for (slong j=0;j<n;j++) v[j].gf28^=row[w[j].gf28];
-    } else if (e->field.field_id==FIELD_ID_GF24) {
-        const uint8_t *row=gf24_get_scalar_row(a->gf24);
-        for (slong j=0;j<n;j++) v[j].gf24^=row[w[j].gf24];
-    } else {
-        field_elem_u t; field_init_elem(&t,FIELD(e));
-        for (slong j=0;j<n;j++) {
-            field_mul(&t,a,w+j,FIELD(e));
-            field_add(v+j,v+j,&t,FIELD(e));
-        }
-        field_clear_elem(&t,FIELD(e));
-    }
-}
-
-static void matrix_new(unified_mat_t M, slong r, slong c, extension_t *e)
-{
-    M->r=r; M->c=c; M->ctx=&e->field;
-    M->entries=vector_init(r*c,e);
-}
-
-static void matrix_product(unified_mat_t C, const unified_mat_t A,
-                           const unified_mat_t B, const extension_t *e)
-{
-    assert(A->c==B->r && C->r==A->r && C->c==B->c);
-    vector_zero(C->entries,C->r*C->c,e);
-    for (slong i=0;i<A->r;i++) for (slong k=0;k<A->c;k++)
-        vector_addmul(ENTRY(C,i,0),ENTRY(B,k,0),C->c,ENTRY(A,i,k),e);
-}
-
-/* Sparse-in-rows echelon storage. A pivot row never changes after insertion,
- * so each low-degree relation needs to be multiplied by each variable once. */
-typedef struct {
-    basis_t basis;
-    field_elem_u **rows;
-    /* Packed native tails for the elimination kernel. The unified rows are
-     * materialized only when a new pivot is stored, for the shared closure
-     * and algebra certificate. */
-    void **native_rows;
-    void *native_scratch;
-    unsigned char *processed;
-    slong rank;
-} extension_closure_t;
-
-static void extension_closure_init(extension_closure_t *cl, slong n, slong d)
-{
-    basis_init(&cl->basis,n,d);
-    cl->rows=flint_calloc(cl->basis.count,sizeof(*cl->rows)); cl->rank=0;
-    cl->native_rows=flint_calloc(cl->basis.count,sizeof(*cl->native_rows));
-    cl->native_scratch=NULL;
-    cl->processed=flint_calloc(cl->basis.count,1);
-}
-
-static void extension_closure_clear(extension_closure_t *cl, const extension_t *e)
-{
-    for (slong j=0;j<cl->basis.count;j++) {
-        if (cl->rows[j]) vector_clear(cl->rows[j],cl->basis.count,e);
-        flint_free(cl->native_rows[j]);
-    }
-    flint_free(cl->native_rows); flint_free(cl->native_scratch);
-    flint_free(cl->processed);
-    flint_free(cl->rows); basis_clear(&cl->basis);
-}
-
-#include "quotient_gf2n.h"
-
-static void insert_relation(extension_closure_t *cl, field_elem_u *row,
-                            const extension_t *e)
-{
-    switch (e->field.field_id) {
-    case FIELD_ID_GF24: quotient_insert_gf24(cl,row,e); return;
-    case FIELD_ID_GF28: quotient_insert_gf28(cl,row,e); return;
-    case FIELD_ID_GF216: quotient_insert_gf216(cl,row,e); return;
-    case FIELD_ID_GF232: quotient_insert_gf232(cl,row,e); return;
-    case FIELD_ID_GF264: quotient_insert_gf264(cl,row,e); return;
-    case FIELD_ID_GF2128: quotient_insert_gf2128(cl,row,e); return;
-    case FIELD_ID_GF2N8: quotient_insert_gf2n8(cl,row,e); return;
-    case FIELD_ID_GF2N16: quotient_insert_gf2n16(cl,row,e); return;
-    case FIELD_ID_GF2N64: quotient_insert_gf2n64(cl,row,e); return;
-    case FIELD_ID_GF2N128: quotient_insert_gf2n128(cl,row,e); return;
-    default: break;
-    }
-    slong N=cl->basis.count;
-    field_elem_u a; field_init_elem(&a,FIELD(e));
-    for (slong j=0;j<N;j++) if (!field_is_zero(row+j,FIELD(e))) {
-        if (cl->rows[j]) {
-            field_neg(&a,row+j,FIELD(e));
-            vector_addmul(row+j,cl->rows[j]+j,N-j,&a,e);
-        } else {
-            field_inv(&a,row+j,FIELD(e));
-            cl->rows[j]=vector_init(N,e);
-            for (slong k=j;k<N;k++) field_mul(cl->rows[j]+k,row+k,&a,FIELD(e));
-            cl->rank++; break;
-        }
-    }
-    field_clear_elem(&a,FIELD(e));
-}
-
-static void extend_relations(extension_closure_t *cl, const extension_t *e)
-{
-    slong N=cl->basis.count,n=cl->basis.n;
-    unsigned char *processed=cl->processed;
-    field_elem_u *row=vector_init(N,e);
-    int more=1;
-    while (more && cl->rank<N) {
-        more=0;
-        for (slong j=0;j<N;j++) if (cl->rows[j] && !processed[j] &&
-                cl->basis.degrees[j]<cl->basis.degree) {
-            processed[j]=1; more=1;
-            for (slong v=0;v<n && cl->rank<N;v++) {
-                vector_zero(row,N,e);
-                for (slong k=j;k<N;k++) if (!field_is_zero(cl->rows[j]+k,FIELD(e))) {
-                    ulong exp[n]; memcpy(exp,cl->basis.exps+k*n,sizeof(exp)); exp[v]++;
-                    slong dest=basis_find(&cl->basis,exp); assert(dest>=0);
-                    field_set_elem(row+dest,cl->rows[j]+k,FIELD(e));
-                }
-                insert_relation(cl,row,e);
-            }
-        }
-    }
-    vector_clear(row,N,e);
-}
-
-static void insert_generators(extension_closure_t *cl, fq_nmod_mpoly_struct *fs,
-                              slong m, const slong *degrees,
-                              const fq_nmod_mpoly_ctx_t ctx, const extension_t *e)
-{
-    slong N=cl->basis.count,n=cl->basis.n;
-    field_elem_u *row=vector_init(N,e);
-    fq_nmod_t coeff; fq_nmod_init(coeff,e->fq);
-    for (slong i=0;i<m && cl->rank<N;i++) if (degrees[i]>=0) {
-        basis_t mult; basis_init(&mult,n,cl->basis.degree-degrees[i]);
-        field_elem_u *cs=vector_init(fs[i].length,e);
-        ulong *exps=flint_malloc(fs[i].length*n*sizeof(ulong));
-        for (slong t=0;t<fs[i].length;t++) {
-            fq_nmod_mpoly_get_term_coeff_fq_nmod(coeff,fs+i,t,ctx);
-            fq_nmod_to_field_elem(cs+t,coeff,&e->field);
-            fq_nmod_mpoly_get_term_exp_ui(exps+t*n,fs+i,t,ctx);
-        }
-        for (slong j=0;j<mult.count && cl->rank<N;j++) {
-            vector_zero(row,N,e);
-            for (slong t=0;t<fs[i].length;t++) {
-                ulong exp[n];
-                for (slong v=0;v<n;v++) exp[v]=exps[t*n+v]+mult.exps[j*n+v];
-                slong col=basis_find(&cl->basis,exp); assert(col>=0);
-                field_set_elem(row+col,cs+t,FIELD(e));
-            }
-            insert_relation(cl,row,e);
-        }
-        flint_free(exps); vector_clear(cs,fs[i].length,e); basis_clear(&mult);
-    }
-    fq_nmod_clear(coeff,e->fq); vector_clear(row,N,e);
-}
-
-/* Reuse the preceding degree instead of rebuilding all Macaulay rows.
- * Its relations and their variable multiples span every original multiple
- * needed at the new degree. Distinct leading monomials can be installed
- * directly: multiplication preserves the degree-lex order. Collisions must
- * still be reduced, since their differences can yield new relations. */
-static void extension_closure_seed(extension_closure_t *cl,
-                         const extension_closure_t *prev, const extension_t *e)
-{
-    slong N=cl->basis.count,P=prev->basis.count,n=cl->basis.n,offset=N-P;
-    slong *shift=flint_malloc(P*n*sizeof(*shift));
-    for (slong j=0;j<P;j++) for (slong v=0;v<n;v++) {
-        ulong exp[n]; memcpy(exp,prev->basis.exps+j*n,sizeof(exp)); exp[v]++;
-        shift[j*n+v]=basis_find(&cl->basis,exp);
-        assert(shift[j*n+v]>=0);
-    }
-    slong *owner=flint_malloc(N*sizeof(*owner));
-    for (slong j=0;j<N;j++) owner[j]=-1;
-    for (slong j=0;j<P;j++) if (prev->rows[j]) {
-        cl->rows[j+offset]=vector_init(N,e);
-        vector_set(cl->rows[j+offset]+offset,prev->rows[j],P,e);
-        /* All variable multiples of this unchanged row are inserted below. */
-        cl->processed[j+offset]=1;
-        cl->rank++;
-    }
-    /* First install one row per new pivot, so duplicate multiples reduce
-     * against the entire known triangular block. */
-    for (slong j=0;j<P;j++) if (prev->rows[j]) for (slong v=0;v<n;v++) {
-        slong pivot=shift[j*n+v];
-        if (cl->rows[pivot]) continue;
-        field_elem_u *row=cl->rows[pivot]=vector_init(N,e);
-        for (slong k=j;k<P;k++)
-            field_set_elem(row+shift[k*n+v],prev->rows[j]+k,FIELD(e));
-        owner[pivot]=j*n+v; cl->rank++;
-    }
-    field_elem_u *row=vector_init(N,e);
-    for (slong j=0;j<P && cl->rank<N;j++) if (prev->rows[j])
-        for (slong v=0;v<n && cl->rank<N;v++) {
-            if (owner[shift[j*n+v]]==j*n+v) continue;
-            vector_zero(row,N,e);
-            for (slong k=j;k<P;k++)
-                field_set_elem(row+shift[k*n+v],prev->rows[j]+k,FIELD(e));
-            insert_relation(cl,row,e);
-        }
-    vector_clear(row,N,e); flint_free(owner); flint_free(shift);
-}
-
-static void act_monomial_extension(field_elem_u *out, const field_elem_u *one,
-                                   const ulong *exp, unified_mat_struct *T,
-                                   slong n, slong dim, const extension_t *e)
-{
-    field_elem_u *tmp=vector_init(dim,e); vector_set(out,one,dim,e);
-    for (slong v=0;v<n;v++) for (ulong k=0;k<exp[v];k++) {
-        vector_zero(tmp,dim,e);
-        for (slong i=0;i<dim;i++) vector_addmul(tmp,ENTRY(T+v,i,0),dim,out+i,e);
-        vector_set(out,tmp,dim,e);
-    }
-    vector_clear(tmp,dim,e);
-}
-
-/* Both directions of the certificate matter: input vanishing and commuting
- * alone only prove a quotient of the desired algebra. The free monomials
- * must also act on 1 as the full coordinate basis. */
-static int certify_extension(unified_mat_struct *T, const field_elem_u *one,
-                             const basis_t *basis, const slong *freecols,
-                             fq_nmod_mpoly_struct *fs, slong m,
-                             const fq_nmod_mpoly_ctx_t ctx, extension_t *e)
-{
-    slong n=basis->n,dim=T[0].r; int ok=1;
-    unified_mat_t AB,BA; matrix_new(AB,dim,dim,e); matrix_new(BA,dim,dim,e);
-    for (slong i=0;i<n && ok;i++) for (slong j=0;j<i && ok;j++) {
-        matrix_product(AB,T+i,T+j,e); matrix_product(BA,T+j,T+i,e);
-        for (slong k=0;k<dim*dim;k++) if (!field_equal(AB->entries+k,BA->entries+k,FIELD(e))) { ok=0; break; }
-    }
-    field_elem_u *v=vector_init(dim,e),*sum=vector_init(dim,e),a;
-    field_init_elem(&a,FIELD(e));
-    for (slong i=0;i<dim && ok;i++) {
-        act_monomial_extension(v,one,basis->exps+freecols[i]*n,T,n,dim,e);
-        for (slong j=0;j<dim;j++)
-            if (i==j ? !field_is_one(v+j,FIELD(e)) : !field_is_zero(v+j,FIELD(e))) ok=0;
-    }
-    fq_nmod_t coeff; fq_nmod_init(coeff,e->fq);
-    for (slong i=0;i<m && ok;i++) {
-        vector_zero(sum,dim,e);
-        for (slong j=0;j<fs[i].length;j++) {
-            ulong exp[n]; fq_nmod_mpoly_get_term_exp_ui(exp,fs+i,j,ctx);
-            act_monomial_extension(v,one,exp,T,n,dim,e);
-            fq_nmod_mpoly_get_term_coeff_fq_nmod(coeff,fs+i,j,ctx);
-            fq_nmod_to_field_elem(&a,coeff,&e->field);
-            vector_addmul(sum,v,dim,&a,e);
-        }
-        for (slong j=0;j<dim;j++) if (!field_is_zero(sum+j,FIELD(e))) ok=0;
-    }
-    fq_nmod_clear(coeff,e->fq); field_clear_elem(&a,FIELD(e));
-    vector_clear(v,dim,e); vector_clear(sum,dim,e);
-    unified_mat_clear(AB); unified_mat_clear(BA); return ok;
-}
-
-static unified_mat_struct *build_operators(const extension_closure_t *cl,
-                  fq_nmod_mpoly_struct *fs, slong m,
-                  const fq_nmod_mpoly_ctx_t ctx, extension_t *e)
-{
-    slong N=cl->basis.count,n=cl->basis.n,dim=N-cl->rank,used=0;
-    slong *freecols=flint_malloc(dim*sizeof(slong));
-    for (slong j=0;j<N;j++) if (!cl->rows[j]) {
-        if (cl->basis.degrees[j]>=cl->basis.degree) { flint_free(freecols); return NULL; }
-        freecols[used++]=j;
-    }
-    unified_mat_t W; matrix_new(W,N,dim,e);
-    for (slong j=0;j<dim;j++) field_set_one(ENTRY(W,freecols[j],j),FIELD(e));
-    field_elem_u a; field_init_elem(&a,FIELD(e));
-    for (slong j=N;j-- > 0;) if (cl->rows[j]) {
-        for (slong k=j+1;k<N;k++) if (!field_is_zero(cl->rows[j]+k,FIELD(e))) {
-            field_neg(&a,cl->rows[j]+k,FIELD(e));
-            vector_addmul(ENTRY(W,j,0),ENTRY(W,k,0),dim,&a,e);
-        }
-    }
-    field_clear_elem(&a,FIELD(e));
-    unified_mat_struct *T=flint_malloc(n*sizeof(*T));
-    for (slong v=0;v<n;v++) {
-        matrix_new(T+v,dim,dim,e);
-        for (slong j=0;j<dim;j++) {
-            ulong exp[n]; memcpy(exp,cl->basis.exps+freecols[j]*n,sizeof(exp)); exp[v]++;
-            slong dest=basis_find(&cl->basis,exp); assert(dest>=0);
-            vector_set(ENTRY(T+v,j,0),ENTRY(W,dest,0),dim,e);
-        }
-    }
-    int ok=certify_extension(T,ENTRY(W,N-1,0),&cl->basis,freecols,fs,m,ctx,e);
-    unified_mat_clear(W); flint_free(freecols);
-    if (!ok) {
-        for (slong v=0;v<n;v++) unified_mat_clear(T+v);
-        flint_free(T); return NULL;
-    }
-    return T;
+    const fq_nmod_mpoly_struct *f=(const fq_nmod_mpoly_struct *)input->polys+i;
+    const fq_nmod_mpoly_ctx_struct *ctx=input->ctx;
+    fq_nmod_t a; fq_nmod_init(a,e->fq);
+    fq_nmod_mpoly_get_term_coeff_fq_nmod(a,f,t,ctx);
+    fq_nmod_to_field_elem(c,a,&e->field);
+    fq_nmod_mpoly_get_term_exp_ui(exp,f,t,ctx);
+    fq_nmod_clear(a,e->fq);
 }
 
 /* Root extraction uses FLINT over the original fq context. Only the small
@@ -433,7 +117,7 @@ static int extension_points(polynomial_solutions_t *sols, fq_nmod_mat_struct *T,
 }
 
 static int extension_degree_fits(slong n, slong d, slong memory_mb,
-                                 const extension_t *e, slong *columns)
+                                 const quotient_field_t *e, slong *columns)
 {
     slong N=monomial_count_bounded(n,d,WORD_MAX/(slong)sizeof(field_elem_u));
     if (!N) return -1;
@@ -457,15 +141,16 @@ int solve_by_quotient_closure_extension(char **polys, slong count,
     }
     if (fq_nmod_ctx_degree(sols->ctx)==1)
         return solve_by_quotient_closure(polys,count,vars,n,sols,max_degree,memory_mb);
-    extension_t e; extension_init(&e,sols->ctx);
+    quotient_field_t e; extension_init(&e,sols->ctx);
     fq_nmod_mpoly_ctx_t ctx; fq_nmod_mpoly_ctx_init(ctx,n,ORD_DEGLEX,e.fq);
     const char **names=flint_malloc(n*sizeof(char *));
     for (slong i=0;i<n;i++) names[i]=vars[i].name;
     fq_nmod_mpoly_struct *fs=flint_malloc(count*sizeof(*fs));
+    quotient_input_t input={fs,ctx,extension_input_length,extension_input_term};
     slong *degrees=flint_malloc(count*sizeof(slong)),start=1,initialized=0;
     slong used=0,columns=0,dim=0;
     int success=0,certified=0;
-    extension_closure_t previous;
+    quotient_closure_t previous;
     int have_previous=0;
     unified_mat_struct *operators=NULL;
     const char *reason="degree limit reached";
@@ -484,19 +169,19 @@ int solve_by_quotient_closure_extension(char **polys, slong count,
         int fits=extension_degree_fits(n,d,memory_mb,&e,&columns);
         if (fits!=1) { reason=fits<0?"matrix dimensions exceed addressable range":"memory budget reached"; break; }
         used=d;
-        extension_closure_t cl; extension_closure_init(&cl,n,d);
+        quotient_closure_t cl; quotient_closure_init(&cl,n,d);
         if (have_previous) {
-            extension_closure_seed(&cl,&previous,&e);
-            extension_closure_clear(&previous,&e); have_previous=0;
-        } else insert_generators(&cl,fs,count,degrees,ctx,&e);
+            quotient_closure_seed(&cl,&previous,&e);
+            quotient_closure_clear(&previous,&e); have_previous=0;
+        } else insert_generators(&cl,&input,count,degrees,&e);
         extend_relations(&cl,&e);
         dim=cl.basis.count-cl.rank;
         if (!dim) certified=1;
         else {
-            operators=build_operators(&cl,fs,count,ctx,&e);
+            operators=build_operators(&cl,&input,count,&e);
             certified=operators!=NULL;
         }
-        if (certified) extension_closure_clear(&cl,&e);
+        if (certified) quotient_closure_clear(&cl,&e);
         else { previous=cl; have_previous=1; }
         if (d==WORD_MAX) { reason="degree exceeds integer range"; break; }
     }
@@ -537,7 +222,7 @@ int solve_by_quotient_closure_extension(char **polys, slong count,
     snprintf(sols->resultant_steps[0],len,"Certified elimination polynomial in %s (minimal polynomial): %s",names[n-1],text);
     sols->num_resultant_steps=sols->resultant_steps_cap=1; flint_free(text);
  done:
-    if (have_previous) extension_closure_clear(&previous,&e);
+    if (have_previous) quotient_closure_clear(&previous,&e);
     if (operators) { for (slong i=0;i<n;i++) unified_mat_clear(operators+i); flint_free(operators); }
     fq_nmod_poly_clear(mu,e.fq);
     for (slong i=0;i<initialized;i++) fq_nmod_mpoly_clear(fs+i,ctx);
@@ -550,9 +235,9 @@ int solve_by_quotient_closure_extension(char **polys, slong count,
  * The set need not be a Groebner basis: only a zero remainder is a proof.
  * This also proves membership for candidates above the closure degree. */
 static slong extension_divisors(fq_nmod_mpoly_struct ***out,
-                                const extension_closure_t *cl,
+                                const quotient_closure_t *cl,
                                 const fq_nmod_mpoly_ctx_t ctx,
-                                const extension_t *e)
+                                const quotient_field_t *e)
 {
     slong N=cl->basis.count,n=cl->basis.n,nr=0;
     slong *selected=flint_malloc(cl->rank*sizeof(slong));
@@ -583,9 +268,9 @@ static slong extension_divisors(fq_nmod_mpoly_struct ***out,
 
 /* Bounded-degree echelon reduction uses every relation, including those
  * omitted by the minimal-divisor selection. */
-static int extension_relation_contains(const extension_closure_t *cl,
+static int extension_relation_contains(const quotient_closure_t *cl,
                          const fq_nmod_mpoly_t f,
-                         const fq_nmod_mpoly_ctx_t ctx, const extension_t *e)
+                         const fq_nmod_mpoly_ctx_t ctx, const quotient_field_t *e)
 {
     if (!fq_nmod_mpoly_total_degree_fits_si(f,ctx) ||
         fq_nmod_mpoly_total_degree_si(f,ctx)>cl->basis.degree) return 0;
@@ -628,7 +313,8 @@ int quotient_sift_resultant_extension(fq_nmod_mpoly_t sifted,
         degrees[i]=fq_nmod_mpoly_total_degree_si(polys+i,ctx);
         start=FLINT_MAX(start,degrees[i]);
     }
-    extension_t e; extension_init(&e,ctx->fqctx);
+    quotient_field_t e; extension_init(&e,ctx->fqctx);
+    quotient_input_t input={polys,ctx,extension_input_length,extension_input_term};
     slong columns;
     if (start>max_degree || extension_degree_fits(n,start,0,&e,&columns)!=1) {
         flint_free(degrees); field_ctx_clear(&e.field); return 1;
@@ -646,8 +332,8 @@ int quotient_sift_resultant_extension(fq_nmod_mpoly_t sifted,
     fq_nmod_mpoly_init(remainder,ctx);
     for (slong d=start;d<=max_degree;d++) {
         if (extension_degree_fits(n,d,0,&e,&columns)!=1) break;
-        extension_closure_t cl; extension_closure_init(&cl,n,d);
-        insert_generators(&cl,polys,count,degrees,ctx,&e); extend_relations(&cl,&e);
+        quotient_closure_t cl; quotient_closure_init(&cl,n,d);
+        insert_generators(&cl,&input,count,degrees,&e); extend_relations(&cl,&e);
         *used_degree=d;
         fq_nmod_mpoly_struct **basis;
         slong nr=extension_divisors(&basis,&cl,ctx,&e);
@@ -675,7 +361,7 @@ int quotient_sift_resultant_extension(fq_nmod_mpoly_t sifted,
             fq_nmod_mpoly_clear(basis[j],ctx); flint_free(basis[j]);
             fq_nmod_mpoly_clear(quotients[j],ctx); flint_free(quotients[j]);
         }
-        flint_free(basis); flint_free(quotients); extension_closure_clear(&cl,&e);
+        flint_free(basis); flint_free(quotients); quotient_closure_clear(&cl,&e);
         if (fq_nmod_mpoly_is_fq_nmod(sifted,ctx) || d==WORD_MAX) break;
     }
     fq_nmod_mpoly_clear(candidate,ctx); fq_nmod_mpoly_clear(factor,ctx);

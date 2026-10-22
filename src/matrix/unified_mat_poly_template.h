@@ -181,6 +181,7 @@ static void UM_NAME(accumulate_window)(unified_mat_poly_t out,const unified_mat_
     (void)ctx;
 }
 
+#ifndef UM_CUSTOM_MUL_WINDOW
 /* Karatsuba works over the noncommutative ring of matrix coefficients:
  * preserve operand order in all three products. It avoids quadratic
  * degree growth costs at the smaller, higher-degree HNF recursion nodes.
@@ -219,6 +220,8 @@ static void UM_NAME(mul_window)(unified_mat_poly_t out,const unified_mat_poly_t 
     UM_NAME(clear)(a1);UM_NAME(clear)(a0);
 }
 
+#endif
+
 static void UM_NAME(mul)(unified_mat_poly_t out, const unified_mat_poly_t a,
                          const unified_mat_poly_t b)
 {
@@ -242,7 +245,11 @@ static void UM_NAME(row_submul)(unified_mat_poly_t a, slong dst, slong src,
         unified_byte_addmul(to,from,a->c,table);
 #else
         for(slong j=0;j<a->c;j++) {
+#ifdef UM_SUBMUL
+            UM_SUBMUL(to+j,scalar,from+j);
+#else
             UM_MUL(&prod,scalar,from+j); UM_SUB(to+j,to+j,&prod);
+#endif
         }
 #endif
     }

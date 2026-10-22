@@ -253,6 +253,13 @@ ulong field_ctx_get_size(const field_ctx_t *ctx) {
 void field_ctx_clear(field_ctx_t *ctx) {
     if (g_unified_workspace.initialized && g_unified_workspace.tmp.ctx==ctx)
         cleanup_unified_workspace();
+    if (ctx->field_id == FIELD_ID_FMPZ_MOD) {
+        fmpz_mod_ctx_clear(ctx->ctx.big_ctx);
+        flint_free(ctx->ctx.big_ctx);
+        ctx->ctx.big_ctx = NULL;
+        return;
+    }
+
     if (field_id_is_binary_dynamic(ctx->field_id)) {
         gf2n_native_destroy((gf2n_native_ctx *)ctx->ctx.fq_ctx);
         ctx->ctx.fq_ctx=NULL;
@@ -274,6 +281,8 @@ void field_ctx_clear(field_ctx_t *ctx) {
 void field_neg(field_elem_u *res, const field_elem_u *a,
                field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_FMPZ_MOD: fmpz_mod_neg(&res->big, &a->big, ctx); break;
+
         case FIELD_ID_GF2N8: res->binary8=a->binary8; break;
         case FIELD_ID_GF2N16: res->binary16=a->binary16; break;
         case FIELD_ID_GF2N64: res->binary64=a->binary64; break;
@@ -302,6 +311,8 @@ void field_neg(field_elem_u *res, const field_elem_u *a,
 void field_inv(field_elem_u *res, const field_elem_u *a,
                field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_FMPZ_MOD: fmpz_mod_inv(&res->big, &a->big, ctx); break;
+
         case FIELD_ID_GF2N8: res->binary8=gf2n_native_inv_word(a->binary8,ctx); break;
         case FIELD_ID_GF2N16: res->binary16=gf2n_native_inv_word(a->binary16,ctx); break;
         case FIELD_ID_GF2N64: res->binary64=gf2n_native_inv_word(a->binary64,ctx); break;
@@ -339,6 +350,8 @@ void field_inv(field_elem_u *res, const field_elem_u *a,
 
 void field_set_zero(field_elem_u *res, field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_FMPZ_MOD: fmpz_zero(&res->big); break;
+
         case FIELD_ID_GF2N8: res->binary8=0; break;
         case FIELD_ID_GF2N16: res->binary16=0; break;
         case FIELD_ID_GF2N64: res->binary64=0; break;
@@ -376,6 +389,8 @@ void field_set_zero(field_elem_u *res, field_id_t field_id, const void *ctx) {
 
 void field_set_one(field_elem_u *res, field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_FMPZ_MOD: fmpz_one(&res->big); break;
+
         case FIELD_ID_GF2N8: res->binary8=1; break;
         case FIELD_ID_GF2N16: res->binary16=1; break;
         case FIELD_ID_GF2N64: res->binary64=1; break;
@@ -414,6 +429,8 @@ void field_set_one(field_elem_u *res, field_id_t field_id, const void *ctx) {
 int field_equal(const field_elem_u *a, const field_elem_u *b, 
                 field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_FMPZ_MOD: return fmpz_equal(&a->big, &b->big);
+
         case FIELD_ID_GF2N8: return a->binary8==b->binary8;
         case FIELD_ID_GF2N16: return a->binary16==b->binary16;
         case FIELD_ID_GF2N64: return a->binary64==b->binary64;
@@ -443,6 +460,8 @@ int field_equal(const field_elem_u *a, const field_elem_u *b,
 
 void field_init_elem(field_elem_u *elem, field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_FMPZ_MOD: fmpz_init(&elem->big); break;
+
         case FIELD_ID_GF2N8: elem->binary8=0; break;
         case FIELD_ID_GF2N16: elem->binary16=0; break;
         case FIELD_ID_GF2N64: elem->binary64=0; break;
@@ -480,6 +499,8 @@ void field_init_elem(field_elem_u *elem, field_id_t field_id, const void *ctx) {
 
 void field_clear_elem(field_elem_u *elem, field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_FMPZ_MOD: fmpz_clear(&elem->big); break;
+
         case FIELD_ID_FQ_ZECH:
             fq_zech_clear(&elem->fq_zech, (const fq_zech_ctx_struct *)ctx);
             break;
@@ -495,6 +516,8 @@ void field_clear_elem(field_elem_u *elem, field_id_t field_id, const void *ctx) 
 void field_set_elem(field_elem_u *res, const field_elem_u *a,
                     field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_FMPZ_MOD: fmpz_set(&res->big, &a->big); break;
+
         case FIELD_ID_GF2N8: res->binary8=a->binary8; break;
         case FIELD_ID_GF2N16: res->binary16=a->binary16; break;
         case FIELD_ID_GF2N64: res->binary64=a->binary64; break;
@@ -533,6 +556,8 @@ void field_set_elem(field_elem_u *res, const field_elem_u *a,
 void field_sub(field_elem_u *res, const field_elem_u *a, const field_elem_u *b,
                field_id_t field_id, const void *ctx) {
     switch (field_id) {
+        case FIELD_ID_FMPZ_MOD: fmpz_mod_sub(&res->big, &a->big, &b->big, ctx); break;
+
         case FIELD_ID_GF2N8: field_add(res,a,b,field_id,ctx); break;
         case FIELD_ID_GF2N16: field_add(res,a,b,field_id,ctx); break;
         case FIELD_ID_GF2N64: field_add(res,a,b,field_id,ctx); break;
@@ -566,6 +591,8 @@ void field_sub(field_elem_u *res, const field_elem_u *a, const field_elem_u *b,
 void fq_nmod_to_field_elem(field_elem_u *res, const fq_nmod_t elem, 
                           const field_ctx_t *ctx) {
     switch (ctx->field_id) {
+        case FIELD_ID_FMPZ_MOD: flint_throw(FLINT_ERROR, "Cannot convert between different prime characteristics"); break;
+
         case FIELD_ID_GF2N8: res->binary8=gf2n_native_from_fq(elem).low; break;
         case FIELD_ID_GF2N16: res->binary16=gf2n_native_from_fq(elem).low; break;
         case FIELD_ID_GF2N64: res->binary64=gf2n_native_from_fq(elem).low; break;
@@ -604,6 +631,8 @@ void fq_nmod_to_field_elem(field_elem_u *res, const fq_nmod_t elem,
 void field_elem_to_fq_nmod(fq_nmod_t res, const field_elem_u *elem,
                           const field_ctx_t *ctx) {
     switch (ctx->field_id) {
+        case FIELD_ID_FMPZ_MOD: flint_throw(FLINT_ERROR, "Cannot convert between different prime characteristics"); break;
+
         case FIELD_ID_GF2N8: gf2n_native_to_fq(res,(gf2128_t){elem->binary8,0},ctx->ctx.fq_ctx); break;
         case FIELD_ID_GF2N16: gf2n_native_to_fq(res,(gf2128_t){elem->binary16,0},ctx->ctx.fq_ctx); break;
         case FIELD_ID_GF2N64: gf2n_native_to_fq(res,(gf2128_t){elem->binary64,0},ctx->ctx.fq_ctx); break;
@@ -654,19 +683,9 @@ void unified_poly_init(unified_poly_t poly, field_ctx_t *ctx) {
 void unified_poly_clear(unified_poly_t poly) {
     if (poly->coeffs) {
         void *ctx_ptr = NULL;
-        switch (poly->ctx->field_id) {
-            case FIELD_ID_NMOD:
-                ctx_ptr = (void*)&poly->ctx->ctx.nmod_ctx;
-                break;
-            case FIELD_ID_FQ_ZECH:
-                ctx_ptr = (void*)poly->ctx->ctx.zech_ctx;
-                break;
-            default:
-                ctx_ptr = (void*)poly->ctx->ctx.fq_ctx;
-                break;
-        }
+        ctx_ptr = (void *)field_ctx_data(poly->ctx);
         
-        if (poly->ctx->field_id == FIELD_ID_FQ || poly->ctx->field_id == FIELD_ID_FQ_ZECH) {
+        if (poly->ctx->field_id == FIELD_ID_FMPZ_MOD || poly->ctx->field_id == FIELD_ID_FQ || poly->ctx->field_id == FIELD_ID_FQ_ZECH) {
             for (slong i = 0; i < poly->alloc; i++) {
                 field_clear_elem(&poly->coeffs[i], poly->ctx->field_id, ctx_ptr);
             }
@@ -685,20 +704,10 @@ void unified_poly_fit_length(unified_poly_t poly, slong len) {
         while (new_alloc < len) new_alloc *= 2;
         
         void *ctx_ptr = NULL;
-        switch (poly->ctx->field_id) {
-            case FIELD_ID_NMOD:
-                ctx_ptr = (void*)&poly->ctx->ctx.nmod_ctx;
-                break;
-            case FIELD_ID_FQ_ZECH:
-                ctx_ptr = (void*)poly->ctx->ctx.zech_ctx;
-                break;
-            default:
-                ctx_ptr = (void*)poly->ctx->ctx.fq_ctx;
-                break;
-        }
+        ctx_ptr = (void *)field_ctx_data(poly->ctx);
         
         /* For FIELD_ID_FQ and FIELD_ID_FQ_ZECH, we need to be careful about initialization */
-        if (poly->ctx->field_id == FIELD_ID_FQ || poly->ctx->field_id == FIELD_ID_FQ_ZECH) {
+        if (poly->ctx->field_id == FIELD_ID_FMPZ_MOD || poly->ctx->field_id == FIELD_ID_FQ || poly->ctx->field_id == FIELD_ID_FQ_ZECH) {
             /* Allocate new array */
             field_elem_u *new_coeffs = (field_elem_u *)malloc(new_alloc * sizeof(field_elem_u));
             
@@ -746,17 +755,7 @@ void unified_poly_fit_length(unified_poly_t poly, slong len) {
 
 void unified_poly_normalise(unified_poly_t poly) {
     void *ctx_ptr = NULL;
-    switch (poly->ctx->field_id) {
-        case FIELD_ID_NMOD:
-            ctx_ptr = (void*)&poly->ctx->ctx.nmod_ctx;
-            break;
-        case FIELD_ID_FQ_ZECH:
-            ctx_ptr = (void*)poly->ctx->ctx.zech_ctx;
-            break;
-        default:
-            ctx_ptr = (void*)poly->ctx->ctx.fq_ctx;
-            break;
-    }
+    ctx_ptr = (void *)field_ctx_data(poly->ctx);
     
     /* Remove all trailing zeros */
     while (poly->length > 0 && 
@@ -784,17 +783,7 @@ void unified_poly_set(unified_poly_t res, const unified_poly_t poly) {
     res->length = poly->length;
     
     void *ctx_ptr = NULL;
-    switch (res->ctx->field_id) {
-        case FIELD_ID_NMOD:
-            ctx_ptr = (void*)&res->ctx->ctx.nmod_ctx;
-            break;
-        case FIELD_ID_FQ_ZECH:
-            ctx_ptr = (void*)res->ctx->ctx.zech_ctx;
-            break;
-        default:
-            ctx_ptr = (void*)res->ctx->ctx.fq_ctx;
-            break;
-    }
+    ctx_ptr = (void *)field_ctx_data(res->ctx);
     
     /* Use field_set_elem for all copies */
     for (slong i = 0; i < poly->length; i++) {
@@ -814,17 +803,7 @@ void unified_poly_add(unified_poly_t res, const unified_poly_t a, const unified_
     unified_poly_fit_length(res, max_len);
     
     void *ctx_ptr = NULL;
-    switch (res->ctx->field_id) {
-        case FIELD_ID_NMOD:
-            ctx_ptr = (void*)&res->ctx->ctx.nmod_ctx;
-            break;
-        case FIELD_ID_FQ_ZECH:
-            ctx_ptr = (void*)res->ctx->ctx.zech_ctx;
-            break;
-        default:
-            ctx_ptr = (void*)res->ctx->ctx.fq_ctx;
-            break;
-    }
+    ctx_ptr = (void *)field_ctx_data(res->ctx);
     
     /* Add common coefficients */
     for (slong i = 0; i < min_len; i++) {
@@ -853,17 +832,7 @@ void unified_poly_add(unified_poly_t res, const unified_poly_t a, const unified_
 void unified_poly_scalar_mul(unified_poly_t res, const unified_poly_t poly, 
                              const field_elem_u *c) {
     void *ctx_ptr = NULL;
-    switch (poly->ctx->field_id) {
-        case FIELD_ID_NMOD:
-            ctx_ptr = (void*)&poly->ctx->ctx.nmod_ctx;
-            break;
-        case FIELD_ID_FQ_ZECH:
-            ctx_ptr = (void*)poly->ctx->ctx.zech_ctx;
-            break;
-        default:
-            ctx_ptr = (void*)poly->ctx->ctx.fq_ctx;
-            break;
-    }
+    ctx_ptr = (void *)field_ctx_data(poly->ctx);
     
     if (field_is_zero(c, poly->ctx->field_id, ctx_ptr)) {
         unified_poly_zero(res);
@@ -876,7 +845,7 @@ void unified_poly_scalar_mul(unified_poly_t res, const unified_poly_t poly,
     }
 
     if (res == poly &&
-        (poly->ctx->field_id == FIELD_ID_FQ || poly->ctx->field_id == FIELD_ID_FQ_ZECH)) {
+        (poly->ctx->field_id == FIELD_ID_FMPZ_MOD || poly->ctx->field_id == FIELD_ID_FQ || poly->ctx->field_id == FIELD_ID_FQ_ZECH)) {
         unified_poly_struct temp;
         unified_poly_init(&temp, poly->ctx);
         unified_poly_fit_length(&temp, poly->length);
@@ -910,6 +879,8 @@ static inline slong unified_reduce_degree_field(slong e, ulong q) {
 static ulong unified_poly_field_size_q(const field_ctx_t *ctx) {
     if (!ctx) return 0;
     switch (ctx->field_id) {
+        case FIELD_ID_FMPZ_MOD: return 0;
+
         case FIELD_ID_NMOD:
             return ctx->ctx.nmod_ctx.n;
         case FIELD_ID_FQ_ZECH:
@@ -953,17 +924,7 @@ static void unified_poly_reduce_field_equation_inplace(unified_poly_t poly) {
     unified_poly_fit_length(&reduced, max_keep);
 
     void *ctx_ptr = NULL;
-    switch (poly->ctx->field_id) {
-        case FIELD_ID_NMOD:
-            ctx_ptr = (void*)&poly->ctx->ctx.nmod_ctx;
-            break;
-        case FIELD_ID_FQ_ZECH:
-            ctx_ptr = (void*)poly->ctx->ctx.zech_ctx;
-            break;
-        default:
-            ctx_ptr = (void*)poly->ctx->ctx.fq_ctx;
-            break;
-    }
+    ctx_ptr = (void *)field_ctx_data(poly->ctx);
 
     for (slong i = 0; i < max_keep; i++) {
         field_set_zero(&reduced.coeffs[i], poly->ctx->field_id, ctx_ptr);
@@ -998,17 +959,7 @@ void unified_poly_mul(unified_poly_t res, const unified_poly_t a, const unified_
         unified_poly_fit_length(&temp, rlen);
         
         void *ctx_ptr = NULL;
-        switch (res->ctx->field_id) {
-            case FIELD_ID_NMOD:
-                ctx_ptr = (void*)&res->ctx->ctx.nmod_ctx;
-                break;
-            case FIELD_ID_FQ_ZECH:
-                ctx_ptr = (void*)res->ctx->ctx.zech_ctx;
-                break;
-            default:
-                ctx_ptr = (void*)res->ctx->ctx.fq_ctx;
-                break;
-        }
+        ctx_ptr = (void *)field_ctx_data(res->ctx);
         
         /* Initialize result coefficients to zero */
         for (slong i = 0; i < rlen; i++) {
@@ -1043,17 +994,7 @@ void unified_poly_mul(unified_poly_t res, const unified_poly_t a, const unified_
         unified_poly_fit_length(res, rlen);
         
         void *ctx_ptr = NULL;
-        switch (res->ctx->field_id) {
-            case FIELD_ID_NMOD:
-                ctx_ptr = (void*)&res->ctx->ctx.nmod_ctx;
-                break;
-            case FIELD_ID_FQ_ZECH:
-                ctx_ptr = (void*)res->ctx->ctx.zech_ctx;
-                break;
-            default:
-                ctx_ptr = (void*)res->ctx->ctx.fq_ctx;
-                break;
-        }
+        ctx_ptr = (void *)field_ctx_data(res->ctx);
         
         /* Initialize result coefficients to zero */
         for (slong i = 0; i < rlen; i++) {
@@ -1084,17 +1025,7 @@ void unified_poly_mul(unified_poly_t res, const unified_poly_t a, const unified_
 
 void unified_poly_get_coeff(field_elem_u *coeff, const unified_poly_t poly, slong i) {
     void *ctx_ptr = NULL;
-    switch (poly->ctx->field_id) {
-        case FIELD_ID_NMOD:
-            ctx_ptr = (void*)&poly->ctx->ctx.nmod_ctx;
-            break;
-        case FIELD_ID_FQ_ZECH:
-            ctx_ptr = (void*)poly->ctx->ctx.zech_ctx;
-            break;
-        default:
-            ctx_ptr = (void*)poly->ctx->ctx.fq_ctx;
-            break;
-    }
+    ctx_ptr = (void *)field_ctx_data(poly->ctx);
     
     if (i < poly->length) {
         field_set_elem(coeff, &poly->coeffs[i], poly->ctx->field_id, ctx_ptr);
@@ -1107,17 +1038,7 @@ void unified_poly_set_coeff(unified_poly_t poly, slong i, const field_elem_u *co
     unified_poly_fit_length(poly, i + 1);
     
     void *ctx_ptr = NULL;
-    switch (poly->ctx->field_id) {
-        case FIELD_ID_NMOD:
-            ctx_ptr = (void*)&poly->ctx->ctx.nmod_ctx;
-            break;
-        case FIELD_ID_FQ_ZECH:
-            ctx_ptr = (void*)poly->ctx->ctx.zech_ctx;
-            break;
-        default:
-            ctx_ptr = (void*)poly->ctx->ctx.fq_ctx;
-            break;
-    }
+    ctx_ptr = (void *)field_ctx_data(poly->ctx);
     
     if (i >= poly->length) {
         /* Zero out intermediate coefficients */
@@ -1150,17 +1071,7 @@ void unified_poly_shift_left(unified_poly_t res, const unified_poly_t poly, slon
     unified_poly_fit_length(res, new_len);
     
     void *ctx_ptr = NULL;
-    switch (res->ctx->field_id) {
-        case FIELD_ID_NMOD:
-            ctx_ptr = (void*)&res->ctx->ctx.nmod_ctx;
-            break;
-        case FIELD_ID_FQ_ZECH:
-            ctx_ptr = (void*)res->ctx->ctx.zech_ctx;
-            break;
-        default:
-            ctx_ptr = (void*)res->ctx->ctx.fq_ctx;
-            break;
-    }
+    ctx_ptr = (void *)field_ctx_data(res->ctx);
     
     /* Zero lower coefficients */
     for (slong i = 0; i < n; i++) {
@@ -1215,17 +1126,7 @@ void unified_to_fq_nmod_poly(fq_nmod_poly_t res, const unified_poly_t poly,
     fq_nmod_poly_zero(res, ctx);
     
     void *ctx_ptr = NULL;
-    switch (field_ctx->field_id) {
-        case FIELD_ID_NMOD:
-            ctx_ptr = (void*)&field_ctx->ctx.nmod_ctx;
-            break;
-        case FIELD_ID_FQ_ZECH:
-            ctx_ptr = (void*)field_ctx->ctx.zech_ctx;
-            break;
-        default:
-            ctx_ptr = (void*)field_ctx->ctx.fq_ctx;
-            break;
-    }
+    ctx_ptr = (void *)field_ctx_data(field_ctx);
     
     for (slong i = 0; i < poly->length; i++) {
         if (!field_is_zero(&poly->coeffs[i], field_ctx->field_id, ctx_ptr)) {
@@ -1354,17 +1255,7 @@ void cleanup_unified_workspace(void) {
 /* Ensure workspace is initialized for the current field */
 void ensure_workspace_initialized(field_ctx_t *ctx) {
     void *ctx_ptr = NULL;
-    switch (ctx->field_id) {
-        case FIELD_ID_NMOD:
-            ctx_ptr = (void*)&ctx->ctx.nmod_ctx;
-            break;
-        case FIELD_ID_FQ_ZECH:
-            ctx_ptr = (void*)ctx->ctx.zech_ctx;
-            break;
-        default:
-            ctx_ptr = (void*)ctx->ctx.fq_ctx;
-            break;
-    }
+    ctx_ptr = (void *)field_ctx_data(ctx);
     
     /* Always reinitialize if field context changes OR if it's FQ/FQ_ZECH field */
     /* For FQ/FQ_ZECH fields, we should be more conservative about reusing workspace */
@@ -1468,6 +1359,15 @@ field_ctx_t* field_init(field_id_t field_id, ulong characteristic) {
     ctx->zech_size_limit = 1L << 20;  /* Default limit */
     
     switch (field_id) {
+        case FIELD_ID_FMPZ_MOD: {
+            ctx->ctx.big_ctx = flint_malloc(sizeof(fmpz_mod_ctx_struct));
+            fmpz_t p; fmpz_init_set_ui(p, characteristic);
+            fmpz_mod_ctx_init(ctx->ctx.big_ctx, p); fmpz_clear(p);
+            ctx->elem_size = sizeof(fmpz);
+            ctx->description = "Prime field (fmpz_mod)";
+            break;
+        }
+
         case FIELD_ID_NMOD:
             /* Prime field */
             nmod_init(&ctx->ctx.nmod_ctx, characteristic);
@@ -1644,6 +1544,8 @@ void field_clear(field_ctx_t *ctx) {
     if (!ctx) return;
     
     switch (ctx->field_id) {
+        case FIELD_ID_FMPZ_MOD: field_ctx_clear(ctx); break;
+
         case FIELD_ID_GF2N8:
         case FIELD_ID_GF2N16:
         case FIELD_ID_GF2N64:
@@ -1676,4 +1578,21 @@ void field_clear(field_ctx_t *ctx) {
     }
     
     free(ctx);
+}
+
+void field_ctx_init_prime(field_ctx_t *ctx, const fmpz_t prime)
+{
+    memset(ctx, 0, sizeof(*ctx));
+    if (fmpz_abs_fits_ui(prime)) {
+        ctx->field_id = FIELD_ID_NMOD;
+        ctx->elem_size = sizeof(ulong);
+        nmod_init(&ctx->ctx.nmod_ctx, fmpz_get_ui(prime));
+        ctx->description = "Prime field (nmod)";
+    } else {
+        ctx->field_id = FIELD_ID_FMPZ_MOD;
+        ctx->elem_size = sizeof(fmpz);
+        ctx->ctx.big_ctx = flint_malloc(sizeof(fmpz_mod_ctx_struct));
+        fmpz_mod_ctx_init(ctx->ctx.big_ctx, prime);
+        ctx->description = "Prime field (fmpz_mod)";
+    }
 }

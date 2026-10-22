@@ -107,6 +107,9 @@ extern int g_dixon_step3_second_verification;
 /* Method 0: live DP polynomial entry cap; 0 selects plain expansion. */
 extern slong g_dixon_det_cache_limit;
 
+/* Shared progress output; respects the CLI verbosity setting. */
+void dixon_info_log(const char *fmt, ...);
+const char *dixon_det_method_name(det_method_t method);
 int dixon_method_uses_parallel_timing(det_method_t method);
 int dixon_get_effective_interpolation_threads(void);
 void dixon_maybe_print_step_time(const char *step_label, double wall_elapsed);

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+#include "unified_dixon.h"
 /*
  * dixon_flint.c - Dixon Resultant Implementation for Finite Extension Fields
  *
@@ -61,7 +62,7 @@ int g_dixon_mq_quotient = 0;
 int g_dixon_step3_second_verification = 0;
 slong g_dixon_det_cache_limit = 1024;
 
-static const char *dixon_det_method_name(det_method_t method)
+const char *dixon_det_method_name(det_method_t method)
 {
     switch (method) {
         case DET_METHOD_RECURSIVE:
@@ -141,7 +142,7 @@ static int dixon_estimate_interpolation_points(slong *total_points_out,
     return 1;
 }
 
-static void dixon_info_log(const char *fmt, ...)
+void dixon_info_log(const char *fmt, ...)
 {
     va_list args;
 
@@ -1057,27 +1058,13 @@ void build_fq_cancellation_matrix(unified_mpoly_struct ***M, unified_mpoly_struc
         for (slong j = 0; j < n; j++) {
             dr_mpoly_init(&(*M)[i][j], 2 * nvars, npars, polys[0].ctx);
 
-            // Substitute variables according to row index
-            for (slong t = 0; t < dr_mpoly_length(&(polys[j])); t++) {
-                DR_MPOLY_TERM(term_3, &(polys[j]), t);
-
-                slong *new_var_exp = (slong*) flint_calloc(2 * nvars, sizeof(slong));
-                
-                for (slong k = 0; k < nvars; k++) {
-                    slong orig_exp = term_3.var_exp ? term_3.var_exp[k] : 0;
-
-                    if (k < i) {
-                        // Use dual variable ~x_k
-                        new_var_exp[nvars + k] = orig_exp;
-                    } else {
-                        // Use original variable x_k
-                        new_var_exp[k] = orig_exp;
-                    }
-                }
-
-                dr_mpoly_add_term_fast(&(*M)[i][j], new_var_exp, term_3.par_exp, term_3.coeff);
-                flint_free(new_var_exp);
-            }
+            /* Shared variable mapping; arithmetic stays in the native backend. */
+            slong *map = flint_malloc(FLINT_MAX(1,nvars+npars)*sizeof(slong));
+            for (slong k=0;k<nvars;k++) map[k]=k<i ? nvars+k : k;
+            for (slong k=0;k<npars;k++) map[nvars+k]=2*nvars+k;
+            dr_mpoly_normalize(&polys[j]);
+            unified_mpoly_reindex(&(*M)[i][j], &polys[j], map);
+            flint_free(map);
         }
     }
 }
@@ -5770,7 +5757,15 @@ void dixon_select_submatrix(unified_mpoly_struct ***full_matrix, slong nx_monoms
         degrees && num_polys==nvars+1 && g_dixon_schur_seed &&
         dixon_schur_seed_select(full_matrix,nx_monoms,ndual_monoms,
             x_monoms,dual_monoms,nvars,degrees,ctx,
-            selected_rows,selected_cols,size)) return;
+            selected_rows,selected_cols,size)) {
+        /* For a pair, both seed samples can be roots of the resultant
+         * (e.g. t and t+1 in a binary extension). Recheck a deficient
+         * candidate with the general selector before discarding directions. */
+        if (num_polys != 2 || *size == FLINT_MIN(nx_monoms,ndual_monoms)) return;
+        flint_free(*selected_rows); flint_free(*selected_cols);
+        *selected_rows=NULL; *selected_cols=NULL; *size=0;
+        dixon_debug_log("  Pair Schur seed is rank deficient; using general selector\n");
+    }
     if (npars == 0 && dixon_scalar_screen_active()) {
         dixon_screen_scalar(full_matrix, nx_monoms, ndual_monoms, dual_monoms, nvars, ctx);
         return;

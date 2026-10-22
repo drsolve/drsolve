@@ -3259,6 +3259,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int    det_method_step4 = -1;  /* determinant method override for step 4 */
     int    num_threads = -1;  /* number of threads, -1 means use default */
     slong  rational_reconstruction_max_primes = 0;
+    int    large_prime_reconstruction = 0;
     slong  det_cache_limit = 1024;
     resultant_method_t resultant_method = RESULTANT_METHOD_DIXON;
     int resultant_method_explicit = 0;
@@ -3613,6 +3614,8 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
                                 "must be positive integer. Using default.\n", argv[i + 1]);
             }
             i++;          /* skip the value token */
+        } else if (strcmp(argv[i], "--large-prime-reconstruct") == 0) {
+            large_prime_reconstruction = 1;
         } else if ((strcmp(argv[i], "--max-primes") == 0) && i + 1 < argc) {
             char *endptr = NULL;
             long val = strtol(argv[i + 1], &endptr, 10);
@@ -4138,8 +4141,8 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         goto cleanup_fail;
     }
     if (solver_method == POLYNOMIAL_SOLVER_QUOTIENT &&
-        (rational_mode || large_prime_mode)) {
-        fprintf(stderr, "Error: --solver quotient requires a finite field of machine-word characteristic.\n");
+        (rational_mode)) {
+        fprintf(stderr, "Error: --solver quotient requires a finite field.\n");
         goto cleanup_fail;
     }
     if ((solver_method_explicit || quotient_limits_given) &&
@@ -4147,9 +4150,9 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         fprintf(stderr, "Error: quotient/solver options require polynomial system solver mode.\n");
         goto cleanup_fail;
     }
-    if (quotient_limits_given && (rational_mode || large_prime_mode ||
+    if (quotient_limits_given && (rational_mode ||
                                  solver_method == POLYNOMIAL_SOLVER_DIXON)) {
-        fprintf(stderr, "Error: quotient limits require --solver auto or quotient over a finite field of machine-word characteristic.\n");
+        fprintf(stderr, "Error: quotient limits require --solver auto or quotient over a finite field.\n");
         goto cleanup_fail;
     }
     if (complex_mode && !rational_mode) {
@@ -4170,21 +4173,27 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         fprintf(stderr, "Error: --approx-roots and --resultant-only cannot be used together.\n");
         goto cleanup_fail;
     }
+    if (large_prime_reconstruction && !large_prime_mode) {
+        fprintf(stderr, "Error: --large-prime-reconstruct requires a prime exceeding the nmod limit.\n");
+        goto cleanup_fail;
+    }
     if (large_prime_mode) {
         if (ideal_str) {
-            fprintf(stderr, "Error: large prime fallback currently does not support --ideal.\n");
+            fprintf(stderr, "Error: large prime mode currently does not support --ideal.\n");
             goto cleanup_fail;
         }
         if (field_eq_mode || field_eq_final_only_mode) {
-            fprintf(stderr, "Error: large prime fallback currently does not support --field-equation or --field-equation-s.\n");
+            fprintf(stderr, "Error: large prime mode currently does not support --field-equation or --field-equation-s.\n");
             goto cleanup_fail;
         }
         if (comp_mode) {
-            fprintf(stderr, "Error: large prime fallback currently does not support --comp.\n");
+            fprintf(stderr, "Error: large prime mode currently does not support --comp.\n");
             goto cleanup_fail;
         }
         if (!silent_mode) {
-            printf("Prime exceeds nmod limit; using Q reconstruction fallback before reducing modulo the target prime.\n");
+            printf(large_prime_reconstruction
+                ? "Prime exceeds nmod limit; using Q reconstruction before reducing modulo the target prime.\n"
+                : "Prime exceeds nmod limit; computing directly with the fmpz_mod backend.\n");
         }
     }
     if (!rational_mode && power > 1 && !fmpz_abs_fits_ui(p_fmpz)) {
@@ -4490,14 +4499,22 @@ random_done:
         int poly_count = count_comma_separated_items(polys_str);
         int var_count = vars_str ? count_comma_separated_items(vars_str) : 0;
 
-        /* The solver already uses bivariate_resultant for two variables;
-         * --subres itself is only supported in elimination mode. */
-        if (!solve_mode && !rational_mode && !large_prime_mode &&
+        /* Solver pairs use the same field policy at each recursive step.
+         * Explicit method/reconstruction requests keep their chosen path. */
+        if (!solve_mode && !rational_mode && !large_prime_reconstruction &&
             poly_count == 2 && var_count == 1) {
-            resultant_method = RESULTANT_METHOD_SUBRES;
-            if (!silent_mode) {
-                printf("Hint: detected 2 equations with 1 elimination variable; auto-enabling --subres.\n");
+            slong parsed_count = 0, total_vars = 0;
+            char **poly_parts = split_string(polys_str, &parsed_count), **names = NULL;
+            const char *generator = power > 1 ? (gen_var_name ? gen_var_name : "t") : NULL;
+            collect_variables((const char **)poly_parts, parsed_count, generator, &names, &total_vars);
+            int prefer_dixon = !large_prime_mode && total_vars == 2 && dixon_prefer_bivariate(ctx);
+            if (!prefer_dixon) {
+                resultant_method = RESULTANT_METHOD_SUBRES;
+                if (!silent_mode)
+                    printf("Hint: detected 2 equations with 1 elimination variable; auto-enabling --subres.\n");
             }
+            for (slong i = 0; i < total_vars; i++) free(names[i]);
+            free(names); free_split_strings(poly_parts, parsed_count);
         } else if (!rational_mode && !large_prime_mode &&
                    (poly_count == 3) &&
                    (solve_mode || var_count == poly_count - 1)) {
@@ -4534,8 +4551,8 @@ random_done:
             fprintf(stderr, "Error: --subres currently requires a finite field.\n");
             goto cleanup_fail;
         }
-        if (large_prime_mode) {
-            fprintf(stderr, "Error: --subres currently does not support large-prime fallback.\n");
+        if (large_prime_reconstruction) {
+            fprintf(stderr, "Error: --subres computes directly in the target field; cannot combine with --large-prime-reconstruct.\n");
             goto cleanup_fail;
         }
         if (!validate_subres_input(polys_str, vars_str, silent_mode)) {
@@ -4651,6 +4668,7 @@ random_done:
     fq_interpolation_set_threads(num_threads);
     fq_nmod_poly_mat_det_set_threads(num_threads);
     dixon_set_rational_reconstruction_max_primes(rational_reconstruction_max_primes);
+    dixon_set_large_prime_reconstruction(large_prime_reconstruction);
     if (!silent_mode && threads_requested_explicitly && num_threads > 0) {
         printf("Using %d threads\n", num_threads);
     }
@@ -4793,6 +4811,9 @@ random_done:
             }
         } else if (large_prime_mode) {
             large_prime_solver_set_realtime_progress(enable_solver_realtime_progress);
+            large_prime_solver_set_method(solver_method);
+            large_prime_solver_set_subres_auto(!resultant_method_explicit && !determinant_method_explicit);
+            large_prime_solver_set_quotient_limits(quotient_degree, quotient_memory);
 
             if (suppress_solver_stdout) {
                 redirect_fd_to_devnull(STDOUT_FILENO, &orig_stdout);
@@ -4802,6 +4823,7 @@ random_done:
             }
 
             large_prime_solutions = solve_large_prime_polynomial_system_string(effective_polys_str, p_fmpz);
+            execution_failed = !large_prime_solutions || !large_prime_solutions->is_valid;
 
             if (suppress_solver_stdout) {
                 restore_fd(STDOUT_FILENO, orig_stdout);
@@ -4907,7 +4929,9 @@ random_done:
                 result = dixon_str_rational(polys_str, vars_str);
             }
         } else if (large_prime_mode) {
-            result = dixon_str_large_prime(polys_str, vars_str, p_fmpz);
+            result = resultant_method == RESULTANT_METHOD_SUBRES
+                ? subres_str_large_prime(polys_str, vars_str, p_fmpz)
+                : dixon_str_large_prime(polys_str, vars_str, p_fmpz);
         } else {
             if (resultant_method == RESULTANT_METHOD_SUBRES) {
                 result = compute_subres_resultant_str(polys_str, vars_str, ctx);

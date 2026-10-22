@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Instantiated for each native binary field. Only pivot tails are stored;
  * scalar dispatch and union-sized strides stay outside the hot row loop. */
-static void MQGF_NAME(extension_closure_t *cl, const field_elem_u *input,
-                       const extension_t *e)
+static void MQGF_NAME(quotient_closure_t *cl, const field_elem_u *input,
+                       const quotient_field_t *e)
 {
     slong N=cl->basis.count;
     if (!cl->native_scratch)

@@ -2,6 +2,19 @@
 #include "large_prime_system_solver.h"
 #include "dixon_flint.h"
 #include "fq_nmod_roots.h"
+#include "quotient_solver.h"
+
+static polynomial_solver_method_t lp_method = POLYNOMIAL_SOLVER_AUTO;
+static int lp_subres_auto = 1;
+void large_prime_solver_set_subres_auto(int enabled) { lp_subres_auto = !!enabled; }
+static slong lp_quotient_degree = 0, lp_quotient_memory = 0;
+void large_prime_solver_set_method(polynomial_solver_method_t method) { lp_method = method; }
+void large_prime_solver_set_quotient_limits(slong degree, slong memory_mb)
+{
+    lp_quotient_degree = degree;
+    lp_quotient_memory = memory_mb;
+}
+
 
 typedef struct {
     fmpz_t *values;
@@ -1513,6 +1526,51 @@ static int lp_solve_recursive(lp_solver_state_t *state,
         return LP_SOLVE_DIMPOS;
     }
 
+    if (lp_method == POLYNOMIAL_SOLVER_QUOTIENT ||
+        (lp_method == POLYNOMIAL_SOLVER_AUTO && active_count > num_vars)) {
+        int backsub = num_vars < state->num_original_vars;
+        lp_progress("%s: quotient algebra", backsub ? "Back substitution" : "Solver");
+        const char **names = flint_malloc(num_vars * sizeof(*names));
+        for (slong i = 0; i < num_vars; i++) names[i] = vars[i].name;
+        fmpz_mat_t points; fmpz_mat_init(points, 0, 0);
+        char *summary = NULL, *error = NULL;
+        int ok = solve_by_quotient_closure_large_prime(active_polys, active_count,
+            names, num_vars, state->sols->prime, lp_quotient_degree, lp_quotient_memory,
+            points, &summary, &error);
+        flint_free(names);
+        if (ok) {
+            lp_progress("%s", summary);
+            slong before = state->sols->num_solution_sets;
+            fmpz_t *saved = flint_malloc(num_vars * sizeof(*saved));
+            for (slong j = 0; j < num_vars; j++) {
+                fmpz_init(saved[j]); fmpz_set(saved[j], current_values[vars[j].index]);
+            }
+            for (slong i = 0; i < points->r && ok; i++) {
+                for (slong j = 0; j < num_vars; j++)
+                    fmpz_set(current_values[vars[j].index], fmpz_mat_entry(points, i, j));
+                ok = lp_append_current_solution(state, current_values);
+            }
+            for (slong j = 0; j < num_vars; j++) {
+                fmpz_set(current_values[vars[j].index], saved[j]); fmpz_clear(saved[j]);
+            }
+            flint_free(saved); fmpz_mat_clear(points); free(summary); free(error);
+            lp_free_string_array(active_polys, active_count);
+            if (!ok) {
+                lp_set_error(state->sols, "Failed to append a quotient algebra solution");
+                return LP_SOLVE_ERROR;
+            }
+            return state->sols->num_solution_sets > before ? LP_SOLVE_FOUND : LP_SOLVE_NONE;
+        }
+        fmpz_mat_clear(points); free(summary);
+        if (lp_method == POLYNOMIAL_SOLVER_QUOTIENT || !backsub) {
+            lp_set_error(state->sols, error ? error : "Large-prime quotient closure failed");
+            free(error); lp_free_string_array(active_polys, active_count);
+            return LP_SOLVE_ERROR;
+        }
+        lp_progress("Quotient closure incomplete; falling back to Dixon: %s", error ? error : "unknown error");
+        free(error);
+    }
+
     {
         rational_equation_combination_t *combinations = NULL;
         slong num_combinations = 0;
@@ -1566,13 +1624,17 @@ static int lp_solve_recursive(lp_solver_state_t *state,
                 return LP_SOLVE_ERROR;
             }
 
+            int use_subres = num_vars == 2 && lp_subres_auto &&
+                lp_method != POLYNOMIAL_SOLVER_DIXON && !dixon_get_large_prime_reconstruction();
             if (num_vars > 1) {
-                lp_progress("Compute Dixon resultant for %ld variable(s) from %ld equation(s)",
-                            num_vars, target_equations);
+                lp_progress("Compute %s for %ld variable(s) from %ld equation(s)",
+                            use_subres ? "subresultant" : "Dixon resultant", num_vars, target_equations);
             }
 
             if (num_vars == 1)
                 resultant = strdup(selected_polys);
+            else if (use_subres)
+                resultant = subres_str_large_prime(selected_polys, elim_vars, state->sols->prime);
             else
                 resultant = dixon_str_large_prime(selected_polys, elim_vars, state->sols->prime);
             free(selected_polys);

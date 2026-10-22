@@ -68,9 +68,7 @@ static void print_short_usage(const char *prog_name)
     printf("  --method <n>      Determinant method selection (0:Expansion, 1:HNF, 2:Interpolation, 3:Sparse, 4:Bareiss, 5:Fdixon)\n");
     printf("  --step1, --step4  Override method <n> for specific algorithm steps\n");
     printf("  --quotient        Use Dixon quotient / Bezoutian construction (automatic for supported MQ)\n");
-    printf("  --no-quotient     Disable Dixon quotient / Bezoutian construction\n");
-    printf("  --sift  Remove extraneous resultant factors using quotient algebra (finite fields)\n");
-    printf("  --solver auto|dixon|quotient  Auto uses Bezoutian for supported square MQ systems\n");
+    printf("  --sift            Remove extraneous resultant factors using quotient algebra (finite fields)\n");
     printf("  --threads <num>   Set number of threads for parallel computation\n");
     printf("  --dixon           Use Dixon resultant (default)\n");
     printf("  --macaulay        Use Macaulay resultant\n");
@@ -78,7 +76,7 @@ static void print_short_usage(const char *prog_name)
     printf("  --field-equation  After each multiplication, reduces x^q -> x for every variable\n");
     printf("  --ideal <args>    After each multiplication, reduces using the given substitution\n");
     printf("  --complex         Output complex solutions (2x2 solver or complex roots over Q)\n");
-    printf("  --max-primes <n>  Maximum primes for rational reconstruction (Q default: 64; large-prime fallback: 256)\n");
+    printf("  --max-primes <n>  Maximum primes for rational reconstruction (default: 64)\n");
     printf("  --test <n>        Run built-in tests (1: Dixon matrix size, 2: Bezout bound, 3: solver correctness, 4: performance)\n");
     printf("  --time            Print per-step timing information\n");
     printf("  -v, --verbose <n> Verbosity level (0:silent, 1:default, 2:detailed, 3:debug, 4:matrix)\n");
@@ -400,6 +398,7 @@ static int validate_cli_options(int argc, char *argv[])
         {"step4", required_argument, NULL, OPT_FLAG},
         {"threads", required_argument, NULL, OPT_FLAG},
         {"max-primes", required_argument, NULL, OPT_FLAG},
+        {"large-prime-reconstruct", no_argument, NULL, OPT_FLAG},
         {"cache", required_argument, NULL, OPT_FLAG},
         {"array-limit-k", required_argument, NULL, OPT_FLAG},
         {"nvars", required_argument, NULL, 'n'},

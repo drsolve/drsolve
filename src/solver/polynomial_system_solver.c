@@ -1383,6 +1383,19 @@ char* substitute_variable_in_polynomial(const char *poly_str, const char *var_na
     return result_str;
 }
 
+/* Pair dispatch is also used after substitution and equation selection. */
+static char *solver_pair_resultant(const char *a, const char *b, const char *var,
+                                   const fq_nmod_ctx_t ctx)
+{
+    int use_dixon = solver_method == POLYNOMIAL_SOLVER_DIXON || dixon_prefer_bivariate(ctx);
+    solver_progress("Pair elimination: %s", use_dixon ? "Dixon" : "subresultant");
+    if (use_dixon) {
+        const char *polys[] = {a,b}, *vars[] = {var};
+        return dixon(polys,2,vars,1,ctx);
+    }
+    return bivariate_resultant(a,b,var,ctx);
+}
+
 // ENHANCED: Use Dixon resultant to eliminate variable with equation selection
 char* eliminate_variable_dixon_with_selection(char **poly_strings, slong num_polys, 
                                               const char *elim_var, const fq_nmod_ctx_t ctx,
@@ -1396,7 +1409,7 @@ char* eliminate_variable_dixon_with_selection(char **poly_strings, slong num_pol
         solver_trace_stdout("    Using equations %ld and %ld for elimination\n", 
                             combination->equation_indices[0], combination->equation_indices[1]);
         
-        return bivariate_resultant(poly1, poly2, elim_var, ctx);
+        return solver_pair_resultant(poly1, poly2, elim_var, ctx);
     } else if (combination->num_equations > 2) {
         // Multi-polynomial case, use Dixon resultant
         const char **poly_const = (const char**) malloc(combination->num_equations * sizeof(char*));
@@ -2213,7 +2226,7 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
             add_resultant_step(sols,
                                "Compute resultant of eq(1,2) eliminating %s",
                                elim_var);
-            char *resultant = bivariate_resultant(poly_strings[0], poly_strings[1], elim_var, sols->ctx);
+            char *resultant = solver_pair_resultant(poly_strings[0], poly_strings[1], elim_var, sols->ctx);
             if (resultant && strcmp(resultant, "0") != 0) {
                 working_resultant = resultant;
                 successful_combinations = 1;

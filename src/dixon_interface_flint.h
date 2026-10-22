@@ -168,6 +168,16 @@ char* dixon_str_rational_resultant_only(const char *poly_string,
 void dixon_set_rational_reconstruction_max_primes(slong max_primes);
 slong dixon_get_rational_reconstruction_max_primes(void);
 
+/* Default off: opt into Q reconstruction followed by reduction modulo p. */
+void dixon_set_large_prime_reconstruction(int enabled);
+int dixon_get_large_prime_reconstruction(void);
+/* Optimized machine-prime and native binary backends prefer Dixon for 2x2. */
+int dixon_prefer_bivariate(const fq_nmod_ctx_t ctx);
+
+/* Two polynomials, one eliminated variable; direct FLINT resultant. */
+char *subres_str_large_prime(const char *poly_string, const char *vars_string,
+                            const fmpz_t prime);
+
 char* dixon_str_large_prime(const char *poly_string,
                             const char *vars_string,
                             const fmpz_t prime);

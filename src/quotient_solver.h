@@ -52,4 +52,11 @@ int quotient_sift_resultant_extension(fq_nmod_mpoly_t sifted,
                            const fq_nmod_mpoly_ctx_t ctx,
                            slong max_degree, slong *used_degree);
 
+#include <flint/fmpz_mat.h>
+/* Transactional point extraction; caller initializes points and frees summary/error. */
+int solve_by_quotient_closure_large_prime(char **polys, slong count,
+                            const char **names, slong n, const fmpz_t prime,
+                            slong max_degree, slong memory_mb,
+                            fmpz_mat_t points, char **summary, char **error);
+
 #endif

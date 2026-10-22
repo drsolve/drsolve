@@ -150,6 +150,7 @@ MATH_SOURCES = $(SRC_DIR)/dixon/dixon_complexity.c \
                $(SRC_DIR)/dixon/dixon_recursive.c \
                $(SRC_DIR)/dixon/dixon_flint.c \
                $(SRC_DIR)/dixon/dixon_interface_flint.c \
+               $(SRC_DIR)/dixon/unified_dixon.c \
                $(SRC_DIR)/test/dixon/dixon_test.c \
                $(SRC_DIR)/test/solver/polynomial_system_solver_test.c \
                $(SRC_DIR)/dixon/dixon_with_ideal_reduction.c \
@@ -185,6 +186,7 @@ MATH_SOURCES = $(SRC_DIR)/dixon/dixon_complexity.c \
                $(SRC_DIR)/solver/polynomial_system_solver.c \
                $(SRC_DIR)/solver/quotient_solver.c \
                $(SRC_DIR)/solver/quotient_extension.c \
+               $(SRC_DIR)/solver/quotient_large_prime.c \
                $(SRC_DIR)/solver/rational_system_solver.c
 # Object files (in build directory)
 MATH_OBJECTS = $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(MATH_SOURCES))
@@ -1261,3 +1263,47 @@ $(BUILD_DIR)/gf2n_roots_test: $(SRC_DIR)/test/solver/gf2n_roots_test.c $(DIXON_S
 .PHONY: test-gf2n-roots
 test-gf2n-roots: $(BUILD_DIR)/gf2n_roots_test
 	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=1 ./$(BUILD_DIR)/gf2n_roots_test
+
+.PHONY: test-fmpz-unified
+test-fmpz-unified: $(BUILD_DIR)/fmpz_unified_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH ./$(BUILD_DIR)/fmpz_unified_test
+
+$(BUILD_DIR)/fmpz_unified_test: $(SRC_DIR)/test/field/fmpz_unified_test.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+$(BUILD_DIR)/quotient_large_prime_test: $(SRC_DIR)/test/solver/quotient_large_prime_test.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(EXTERNAL_LIBS) $(RPATH_FLAGS) $(LDFLAGS)
+
+.PHONY: test-quotient-large-prime
+test-quotient-large-prime: $(BUILD_DIR)/quotient_large_prime_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH ./$(BUILD_DIR)/quotient_large_prime_test
+
+.PHONY: test-quotient-large-prime-cli
+test-quotient-large-prime-cli: $(DIXON_TARGET)
+	python3 $(SRC_DIR)/test/cli/quotient_large_prime_cli_test.py ./$(DIXON_TARGET)
+
+$(BUILD_DIR)/unified_dixon_matrix_test: $(SRC_DIR)/test/dixon/unified_dixon_matrix_test.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-unified-dixon-matrix
+test-unified-dixon-matrix: $(BUILD_DIR)/unified_dixon_matrix_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH ./$(BUILD_DIR)/unified_dixon_matrix_test
+
+.PHONY: test-large-prime-schur-cli
+test-large-prime-schur-cli: $(DIXON_TARGET)
+	python3 $(SRC_DIR)/test/cli/large_prime_schur_cli_test.py ./$(DIXON_TARGET)
+
+$(BUILD_DIR)/fmpz_mat_poly_test: $(SRC_DIR)/test/matrix/fmpz_mat_poly_test.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-fmpz-mat-poly
+test-fmpz-mat-poly: $(BUILD_DIR)/fmpz_mat_poly_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=1 ./$(BUILD_DIR)/fmpz_mat_poly_test
+
+.PHONY: test-large-prime-subres-cli
+test-large-prime-subres-cli: $(DIXON_TARGET)
+	python3 $(SRC_DIR)/test/cli/large_prime_subres_cli_test.py ./$(DIXON_TARGET)
+
+.PHONY: test-pair-dispatch-cli
+test-pair-dispatch-cli: $(DIXON_TARGET)
+	python3 $(SRC_DIR)/test/cli/pair_dispatch_cli_test.py ./$(DIXON_TARGET)

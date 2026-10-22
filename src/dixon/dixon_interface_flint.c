@@ -1,4 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+#include "unified_dixon.h"
+#include "unified_mpoly_resultant.h"
 // Complete fixed Dixon resultant string interface implementation
 #include "dixon_interface_flint.h"
 #include "dixon_pipeline.h"
@@ -13,6 +15,28 @@ static char *g_last_root_report = NULL;
 static int g_dixon_print_complex_roots = 0;
 static int g_dixon_approximate_root_mode = 0;
 static slong g_dixon_approximate_root_precision = 128;
+/* Applies to elimination and to every recursive large-prime solver call. */
+static int g_large_prime_reconstruction = 0;
+
+void dixon_set_large_prime_reconstruction(int enabled)
+{
+    g_large_prime_reconstruction = enabled != 0;
+}
+
+int dixon_get_large_prime_reconstruction(void)
+{
+    return g_large_prime_reconstruction;
+}
+
+int dixon_prefer_bivariate(const fq_nmod_ctx_t ctx)
+{
+    field_ctx_t field;
+    field_ctx_init(&field,ctx);
+    int prefer = field.field_id == FIELD_ID_NMOD || field_id_is_gf2n(field.field_id);
+    field_ctx_clear(&field);
+    return prefer;
+}
+
 static slong g_rational_reconstruction_max_primes = 0;
 
 void dixon_set_rational_reconstruction_max_primes(slong max_primes)
@@ -2962,7 +2986,7 @@ char* dixon_str_rational_resultant_only(const char *poly_string,
     return dixon_str_rational_resultant_only_with_file(poly_string, vars_string, NULL);
 }
 
-char* dixon_str_large_prime(const char *poly_string,
+static char* dixon_str_large_prime_reconstructed(const char *poly_string,
                             const char *vars_string,
                             const fmpz_t prime) {
     qq_poly_recon_t best_recon;
@@ -2971,11 +2995,12 @@ char* dixon_str_large_prime(const char *poly_string,
     char *prime_str = NULL;
     int have_best_recon = 0;
 
+    int saved_suppress = g_suppress_rational_root_reporting;
     g_suppress_rational_root_reporting = 1;
     best_result = qq_reconstruct_from_modular_dixon_with_file(poly_string, vars_string,
                                                               &best_recon, &have_best_recon,
                                                               NULL, 256, 0);
-    g_suppress_rational_root_reporting = 0;
+    g_suppress_rational_root_reporting = saved_suppress;
 
     if (!best_result) {
         return NULL;
@@ -2997,6 +3022,92 @@ char* dixon_str_large_prime(const char *poly_string,
         qq_poly_recon_clear(&best_recon);
     }
     return mod_result;
+}
+
+static char *prime_resultant_string(const char *poly_string, const char *vars_string,
+                                    const fmpz_t prime, int subres)
+{
+    slong count=0, n=0, np=0;
+    char **input=split_string(poly_string,&count);
+    char **elim=split_string(vars_string,&n);
+    char **pars=compute_remaining_vars_from_input(poly_string,vars_string,&np);
+    char *result=NULL;
+    if(count!=n+1 || (subres && n!=1)) {
+        if (subres)
+            fprintf(stderr,"Error: Subresultant requires two polynomials and one elimination variable.\n");
+        else
+            fprintf(stderr,"Error: Need exactly %ld polynomials for %ld variables\n",n+1,n);
+        goto cleanup;
+    }
+    const char **names=flint_malloc(FLINT_MAX(1,n+np)*sizeof(char *));
+    for(slong i=0;i<n;i++) names[i]=elim[i];
+    for(slong i=0;i<np;i++) names[n+i]=pars[i];
+    field_ctx_t field;
+    field_ctx_init_prime(&field,prime);
+    unified_mpoly_ctx_t inctx=unified_mpoly_ctx_init(n+np,ORD_LEX,&field);
+    unified_mpoly_ctx_t outctx=subres ? inctx : unified_mpoly_ctx_init(np,ORD_LEX,&field);
+    unified_mpoly_t *polys=flint_malloc(count*sizeof(*polys));
+    int ok=1;
+    for(slong i=0;i<count;i++) {
+        polys[i]=unified_mpoly_init(inctx);
+        int status = field.field_id==FIELD_ID_FMPZ_MOD
+            ? fmpz_mod_mpoly_set_str_pretty(GET_BIG_POLY(polys[i]),input[i],names,GET_BIG_CTX(inctx))
+            : nmod_mpoly_set_str_pretty(GET_NMOD_POLY(polys[i]),input[i],names,GET_NMOD_CTX(inctx));
+        if(status) { fprintf(stderr,"Error: Cannot parse polynomial %ld in the target prime field.\n",i+1); ok=0; }
+    }
+    unified_mpoly_t out=unified_mpoly_init(outctx);
+    if (ok && subres) {
+        subres_cli_log(1, "Subresultant: computing resultant eliminating %s (FLINT fmpz_mod).\n", elim[0]);
+        double started = get_wall_time();
+        ok = unified_mpoly_resultant(out,polys[0],polys[1],0,inctx);
+        dixon_maybe_print_step_time("Subresultant",get_wall_time()-started);
+        if (!ok) fprintf(stderr,"Error: FLINT large-prime resultant computation failed.\n");
+    } else if (ok) {
+        ok = unified_dixon_resultant(out,polys,n);
+    }
+    if(ok) {
+        if (!unified_mpoly_is_zero(out)) {
+            if (field.field_id == FIELD_ID_FMPZ_MOD)
+                fmpz_mod_mpoly_make_monic(GET_BIG_POLY(out), GET_BIG_POLY(out), GET_BIG_CTX(outctx));
+            else
+                nmod_mpoly_make_monic(GET_NMOD_POLY(out), GET_NMOD_POLY(out), GET_NMOD_CTX(outctx));
+        }
+        char *str = field.field_id==FIELD_ID_FMPZ_MOD
+            ? fmpz_mod_mpoly_get_str_pretty(GET_BIG_POLY(out),(subres ? names : (const char **)pars),GET_BIG_CTX(outctx))
+            : nmod_mpoly_get_str_pretty(GET_NMOD_POLY(out),(subres ? names : (const char **)pars),GET_NMOD_CTX(outctx));
+        result=strdup(str);
+        if (g_dixon_verbose_level >= 1) {
+            if (strlen(str) <= 2000)
+                printf("Final Resultant over target field = %s\n", str);
+            else
+                printf("Final resultant: %ld terms, total degree %ld\n",
+                       unified_mpoly_length(out), unified_mpoly_total_degree_si(out));
+        }
+        flint_free(str);
+    }
+    unified_mpoly_clear(out);
+    for(slong i=0;i<count;i++) unified_mpoly_clear(polys[i]);
+    flint_free(polys); flint_free(names);
+    if (!subres) unified_mpoly_ctx_clear(outctx);
+    unified_mpoly_ctx_clear(inctx);
+    field_ctx_clear(&field);
+cleanup:
+    free_split_strings(input,count); free_split_strings(elim,n); free_split_strings(pars,np);
+    return result;
+}
+
+char *dixon_str_large_prime(const char *poly_string, const char *vars_string,
+                           const fmpz_t prime)
+{
+    if (g_large_prime_reconstruction)
+        return dixon_str_large_prime_reconstructed(poly_string,vars_string,prime);
+    return prime_resultant_string(poly_string,vars_string,prime,0);
+}
+
+char *subres_str_large_prime(const char *poly_string, const char *vars_string,
+                            const fmpz_t prime)
+{
+    return prime_resultant_string(poly_string,vars_string,prime,1);
 }
 
 // Main Dixon Interface
