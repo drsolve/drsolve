@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+#include "gf2n_inline.h"
 /* Compact coefficient instances of the same matrix algorithms. */
 
 #define UM_NAME(x) b8_##x
@@ -73,9 +74,17 @@
 #define UM_ADD(x,y,z) (*(x)=(gf232_t){(y)->value^(z)->value})
 #define UM_SUB(x,y,z) UM_ADD(x,y,z)
 #define UM_NEG(x,y) UM_SET(x,y)
-#define UM_MUL(x,y,z) (*(x)=gf232_mul(y,z))
+#define UM_MUL(x,y,z) (*(x)=gf232_mul_inline(y,z))
 #define UM_INV(x,y) (*(x)=gf232_inv(y))
+#if defined(__PCLMUL__)
+#define UM_RAW_ENABLE (gf232_mul==gf232_mul_pclmul)
+#define UM_RAW_WORD(x) (x)->value
+#define UM_RAW_REDUCE(x) gf232_reduce_hw(x)
+#endif
 #include "unified_mat_poly_template.h"
+#undef UM_RAW_ENABLE
+#undef UM_RAW_WORD
+#undef UM_RAW_REDUCE
 #undef UM_NAME
 #undef UM_E
 #undef UM_BYTE
@@ -103,9 +112,17 @@
 #define UM_ADD(x,y,z) (*(x)=(gf264_t){(y)->value^(z)->value})
 #define UM_SUB(x,y,z) UM_ADD(x,y,z)
 #define UM_NEG(x,y) UM_SET(x,y)
-#define UM_MUL(x,y,z) (*(x)=gf264_mul(y,z))
+#define UM_MUL(x,y,z) (*(x)=gf264_mul_inline(y,z))
 #define UM_INV(x,y) (*(x)=gf264_inv(y))
+#if defined(__PCLMUL__)
+#define UM_RAW_ENABLE (gf264_mul==gf264_mul_pclmul)
+#define UM_RAW_WORD(x) (x)->value
+#define UM_RAW_REDUCE(x) gf264_reduce_hw(x)
+#endif
 #include "unified_mat_poly_template.h"
+#undef UM_RAW_ENABLE
+#undef UM_RAW_WORD
+#undef UM_RAW_REDUCE
 #undef UM_NAME
 #undef UM_E
 #undef UM_BYTE
@@ -133,7 +150,7 @@
 #define UM_ADD(x,y,z) (*(x)=(gf2128_t){(y)->low^(z)->low,(y)->high^(z)->high})
 #define UM_SUB(x,y,z) UM_ADD(x,y,z)
 #define UM_NEG(x,y) UM_SET(x,y)
-#define UM_MUL(x,y,z) (*(x)=gf2128_mul(y,z))
+#define UM_MUL(x,y,z) (*(x)=gf2128_mul_inline(y,z))
 #define UM_INV(x,y) (*(x)=gf2128_inv(y))
 #include "unified_mat_poly_template.h"
 #undef UM_NAME
@@ -195,7 +212,15 @@
 #define UM_NEG(x,y) UM_SET(x,y)
 #define UM_MUL(x,y,z) (*(x)=gf2n_native_mul_word(*(y),*(z),(const gf2n_native_ctx *)ctx->ctx.fq_ctx))
 #define UM_INV(x,y) (*(x)=gf2n_native_inv_word(*(y),(const gf2n_native_ctx *)ctx->ctx.fq_ctx))
+#if defined(__PCLMUL__)
+#define UM_RAW_ENABLE (((const gf2n_native_ctx *)ctx->ctx.fq_ctx)->clmul)
+#define UM_RAW_WORD(x) (*(x))
+#define UM_RAW_REDUCE(x) gf2n_native_reduce_word_hw(x,(const gf2n_native_ctx *)ctx->ctx.fq_ctx)
+#endif
 #include "unified_mat_poly_template.h"
+#undef UM_RAW_ENABLE
+#undef UM_RAW_WORD
+#undef UM_RAW_REDUCE
 #undef UM_NAME
 #undef UM_E
 #undef UM_BYTE

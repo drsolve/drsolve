@@ -4589,6 +4589,7 @@ random_done:
     g_resultant_method = resultant_method;
     g_dixon_verbose_level = verbose_level;
     g_dixon_show_step_timing = (!silent_mode) && (time_mode || debug_mode);
+    g_dixon_show_compression_timing = (!silent_mode) && time_mode;
     g_dixon_debug_mode = debug_mode;
     g_rational_root_scan_mode = rational_root_scan_mode;
     g_dixon_fast_use_ksy_precondition = fast_ksy_precondition;

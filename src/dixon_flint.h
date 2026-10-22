@@ -86,6 +86,7 @@ extern resultant_method_t g_resultant_method;
 extern int g_dixon_verbose_level;
 extern int g_dixon_debug_mode;
 extern int g_dixon_show_step_timing;
+extern int g_dixon_show_compression_timing;
 extern rational_root_scan_mode_t g_rational_root_scan_mode;
 extern int g_matrix_transpose_threshold;
 extern int g_dixon_fast_use_ksy_precondition;

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+#include "gf2n_inline.h"
 /* Shared exponent plans, separate native characteristic-two arithmetic. */
 #define MQGF_TYPE uint8_t
 #define MQGF_NAME dixon_schur_gf24
@@ -33,7 +34,7 @@
 #define MQGF_ZERO(a) gf232_is_zero(&(a))
 #define MQGF_ADD(a,b) gf232_add(&(a), &(b))
 #define MQGF_PREPARE(a) ((void)0)
-#define MQGF_MUL(a,b) gf232_mul(&(a), &(b))
+#define MQGF_MUL(a,b) gf232_mul_inline(&(a), &(b))
 #include "dixon_gf2n_schur_template.h"
 
 #define MQGF_TYPE gf264_t
@@ -42,7 +43,7 @@
 #define MQGF_ZERO(a) gf264_is_zero(&(a))
 #define MQGF_ADD(a,b) gf264_add(&(a), &(b))
 #define MQGF_PREPARE(a) ((void)0)
-#define MQGF_MUL(a,b) gf264_mul(&(a), &(b))
+#define MQGF_MUL(a,b) gf264_mul_inline(&(a), &(b))
 #include "dixon_gf2n_schur_template.h"
 
 #define MQGF_TYPE gf2128_t
@@ -51,7 +52,7 @@
 #define MQGF_ZERO(a) gf2128_is_zero(&(a))
 #define MQGF_ADD(a,b) gf2128_add(&(a), &(b))
 #define MQGF_PREPARE(a) ((void)0)
-#define MQGF_MUL(a,b) gf2128_mul(&(a), &(b))
+#define MQGF_MUL(a,b) gf2128_mul_inline(&(a), &(b))
 #include "dixon_gf2n_schur_template.h"
 
 

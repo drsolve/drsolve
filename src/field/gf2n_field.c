@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+#include "gf2n_inline.h"
 /* gf2n_field.c - Implementation of GF(2^n) field operations */
 #include "gf2n_field.h"
 
@@ -531,49 +532,10 @@ gf232_t gf232_mul_software(const gf232_t *a, const gf232_t *b) {
 
 /* Optimized PCLMUL-based multiplication for GF(2^32) with new polynomial */
 gf232_t gf232_mul_pclmul(const gf232_t *a, const gf232_t *b) {
-#if DIXON_X86_SIMD
-    __m128i x = _mm_set_epi64x(0, a->value);
-    __m128i y = _mm_set_epi64x(0, b->value);
-    
-    /* 32x32 -> 64 bit multiplication */
-    __m128i prod = _mm_clmulepi64_si128(x, y, 0x00);
-    
-    uint64_t result = _mm_extract_epi64(prod, 0);
-    
-    /* Optimized reduction for x^32 + x^15 + x^9 + x^7 + x^4 + x^3 + 1 */
-    uint64_t hi = result >> 32;  // Upper 32 bits
-    uint64_t lo = result & 0xFFFFFFFF;  // Lower 32 bits
-    
-    /* For GF(2^32) with polynomial x^32 + x^15 + x^9 + x^7 + x^4 + x^3 + 1:
-     * x^32 ≡ x^15 + x^9 + x^7 + x^4 + x^3 + 1 = 0x8299
-     */
-    uint64_t fold = 0;
-    uint32_t h = (uint32_t)hi;
-    
-    /* Compute h * 0x8299 using shifts and XORs */
-    fold = h;
-    fold ^= (uint64_t)h << 3;
-    fold ^= (uint64_t)h << 4;
-    fold ^= (uint64_t)h << 7;
-    fold ^= (uint64_t)h << 9;
-    fold ^= (uint64_t)h << 15;
-    
-    result = lo ^ (fold & 0xFFFFFFFF);
-    
-    uint32_t fold_hi = fold >> 32;
-    if (fold_hi) {
-        uint32_t extra = fold_hi;
-        extra ^= fold_hi << 3;
-        extra ^= fold_hi << 4;
-        extra ^= fold_hi << 7;
-        extra ^= fold_hi << 9;
-        extra ^= fold_hi << 15;
-        result ^= extra;
-    }
-    
-    return gf232_create((uint32_t)result);
+#if defined(__PCLMUL__)
+    return gf232_product_hw(a,b);
 #else
-    return gf232_mul_software(a, b);
+    return gf232_mul_software(a,b);
 #endif
 }
 
@@ -717,30 +679,10 @@ gf264_t gf264_mul_software(const gf264_t *a, const gf264_t *b) {
 
 /* PCLMUL-based multiplication for GF(2^64) */
 gf264_t gf264_mul_pclmul(const gf264_t *a, const gf264_t *b) {
-#if DIXON_X86_SIMD
-    __m128i x = _mm_set_epi64x(0, a->value);
-    __m128i y = _mm_set_epi64x(0, b->value);
-    
-    /* 64x64 -> 128 bit multiplication */
-    __m128i prod = _mm_clmulepi64_si128(x, y, 0x00);
-    
-    uint64_t lo = _mm_extract_epi64(prod, 0);
-    uint64_t hi = _mm_extract_epi64(prod, 1);
-    
-    /* Fold x^64 into the degree-33 remainder twice. The last overflow
-     * has at most two bits and needs only shifts/XOR, no bitwise division. */
-    __m128i modulus = _mm_set_epi64x(0, GF264_MODULUS);
-    prod = _mm_clmulepi64_si128(_mm_set_epi64x(0,hi),modulus,0);
-    lo ^= (uint64_t)_mm_extract_epi64(prod,0);
-    hi = (uint64_t)_mm_extract_epi64(prod,1);
-    prod = _mm_clmulepi64_si128(_mm_set_epi64x(0,hi),modulus,0);
-    lo ^= (uint64_t)_mm_extract_epi64(prod,0);
-    hi = (uint64_t)_mm_extract_epi64(prod,1);
-    lo ^= (-(hi&1)&GF264_MODULUS) ^ (-((hi>>1)&1)&(GF264_MODULUS<<1));
-    
-    return gf264_create(lo);
+#if defined(__PCLMUL__)
+    return gf264_product_hw(a,b);
 #else
-    return gf264_mul_software(a, b);
+    return gf264_mul_software(a,b);
 #endif
 }
 
@@ -924,39 +866,10 @@ gf2128_t gf2128_mul_software(const gf2128_t *a, const gf2128_t *b) {
 
 /* CLMUL-based multiplication for GF(2^128) */
 inline gf2128_t gf2128_mul_clmul(const gf2128_t *a, const gf2128_t *b) {
-#if DIXON_X86_SIMD
-    __m128i x = _mm_set_epi64x(a->high, a->low);
-    __m128i y = _mm_set_epi64x(b->high, b->low);
-    
-    /* Step 1: 128x128 -> 256 bit multiplication */
-    __m128i t0, t1, t2;
-    
-    t0 = _mm_clmulepi64_si128(x, y, 0x00);
-    t1 = _mm_clmulepi64_si128(x, y, 0x11);
-    t2 = _mm_xor_si128(
-        _mm_clmulepi64_si128(x, y, 0x10),
-        _mm_clmulepi64_si128(x, y, 0x01)
-    );
-    
-    __m128i lo = _mm_xor_si128(t0, _mm_slli_si128(t2, 8));
-    __m128i hi = _mm_xor_si128(t1, _mm_srli_si128(t2, 8));
-    
-    const uint64_t g = 0x87;
-    
-    __m128i tmp = _mm_clmulepi64_si128(hi, _mm_set_epi64x(0, g), 0x01);
-    hi = _mm_xor_si128(hi, _mm_srli_si128(tmp, 8));
-    lo = _mm_xor_si128(lo, _mm_slli_si128(tmp, 8));
-    
-    tmp = _mm_clmulepi64_si128(hi, _mm_set_epi64x(0, g), 0x00);
-    lo = _mm_xor_si128(lo, tmp);
-    
-    gf2128_t res;
-    res.low = _mm_extract_epi64(lo, 0);
-    res.high = _mm_extract_epi64(lo, 1);
-    
-    return res;
+#if defined(__PCLMUL__)
+    return gf2128_product_hw(a,b);
 #else
-    return gf2128_mul_software(a, b);
+    return gf2128_mul_software(a,b);
 #endif
 }
 

@@ -86,7 +86,7 @@ PML_SO_PATH :=
 PML_A_PATH := $(PML_BUNDLED_LIB)
 PML_DIR_EXISTS := yes
 PML_AVAILABLE := yes
-PML_FLAGS := -DHAVE_PML -DPML_HAVE_MACHINE_VECTORS=0
+PML_FLAGS := -DHAVE_PML -DHAVE_DRSOLVE_PML_NTT -DPML_HAVE_MACHINE_VECTORS=0
 PML_LIBS := $(PML_BUNDLED_LIB)
 PML_STATIC_LIBS := $(PML_BUNDLED_LIB)
 INCLUDE_FLAGS := $(filter-out -I$(PML_INCLUDE_ROOT) -I$(PML_INCLUDE_PATH),$(INCLUDE_FLAGS))
@@ -1003,11 +1003,11 @@ check-verbose: $(DIXON_TARGET)
 
 .PHONY: test-mq-step4
 test-mq-step4: $(BUILD_DIR)/mq_poly_mat_det_test $(BUILD_DIR)/dixon_mq_step4_test
-	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/mq_poly_mat_det_test
-	OMP_NUM_THREADS=4 ./$(BUILD_DIR)/dixon_mq_step4_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=4 ./$(BUILD_DIR)/mq_poly_mat_det_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=4 ./$(BUILD_DIR)/dixon_mq_step4_test
 
-$(BUILD_DIR)/mq_poly_mat_det_test: $(SRC_DIR)/test/mq/mq_poly_mat_det_test.c $(SRC_DIR)/determinant/mq_poly_mat_det.c $(SRC_DIR)/mq_poly_mat_det.h
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq/mq_poly_mat_det_test.c $(SRC_DIR)/determinant/mq_poly_mat_det.c $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+$(BUILD_DIR)/mq_poly_mat_det_test: $(SRC_DIR)/test/mq/mq_poly_mat_det_test.c $(SRC_DIR)/determinant/mq_poly_mat_det.c $(SRC_DIR)/mq_poly_mat_det.h $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/mq/mq_poly_mat_det_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 $(BUILD_DIR)/dixon_mq_step4_test: $(SRC_DIR)/test/dixon/dixon_mq_step4_test.c $(SRC_DIR)/test/dixon/dixon_mq_filter_test.c $(SRC_DIR)/dixon/dixon_flint.c $(SRC_DIR)/mq_poly_mat_det.h $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $(SRC_DIR)/test/dixon/dixon_mq_step4_test.c -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
@@ -1255,3 +1255,9 @@ test-gf2n-native: $(BUILD_DIR)/gf2n_native_test
 	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=4 ./$(BUILD_DIR)/gf2n_native_test
 
 $(BUILD_DIR)/dixon_schur_repair_test: $(SRC_DIR)/dixon/dixon_schur_seed_native.h $(SRC_DIR)/dixon/dixon_schur_seed_native_template.h
+
+$(BUILD_DIR)/gf2n_roots_test: $(SRC_DIR)/test/solver/gf2n_roots_test.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+.PHONY: test-gf2n-roots
+test-gf2n-roots: $(BUILD_DIR)/gf2n_roots_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=1 ./$(BUILD_DIR)/gf2n_roots_test

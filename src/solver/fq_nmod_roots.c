@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "fq_nmod_roots.h"
+#include "gf2n_native.h"
+#include "gf2n_root_poly.h"
 
 // nmod_roots structure management
 
@@ -82,9 +84,9 @@ void fq_nmod_roots_add(fq_nmod_roots_t roots, const fq_nmod_t root, slong mult, 
 // Utility functions
 
 double get_time_roots() {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return tv.tv_sec + tv.tv_usec / 1000000.0;
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
 // nmod_poly version implementations
@@ -484,6 +486,142 @@ void fq_nmod_split_equal_degree(fq_nmod_roots_t roots, const fq_nmod_poly_t poly
     }
 }
 
+/* In characteristic two, squaring has no cross terms. Keep the Frobenius
+ * iteration and gcd in packed coefficients; convert only for splitting. */
+static void gf2n_root_split_polynomial(fq_nmod_poly_t out,
+                               const fq_nmod_poly_t poly,
+                               const fq_nmod_ctx_t ctx)
+{
+    slong d = fq_nmod_poly_degree(poly, ctx);
+    gf2n_native_ctx *c = gf2n_native_create(ctx);
+    gf2128_t *f = flint_malloc((d + 1) * sizeof(*f));
+    gf2128_t *a = flint_calloc(2 * d, sizeof(*a));
+    gf2128_t inv = gf2n_native_inv(gf2n_native_from_fq(poly->coeffs + d), c);
+    for (slong i = 0; i <= d; ++i)
+        f[i] = gf2n_native_mul_fast(gf2n_native_from_fq(poly->coeffs + i), inv, c);
+    slong size=1;
+    while (size<d) size*=2;
+    /* Reversed monic modulus inverse, reused for every square. */
+    gf2128_t *storage=NULL, *g=NULL, *rev=NULL, *prod=NULL, *work=NULL, *mod=NULL;
+    if (c->n>=16 && d>=128) {
+        storage=flint_calloc(9*size,sizeof(*storage));
+        g=storage; rev=g+size; mod=rev+size; prod=mod+size; work=prod+2*size;
+        g[0].low=1;
+        for (slong k=1; k<d-1; ++k)
+            for (slong j=1; j<=k; ++j) {
+                gf2128_t v=gf2n_native_mul_fast(f[d-j],g[k-j],c);
+                g[k].low ^= v.low; g[k].high ^= v.high;
+            }
+        memcpy(mod,f,d*sizeof(*mod));
+    }
+    a[1].low = 1;
+    slong len = 2;
+    for (unsigned bit = 0; bit < c->n; ++bit) {
+        for (slong i = len; i-- > 0;) {
+            a[2*i] = gf2n_native_sqr(a[i], c);
+            a[2*i+1] = (gf2128_t){0,0};
+        }
+        if (storage && 2*len-2>=d) {
+            for (slong j=0; j<d-1; ++j) rev[j]=a[2*d-2-j];
+            gf2n_root_mul(prod,rev,g,size,work,c);
+            for (slong j=0; j<d-1; ++j) rev[j]=prod[d-2-j];
+            gf2n_root_mul(prod,rev,mod,size,work,c);
+            for (slong j=0; j<d; ++j) {
+                a[j].low ^= prod[j].low;
+                a[j].high ^= prod[j].high;
+            }
+            memset(a+d,0,d*sizeof(*a));
+        } else {
+            for (slong i = 2 * len - 2; i >= d; --i) {
+                gf2128_t lead = a[i];
+                if (!(lead.low | lead.high)) continue;
+                for (slong j = 0; j < d; ++j) {
+                    gf2128_t v = gf2n_native_mul_fast(lead, f[j], c);
+                    a[i-d+j].low ^= v.low;
+                    a[i-d+j].high ^= v.high;
+                }
+                a[i] = (gf2128_t){0,0};
+            }
+        }
+        len = FLINT_MIN(2 * len - 1, d);
+        while (len && !(a[len-1].low | a[len-1].high)) --len;
+        if (!len) break;
+    }
+    /* gcd(f, x^q-x), without expanding packed coefficients into FLINT
+     * objects. Ordinary Euclid is sufficient at this bounded degree. */
+    a[1].low ^= 1;
+    slong lu=d+1, lv=FLINT_MAX(len,2);
+    while (lv && !(a[lv-1].low | a[lv-1].high)) --lv;
+    gf2128_t *u=f, *v=a;
+    while (lv) {
+        inv=gf2n_native_inv(v[lv-1],c);
+        for (slong k=lu-1; k>=lv-1; --k) {
+            if (!(u[k].low | u[k].high)) continue;
+            gf2128_t lead=gf2n_native_mul_fast(u[k],inv,c);
+            for (slong j=0; j<lv-1; ++j) {
+                gf2128_t t=gf2n_native_mul_fast(lead,v[j],c);
+                u[k-lv+1+j].low ^= t.low;
+                u[k-lv+1+j].high ^= t.high;
+            }
+            u[k]=(gf2128_t){0,0};
+        }
+        lu=FLINT_MIN(lu,lv-1);
+        while (lu && !(u[lu-1].low | u[lu-1].high)) --lu;
+        gf2128_t *swap=u; u=v; v=swap;
+        slong size_swap=lu; lu=lv; lv=size_swap;
+    }
+    inv=gf2n_native_inv(u[lu-1],c);
+    fq_nmod_poly_fit_length(out, lu, ctx);
+    for (slong i=0; i<lu; ++i)
+        gf2n_native_to_fq(out->coeffs+i,gf2n_native_mul_fast(u[i],inv,c),ctx);
+    _fq_nmod_poly_set_length(out,lu,ctx);
+    flint_free(storage);
+    flint_free(a);
+    flint_free(f);
+    gf2n_native_destroy(c);
+}
+
+static slong gf2n_poly_roots(fq_nmod_roots_t roots,
+                            const fq_nmod_poly_t poly, int multiplicity,
+                            const fq_nmod_ctx_t ctx)
+{
+    fq_nmod_poly_t h, x, split, remaining;
+    fq_nmod_poly_init(h, ctx);
+    fq_nmod_poly_init(x, ctx);
+    fq_nmod_poly_init(split, ctx);
+    fq_nmod_poly_init(remaining, ctx);
+    fq_nmod_poly_gen(x, ctx);
+    /* Inverse precomputation and Euclid remain quadratic. Retain FLINT
+     * for larger inputs, where its fast division and gcd scale better. */
+    if (fq_nmod_poly_degree(poly, ctx) <= 8192) {
+        gf2n_root_split_polynomial(split, poly, ctx);
+    } else {
+        fmpz_t q;
+        fmpz_init(q);
+        fq_nmod_ctx_order(q, ctx);
+        fq_nmod_poly_powmod_fmpz_binexp(h, x, q, poly, ctx);
+        fmpz_clear(q);
+        fq_nmod_poly_sub(h, h, x, ctx);
+        fq_nmod_poly_gcd(split, poly, h, ctx);
+    }
+    fq_nmod_poly_factor_t factors;
+    fq_nmod_poly_factor_init(factors, ctx);
+    /* FLINT uses trace splitting in characteristic two. */
+    fq_nmod_poly_roots(factors, split, 0, ctx);
+    if (multiplicity) fq_nmod_poly_set(remaining, poly, ctx);
+    for (slong i = 0; i < factors->num; ++i) {
+        fq_nmod_extract_single_root(roots, factors->poly + i, ctx);
+        if (multiplicity)
+            roots->mult[roots->num-1] = fq_nmod_poly_remove(remaining, factors->poly+i, ctx);
+    }
+    fq_nmod_poly_factor_clear(factors, ctx);
+    fq_nmod_poly_clear(remaining, ctx);
+    fq_nmod_poly_clear(split, ctx);
+    fq_nmod_poly_clear(x, ctx);
+    fq_nmod_poly_clear(h, ctx);
+    return roots->num;
+}
+
 slong our_fq_nmod_poly_roots(fq_nmod_roots_t roots, const fq_nmod_poly_t poly, 
                              int with_multiplicity, const fq_nmod_ctx_t ctx) {
     slong deg = fq_nmod_poly_degree(poly, ctx);
@@ -491,8 +629,12 @@ slong our_fq_nmod_poly_roots(fq_nmod_roots_t roots, const fq_nmod_poly_t poly,
     
     if (deg <= 0) return 0;
     
+    if (fq_nmod_ctx_prime(ctx) == 2 && fq_nmod_ctx_degree(ctx) <= 128 &&
+        deg >= 32)
+        return gf2n_poly_roots(roots, poly, with_multiplicity, ctx);
+
     // For small degree polynomials, use FLINT's factorization (it's reliable and fast)
-    if (deg < 1000) {
+    if (deg < 1000 || fq_nmod_ctx_prime(ctx) == 2) {
         fq_nmod_poly_factor_t factors;
         fq_nmod_poly_factor_init(factors, ctx);
         

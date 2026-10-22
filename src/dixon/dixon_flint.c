@@ -45,6 +45,7 @@ resultant_method_t g_resultant_method = RESULTANT_METHOD_DIXON;
 int g_dixon_verbose_level = 1;
 int g_dixon_debug_mode = 0;
 int g_dixon_show_step_timing = 0;
+int g_dixon_show_compression_timing = 0;
 int g_matrix_transpose_threshold = 10000;
 rational_root_scan_mode_t g_rational_root_scan_mode = RATIONAL_ROOT_SCAN_AUTO;
 int g_dixon_fast_use_ksy_precondition = 0;
@@ -272,6 +273,7 @@ void dixon_maybe_print_step_method_time(const char *step_label,
     }
 
     show_parallel_style = dixon_method_uses_parallel_timing(method) ||
+                          strcmp(step_label, "Step 4") == 0 ||
                           (strcmp(step_label, "Step 1") == 0 &&
                            method == DET_METHOD_RECURSIVE);
 
@@ -5436,6 +5438,15 @@ static void dixon_mq_step4_prepare(dixon_mq_step4_profile *out,
 
 #include "dixon_gf2n_schur.h"
 
+static void dixon_print_schur_compression(const char *kind, slong before,
+                                          slong after, double elapsed)
+{
+    dixon_info_log("  Step 4 %s: %ld -> %ld", kind, before, after);
+    if (g_dixon_show_compression_timing)
+        dixon_info_log(", compression %.3fs", elapsed);
+    dixon_info_log("\n");
+}
+
 static int dixon_mq_step4_try(fq_nmod_poly_t det, const fq_nmod_poly_mat_t matrix,
                              const dixon_mq_step4_profile *p, const fq_nmod_ctx_t ctx)
 {
@@ -5454,8 +5465,8 @@ static int dixon_mq_step4_try(fq_nmod_poly_t det, const fq_nmod_poly_mat_t matri
             adaptive = ok;
         }
         if (ok) {
-            dixon_info_log("  Step 4 %sSchur (extension field): %ld -> %ld, compression %.3fs\n",
-                           adaptive ? "adaptive " : "", size, core->r, get_wall_time()-start);
+            dixon_print_schur_compression(adaptive ? "adaptive Schur (extension field)" :
+                "Schur (extension field)", size, core->r, get_wall_time()-start);
             fq_nmod_poly_mat_det_iter(det, core, ctx);
             fq_nmod_poly_scalar_mul_fq_nmod(det, det, factor, ctx);
         } else
@@ -5499,8 +5510,8 @@ static int dixon_mq_step4_try(fq_nmod_poly_t det, const fq_nmod_poly_mat_t matri
                 fq_nmod_poly_set_coeff(fq_nmod_poly_mat_entry(small, i, j), k, coefficient, ctx);
             }
         }
-        dixon_info_log("  Step 4 %sSchur: %ld -> %ld, compression %.3fs\n",
-                       adaptive ? "adaptive " : "", size, core->r, get_wall_time() - start);
+        dixon_print_schur_compression(adaptive ? "adaptive Schur" : "Schur",
+            size, core->r, get_wall_time()-start);
         fq_nmod_poly_mat_det_iter(det, small, ctx);
         if (p->odd) factor = prime - factor;
         fq_nmod_set_ui(coefficient, factor, ctx);
@@ -6710,7 +6721,7 @@ static void dixon_step4_resultant(unified_mpoly_struct *result,
     if (univariate) {
         fq_nmod_poly_t det;
         fq_nmod_poly_init(det,polys[0].ctx);
-        if (g_dixon_mq_step4_schur && !mq_profile->size && !mq_profile->core_ready)
+        if (g_dixon_verbose_level >= 2 && g_dixon_mq_step4_schur && !mq_profile->size && !mq_profile->core_ready)
             dixon_info_log("  Step 4 Schur: no predicted complement profile; checking adaptive fallback\n");
         if (prime_matrix) dixon_mq_native_det(det,prime_matrix,mq_profile,polys[0].ctx);
         else if (!dixon_mq_step4_try(det,poly_matrix,mq_profile,polys[0].ctx))

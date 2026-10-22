@@ -126,8 +126,12 @@ static void check_adaptive(void)
 int main(void)
 {
     check_adaptive();
-    ulong primes[] = {2, 3, 257, 65537};
-    for (slong z = 0; z < 4; z++)
+    ulong primes[] = {2, 3, 257, 65537, 101, 998244353,
+#if FLINT_BITS == 64
+        UWORD(18446744069414584321),
+#endif
+    };
+    for (slong z = 0; z < (slong)(sizeof(primes)/sizeof(*primes)); z++)
     {
         check_degree_blocks(primes[z]);
         ulong p = primes[z], factor = 0;

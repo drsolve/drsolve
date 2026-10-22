@@ -211,6 +211,20 @@ static void check(ulong prime,slong degree,ulong modulus_bits,int force_generic)
     if(force_generic) assert(field.field_id==FIELD_ID_FQ);
     flint_rand_t rng;flint_rand_init(rng);flint_rand_set_seed(rng,12,257);
     check_byte_tails(&field);check_operations(&field,ctx,rng);
+    /* The batched CLMUL path must honor software dispatch overrides too. */
+    if(field.field_id==FIELD_ID_GF232 || field.field_id==FIELD_ID_GF264 ||
+       field.field_id==FIELD_ID_GF2128) {
+        gf232_mul_func m32=gf232_mul;gf264_mul_func m64=gf264_mul;
+        gf2128_mul_func m128=gf2128_mul;
+        gf232_mul=gf232_mul_software;gf264_mul=gf264_mul_software;
+        gf2128_mul=gf2128_mul_software;
+        check_operations(&field,ctx,rng);
+        gf232_mul=m32;gf264_mul=m64;gf2128_mul=m128;
+    } else if(field.field_id==FIELD_ID_GF2N64) {
+        gf2n_native_ctx *native=(gf2n_native_ctx *)field.ctx.fq_ctx;
+        int saved=native->clmul;native->clmul=0;
+        check_operations(&field,ctx,rng);native->clmul=saved;
+    }
     check_kernel(&field,ctx,rng);check_determinants(&field,ctx,rng);
     printf("Unified HNF checked: p=%lu degree=%ld backend=%d\n",prime,degree,field.field_id);
     flint_rand_clear(rng);field_ctx_clear(&field);fq_nmod_ctx_clear(ctx);

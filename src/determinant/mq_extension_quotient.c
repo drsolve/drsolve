@@ -7,6 +7,7 @@
 #include "quotient_extension_interpolation.h"
 #include "dixon_flint.h"
 #include <stdarg.h>
+#include <time.h>
 
 static void quotient_info(const char *fmt, ...)
 {
@@ -62,7 +63,9 @@ static int quotient_compute(unified_mpoly_struct *result,
         dq_coeff *q=dq_vec_new(N*N*N);specialize(q,input,zero);dq_clear(zero);
         /* Shared factorization may use workers; sample teams use serial FLINT. */
         flint_set_num_threads(FLINT_MIN(threads,8));
+        clock_t cpu_start=clock();
         double t=now();int admitted=leading_init(q);stats->leading=now()-t;
+        double cpu_elapsed=(double)(clock()-cpu_start)/CLOCKS_PER_SEC;
         flint_set_num_threads(1);
         stats->reason="leading Macaulay blocks do not have the required ranks";
         if(!admitted){leading_clear();dq_vec_free(q,N*N*N);flint_set_num_threads(saved_threads);goto input_done;}
@@ -76,7 +79,7 @@ static int quotient_compute(unified_mpoly_struct *result,
         if(g_dixon_verbose_level>=2)for(slong d=2;d<=L;d++)
             quotient_info("  Degree %ld leading block: %ld x %ld, rank %ld\n",
                 d,N*frames[d].lower_s,frames[d].sx,frames[d].rank);
-        dixon_maybe_print_step_time("Step 1",stats->leading);
+        dixon_maybe_print_parallel_step_time("Step 1",cpu_elapsed,stats->leading);
         dq_vec_free(q,N*N*N);
         slong points=samples+2;
         dq_coeff *xs=dq_vec_new(points),*ys=dq_vec_new(h*h*points);
@@ -90,7 +93,7 @@ static int quotient_compute(unified_mpoly_struct *result,
         quotient_info("  Reuse the decomposition for normal forms and multiplication maps at each point.\n");
         quotient_info("  Build each reduced Dixon Bezoutian by minor recursion in the two quotient bases.\n");
         quotient_info("  Core: %ld x %ld, evaluation points: %ld; validation points: 2\n",h,h,samples);
-        t=now();
+        cpu_start=clock();t=now();
         #pragma omp parallel for schedule(dynamic) num_threads(threads) if(threads>1)
         for(slong sample=0;sample<points;sample++) {
             dq_mat_t core;dq_mat_init(core,h,h,prime);
@@ -99,10 +102,11 @@ static int quotient_compute(unified_mpoly_struct *result,
             dq_mat_clear(core);
         }
         stats->evaluation=now()-t;
-        dixon_maybe_print_step_time("Step 2",stats->evaluation);
+        cpu_elapsed=(double)(clock()-cpu_start)/CLOCKS_PER_SEC;
+        dixon_maybe_print_parallel_step_time("Step 2",cpu_elapsed,stats->evaluation);
         quotient_info("\nStep 3: Interpolate the Dixon Bezoutian core matrix\n");
         quotient_info("  Interpolate %ld x %ld entries from %ld points; check entry degree bounds.\n",h,h,samples);
-        t=now();
+        cpu_start=clock();t=now();
         fq_nmod_poly_mat_t polynomial;fq_nmod_poly_mat_init(polynomial,h,h,ctx);
         fq_nmod_poly_t det;fq_nmod_poly_init(det,ctx);ok=1;
         fq_nmod_poly_struct *weights=interpolation_weights(xs,samples,ctx);
@@ -122,21 +126,23 @@ static int quotient_compute(unified_mpoly_struct *result,
             if(fq_nmod_poly_degree(entry,ctx)>N+1-wi-wj)ok=0;
         }
         stats->interpolation=now()-t;
-        dixon_maybe_print_step_time("Step 3",stats->interpolation);
+        cpu_elapsed=(double)(clock()-cpu_start)/CLOCKS_PER_SEC;
+        dixon_maybe_print_parallel_step_time("Step 3",cpu_elapsed,stats->interpolation);
         int determinant_attempted=ok;
         if(ok) {
             quotient_info("\nStep 4: Compute Dixon resultant from the core determinant\n");
             quotient_info("  Determinant method: unified extension-field backend\n");
             quotient_info("  Expected resultant degree: %ld\n",1L<<N);
         }
-        t=now();
+        cpu_start=clock();t=now();
         stats->reason="core degree or determinant check failed";
         if(ok)fq_nmod_poly_mat_det_iter(det,polynomial,ctx);
         if(ok)ok=fq_nmod_poly_degree(det,ctx)==(1L<<N);
         stats->determinant=now()-t;
+        cpu_elapsed=(double)(clock()-cpu_start)/CLOCKS_PER_SEC;
         if(ok)quotient_info("  Resultant degree: %ld; normalize to monic.\n",fq_nmod_poly_degree(det,ctx));
         if(determinant_attempted)
-            dixon_maybe_print_step_time("Step 4",stats->determinant);
+            dixon_maybe_print_parallel_step_time("Step 4",cpu_elapsed,stats->determinant);
         if(ok) {
             fq_nmod_poly_make_monic(det,det,ctx);dr_mpoly_init(result,0,1,ctx);
             for(slong i=0;i<fq_nmod_poly_length(det,ctx);i++) {

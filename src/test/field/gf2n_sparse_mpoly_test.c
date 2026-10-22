@@ -83,6 +83,11 @@ static void check_case(slong degree, uint64_t modulus_low, slong nvars,
             fq_nmod_mpoly_randtest_bits(b, random, 17,
                                       trial % 2 ? 5 : bits[trial - 9], fc);
         }
+        /* The array kernel must accept borrowed inputs with different widths. */
+        if(trial==5) assert(fq_nmod_mpoly_repack_bits_inplace(a,32,fc));
+        if(trial==6) assert(fq_nmod_mpoly_repack_bits_inplace(b,64,fc));
+        gf232_mul_func m32=gf232_mul;gf264_mul_func m64=gf264_mul;
+        if(trial==7) { gf232_mul=gf232_mul_software;gf264_mul=gf264_mul_software; }
         fq_nmod_mpoly_mul_johnson(expected, a, b, fc);
         if (!field_id_is_binary_dynamic(native_field.field_id)) switch (degree) {
             case 4: assert(native_field.field_id == FIELD_ID_GF24); CHECK_NATIVE(gf24); break;
@@ -99,6 +104,7 @@ static void check_case(slong degree, uint64_t modulus_low, slong nvars,
         assert(fq_nmod_mpoly_equal(GET_FQ_POLY(w), expected, fc));
         assert(unified_mpoly_mul(u, u, v));
         assert(fq_nmod_mpoly_equal(GET_FQ_POLY(u), expected, fc));
+        gf232_mul=m32;gf264_mul=m64;
     }
     flint_rand_clear(random);
     fq_nmod_mpoly_clear(a, fc); fq_nmod_mpoly_clear(b, fc);

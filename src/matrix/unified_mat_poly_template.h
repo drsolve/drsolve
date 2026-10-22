@@ -96,6 +96,30 @@ static void UM_NAME(mul_window_classical)(unified_mat_poly_t out, const unified_
 #pragma omp parallel for schedule(static) num_threads(workers) if(work>2000000 && a->r>=4 && !omp_in_parallel())
 #endif
     for(slong i=0;i<a->r;i++) {
+#ifdef UM_RAW_ENABLE
+      /* Reduction is linear over GF(2). Accumulate unreduced products in a
+       * private output row, then reduce once per coefficient, not per term. */
+      if(UM_RAW_ENABLE && a->c>1 && len>0) {
+        __m128i *acc=flint_calloc(len*b->c,sizeof(*acc));
+        for(slong u=0;u<a->length;u++) {
+          slong lo=FLINT_MAX(0,start-u),hi=FLINT_MIN(b->length,start+len-u);
+          for(slong v=lo;v<hi;v++) for(slong k=0;k<a->c;k++) {
+            const UM_E *scalar=ad+(u*a->r+i)*a->c+k;
+            if(UM_ISZERO(scalar)) continue;
+            __m128i x=_mm_cvtsi64_si128(UM_RAW_WORD(scalar));
+            const UM_E *row=bd+(v*b->r+k)*b->c;
+            __m128i *dst=acc+(u+v-start)*b->c;
+            for(slong j=0;j<b->c;j++)
+              dst[j]=_mm_xor_si128(dst[j],_mm_clmulepi64_si128(x,
+                  _mm_cvtsi64_si128(UM_RAW_WORD(row+j)),0));
+          }
+        }
+        for(slong d=0;d<len;d++) for(slong j=0;j<b->c;j++)
+          td[(d*a->r+i)*b->c+j]=UM_RAW_REDUCE(acc[d*b->c+j]);
+        flint_free(acc);
+        continue;
+      }
+#endif
       UM_E prod; UM_INIT(&prod);
       for(slong u=0;u<a->length;u++) {
         slong lo=FLINT_MAX(0,start-u), hi=FLINT_MIN(b->length,start+len-u);

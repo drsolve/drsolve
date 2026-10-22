@@ -58,10 +58,9 @@ static void dixon_mq_native_det(fq_nmod_poly_t out, nmod_poly_mat_t matrix,
             }
             if (valid) interpolation_bound = bound;
             nmod_poly_mat_swap(matrix,core);
-            dixon_info_log("  Step 4 Schur: %ld -> %ld, compression %.3fs\n",
-                           n,p->h,get_wall_time()-start);
+            dixon_print_schur_compression("Schur",n,p->h,get_wall_time()-start);
         } else {
-            dixon_info_log("  Step 4 Schur: complement singular or degree check failed; using native determinant backend\n");
+            if (g_dixon_verbose_level >= 2) dixon_info_log("  Step 4 Schur: complement singular or degree check failed; using native determinant backend\n");
         }
         nmod_poly_mat_clear(core);
         if(p->odd) factor=prime-factor;
@@ -76,8 +75,7 @@ static void dixon_mq_native_det(fq_nmod_poly_t out, nmod_poly_mat_t matrix,
         if(nmod_poly_mat_mq_schur_adaptive(core,&scale,matrix,rd,cd,sigma)) {
             nmod_t mod;nmod_init(&mod,prime);factor=nmod_mul(factor,scale,mod);
             nmod_poly_mat_swap(matrix,core);
-            dixon_info_log("  Step 4 adaptive Schur: %ld -> %ld, compression %.3fs\n",
-                           before,matrix->r,get_wall_time()-start);
+            dixon_print_schur_compression("adaptive Schur",before,matrix->r,get_wall_time()-start);
         } else dixon_info_log("  Step 4 adaptive Schur: no certified partial complement (%.3fs)\n",
                              get_wall_time()-start);
         nmod_poly_mat_clear(core);

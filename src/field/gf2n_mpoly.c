@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+#include "gf2n_inline.h"
 /* gf2n_mpoly.c - Unified GF(2^n) Multivariate Polynomial Implementation
  * Up to ~9+ variables with 8-bit exponent packing under LEX ordering
  */
@@ -91,28 +92,18 @@ _mpoly_main_variable_split_LEX_N(
     slong nvars = minfo->nvars;
     ulong *expv = (ulong *)flint_malloc(nvars * sizeof(ulong));
 
+    for (slong k = 0; k <= Alength; k++) Amain[k] = Atotal;
+    slong cur_k = 0;
     for (slong i = 0; i < Atotal; i++) {
         mpoly_get_monomial_ui(expv, Aexp + N * i, Abits, minfo);
         ulong flat = 0, stride = 1;
         for (slong j = 0; j < num; j++) {
-            flat   += expv[nvars - 1 - j] * stride;
+            flat += expv[nvars - 1 - j] * stride;
             stride *= mults[j];
         }
         Apexp[i] = flat;
-    }
-
-    for (slong k = 0; k <= Alength; k++)
-        Amain[k] = Atotal;
-    
-    slong cur_k = 0;
-    for (slong i = 0; i < Atotal; i++) {
-        mpoly_get_monomial_ui(expv, Aexp + N * i, Abits, minfo);
-        slong main_val = (slong)expv[0]; 
-        slong group_k  = Alength - 1 - main_val;
-        while (cur_k <= group_k) {
-            Amain[cur_k] = i;
-            cur_k++;
-        }
+        slong group_k = Alength - 1 - (slong)expv[0];
+        while (cur_k <= group_k) Amain[cur_k++] = i;
     }
 
     flint_free(expv);
@@ -122,10 +113,50 @@ _mpoly_main_variable_split_LEX_N(
    MACRO TEMPLATE: CORE ARRAY MULTIPLICATION (supports N = 1 and N = 2)
    ============================================================================ */
 
-#define DEFINE_MPOLY_ARRAY_MUL(FIELD, COEFF_T, IS_ZERO, ADD_OP, MUL_OP, ARRAY_LIMIT) \
+/* Delay linear reduction until a complete main-variable slice has been
+ * accumulated. Software overrides accumulate already reduced coefficients. */
+static inline uint64_t gf232_array_product(gf232_t a, gf232_t b)
+{
+#if defined(__PCLMUL__)
+    if(gf232_mul==gf232_mul_pclmul)
+        return (uint64_t)_mm_cvtsi128_si64(_mm_clmulepi64_si128(
+            _mm_cvtsi64_si128(a.value),_mm_cvtsi64_si128(b.value),0));
+#endif
+    return gf232_mul(&a,&b).value;
+}
+static inline gf232_t gf232_array_reduce(uint64_t a)
+{
+#if defined(__PCLMUL__)
+    if(gf232_mul==gf232_mul_pclmul) return gf232_reduce_hw(_mm_cvtsi64_si128(a));
+#endif
+    return (gf232_t){(uint32_t)a};
+}
+static inline gf2128_t gf264_array_product(gf264_t a, gf264_t b)
+{
+#if defined(__PCLMUL__)
+    if(gf264_mul==gf264_mul_pclmul) {
+        __m128i p=_mm_clmulepi64_si128(_mm_cvtsi64_si128(a.value),_mm_cvtsi64_si128(b.value),0);
+        return (gf2128_t){(uint64_t)_mm_cvtsi128_si64(p),
+                          (uint64_t)_mm_cvtsi128_si64(_mm_srli_si128(p,8))};
+    }
+#endif
+    return (gf2128_t){gf264_mul(&a,&b).value,0};
+}
+static inline gf264_t gf264_array_reduce(gf2128_t a)
+{
+#if defined(__PCLMUL__)
+    if(gf264_mul==gf264_mul_pclmul) return gf264_reduce_hw(_mm_set_epi64x(a.high,a.low));
+#endif
+    return (gf264_t){a.low};
+}
+#define GF2N_ACC_IDENTITY(x) (x)
+#define GF2N_ACC_XOR(a,b) ((a)^(b))
+#define GF2N_ACC_XOR128(a,b) ((gf2128_t){(a).low^(b).low,(a).high^(b).high})
+
+#define DEFINE_MPOLY_ARRAY_MUL(FIELD, COEFF_T, IS_ZERO, ARRAY_LIMIT, ACC_T, ACC_ADD, ACC_MUL, REDUCE_OP) \
 \
 static void _##FIELD##_mpoly_addmul_array1_safe(                               \
-    COEFF_T *poly1, slong array_size,                                          \
+    ACC_T *poly1, slong array_size,                                          \
     const COEFF_T *poly2, const ulong *exp2, slong len2,                       \
     const COEFF_T *poly3, const ulong *exp3, slong len3)                       \
 {                                                                              \
@@ -134,13 +165,13 @@ static void _##FIELD##_mpoly_addmul_array1_safe(                               \
             for (slong i = ii; i < FLINT_MIN(ii + BLOCK, len2); i++) {        \
                 slong off2 = (slong)exp2[i];                                   \
                 if (off2 >= array_size) continue;                              \
-                COEFF_T *c2 = poly1 + off2;                                    \
+                ACC_T *c2 = poly1 + off2;                                    \
                 if (!(IS_ZERO(poly2[i]))) {                                    \
                     for (slong j = jj; j < FLINT_MIN(jj + BLOCK, len3); j++) {\
                         slong off3 = (slong)exp3[j];                           \
                         if (off2 + off3 >= array_size) continue;               \
-                        COEFF_T prod = MUL_OP(poly2[i], poly3[j]);             \
-                        c2[off3] = ADD_OP(c2[off3], prod);                     \
+                        ACC_T prod = ACC_MUL(poly2[i], poly3[j]);             \
+                        c2[off3] = ACC_ADD(c2[off3], prod);                     \
                     }                                                          \
                 }                                                              \
             }                                                                  \
@@ -148,30 +179,8 @@ static void _##FIELD##_mpoly_addmul_array1_safe(                               \
     }                                                                          \
 }                                                                              \
 \
-static void _##FIELD##_mpoly_repack_exps(                                      \
-    FIELD##_mpoly_t poly, flint_bitcnt_t new_bits,                             \
-    const FIELD##_mpoly_ctx_t ctx)                                             \
-{                                                                              \
-    if (poly->bits == new_bits) return;                                        \
-    if (poly->length == 0) { poly->bits = new_bits; return; }                 \
-    slong nvars = ctx->minfo->nvars;                                           \
-    slong N_old = mpoly_words_per_exp(poly->bits, ctx->minfo);                \
-    slong N_new = mpoly_words_per_exp(new_bits,   ctx->minfo);                \
-    ulong *ne   = (ulong *)flint_malloc(N_new * poly->length * sizeof(ulong));\
-    ulong *expv = (ulong *)flint_malloc(nvars * sizeof(ulong));                \
-    for (slong ii = 0; ii < poly->length; ii++) {                              \
-        mpoly_get_monomial_ui(expv, poly->exps + N_old*ii, poly->bits, ctx->minfo); \
-        mpoly_set_monomial_ui(ne   + N_new*ii, expv, new_bits, ctx->minfo);   \
-    }                                                                          \
-    flint_free(expv);                                                          \
-    flint_free(poly->exps);                                                    \
-    poly->exps       = ne;                                                     \
-    poly->exps_alloc = N_new * poly->length;                                   \
-    poly->bits       = new_bits;                                               \
-}                                                                              \
-\
 static slong FIELD##_mpoly_append_array_LEX_safe(                             \
-    FIELD##_mpoly_t P, slong Plen, COEFF_T *coeff_array,                      \
+    FIELD##_mpoly_t P, slong Plen, ACC_T *coeff_array,                      \
     const ulong *mults, slong num, slong array_size,                          \
     slong top, const FIELD##_mpoly_ctx_t ctx)                                 \
 {                                                                              \
@@ -180,8 +189,8 @@ static slong FIELD##_mpoly_append_array_LEX_safe(                             \
     ulong *expv = (ulong *)flint_malloc(nvars * sizeof(ulong));                \
     ulong *pe   = (ulong *)flint_malloc(N     * sizeof(ulong));                \
     for (slong off = array_size - 1; off >= 0; off--) {                       \
-        if (IS_ZERO(coeff_array[off])) continue;                              \
-        COEFF_T coeff    = coeff_array[off];                                   \
+        COEFF_T coeff = REDUCE_OP(coeff_array[off]);                              \
+        if (IS_ZERO(coeff)) continue;                                   \
         slong d = off;                                                         \
         for (slong j = 0; j < num; j++) {                                     \
             expv[nvars - 1 - j] = (ulong)(d % mults[j]);                      \
@@ -233,10 +242,9 @@ static void _##FIELD##_mpoly_mul_array_chunked_LEX(                           \
     _mpoly_main_variable_split_LEX_N(Bmain, Bpexp, B->exps, Bl,              \
         B->length, mults, num, B->bits, NB, ctx->minfo);                       \
     slong Pl = Al + Bl - 1, Plen = 0;                                         \
-    COEFF_T *coeff_array = (COEFF_T *)calloc(array_size, sizeof(COEFF_T));    \
-    if (!coeff_array) goto done;                                               \
+    ACC_T *coeff_array = (ACC_T *)flint_calloc(array_size, sizeof(ACC_T));    \
     for (slong Pi = 0; Pi < Pl; Pi++) {                                       \
-        memset(coeff_array, 0, array_size * sizeof(COEFF_T));                 \
+        memset(coeff_array, 0, array_size * sizeof(ACC_T));                 \
         for (slong i = 0, j = Pi; i < Al && j >= 0; i++, j--) {              \
             if (j < Bl)                                                        \
                 _##FIELD##_mpoly_addmul_array1_safe(coeff_array, array_size,  \
@@ -249,8 +257,7 @@ static void _##FIELD##_mpoly_mul_array_chunked_LEX(                           \
             mults, num, array_size, Pl - Pi - 1, ctx);                        \
     }                                                                          \
     P->length = Plen;                                                          \
-    free(coeff_array);                                                         \
-done:                                                                          \
+    flint_free(coeff_array);                                                         \
     flint_free(Amain); flint_free(Bmain);                                      \
     flint_free(Apexp); flint_free(Bpexp);                                      \
 }                                                                              \
@@ -286,26 +293,17 @@ static int _##FIELD##_mpoly_mul_array_LEX(                                    \
     exp_bits = mpoly_fix_bits(exp_bits, ctx->minfo);                          \
     if (mpoly_words_per_exp(exp_bits, ctx->minfo) > 2)                        \
         { flint_free(mults); return 0; }                                       \
-    FIELD##_mpoly_t Btmp, Ctmp;                                                \
-    FIELD##_mpoly_init(Btmp, ctx);                                             \
-    FIELD##_mpoly_init(Ctmp, ctx);                                             \
-    FIELD##_mpoly_set(Btmp, B, ctx);                                           \
-    FIELD##_mpoly_set(Ctmp, C, ctx);                                           \
-    _##FIELD##_mpoly_repack_exps(Btmp, exp_bits, ctx);                        \
-    _##FIELD##_mpoly_repack_exps(Ctmp, exp_bits, ctx);                        \
     if (A == B || A == C) {                                                    \
         FIELD##_mpoly_t T;                                                     \
         FIELD##_mpoly_init(T, ctx);                                            \
         T->bits = exp_bits;                                                    \
-        _##FIELD##_mpoly_mul_array_chunked_LEX(T, Ctmp, Btmp, mults, ctx);    \
+        _##FIELD##_mpoly_mul_array_chunked_LEX(T, C, B, mults, ctx);    \
         FIELD##_mpoly_struct tmp = *T; *T = *A; *A = tmp;                     \
         FIELD##_mpoly_clear(T, ctx);                                           \
     } else {                                                                   \
         A->bits = exp_bits;                                                    \
-        _##FIELD##_mpoly_mul_array_chunked_LEX(A, Ctmp, Btmp, mults, ctx);    \
+        _##FIELD##_mpoly_mul_array_chunked_LEX(A, C, B, mults, ctx);    \
     }                                                                          \
-    FIELD##_mpoly_clear(Btmp, ctx);                                            \
-    FIELD##_mpoly_clear(Ctmp, ctx);                                            \
     flint_free(mults);                                                         \
     return 1;                                                                  \
 }
@@ -321,22 +319,22 @@ static int _##FIELD##_mpoly_mul_array_LEX(                                    \
 #define GF216_IS_ZERO(x)  ((x) == 0)
 #define GF216_ADD(a, b)   ((a) ^ (b))
 #define GF216_MUL(a, b)   (gf216_mul((a), (b)))
-DEFINE_MPOLY_ARRAY_MUL(gf216, uint16_t, GF216_IS_ZERO, GF216_ADD, GF216_MUL, (1L << 27))
+DEFINE_MPOLY_ARRAY_MUL(gf216, uint16_t, GF216_IS_ZERO, (1L << 27), uint16_t, GF216_ADD, GF216_MUL, GF2N_ACC_IDENTITY)
 
 #define GF232_IS_ZERO(x)  (gf232_is_zero(&(x)))
 #define GF232_ADD(a, b)   (gf232_add(&(a), &(b)))
-#define GF232_MUL(a, b)   (gf232_mul(&(a), &(b)))
-DEFINE_MPOLY_ARRAY_MUL(gf232, gf232_t, GF232_IS_ZERO, GF232_ADD, GF232_MUL, (1L << 27))
+#define GF232_MUL(a, b)   (gf232_mul_inline(&(a), &(b)))
+DEFINE_MPOLY_ARRAY_MUL(gf232, gf232_t, GF232_IS_ZERO, (1L << 27), uint64_t, GF2N_ACC_XOR, gf232_array_product, gf232_array_reduce)
 
 #define GF264_IS_ZERO(x)  (gf264_is_zero(&(x)))
 #define GF264_ADD(a, b)   (gf264_add(&(a), &(b)))
-#define GF264_MUL(a, b)   (gf264_mul(&(a), &(b)))
-DEFINE_MPOLY_ARRAY_MUL(gf264, gf264_t, GF264_IS_ZERO, GF264_ADD, GF264_MUL, (1L << 26))
+#define GF264_MUL(a, b)   (gf264_mul_inline(&(a), &(b)))
+DEFINE_MPOLY_ARRAY_MUL(gf264, gf264_t, GF264_IS_ZERO, (1L << 26), gf2128_t, GF2N_ACC_XOR128, gf264_array_product, gf264_array_reduce)
 
 #define GF2128_IS_ZERO(x) (gf2128_is_zero(&(x)))
 #define GF2128_ADD(a, b)  (gf2128_add(&(a), &(b)))
-#define GF2128_MUL(a, b)  (gf2128_mul(&(a), &(b)))
-DEFINE_MPOLY_ARRAY_MUL(gf2128, gf2128_t, GF2128_IS_ZERO, GF2128_ADD, GF2128_MUL, (1L << 26))
+#define GF2128_MUL(a, b)  (gf2128_mul_inline(&(a), &(b)))
+DEFINE_MPOLY_ARRAY_MUL(gf2128, gf2128_t, GF2128_IS_ZERO, (1L << 26), gf2128_t, GF2128_ADD, GF2128_MUL, GF2N_ACC_IDENTITY)
 
 /* ============================================================================
    DIVISION IMPLEMENTATION

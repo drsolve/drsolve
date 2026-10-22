@@ -28,31 +28,21 @@ static int gf2n_native_mpoly_mul(fq_nmod_mpoly_t res,
             else xc[i].high|=UINT64_C(1)<<(j-64);
         }
     }
-    ulong *keys=flint_malloc(N*x->length*sizeof(ulong));
     ulong *mask=flint_malloc(N*sizeof(ulong)),*exp=flint_malloc(N*sizeof(ulong));
     mpoly_get_cmpmask(mask,N,bits,ctx->minfo);
-    gf2n_product_heap_entry *heap=flint_malloc(x->length*sizeof(*heap));
-    slong len=x->length;
-    for(slong i=0;i<len;i++) {
-        heap[i]=(gf2n_product_heap_entry){i,0,keys+N*i};
-        gf2n_monomial_add(heap[i].exp,xe+N*i,ye,N,bits);
-    }
-    for(slong i=len/2;i-- > 0;) gf2n_heap_sift_down(heap,len,i,N,mask);
+    gf2n_product_iterator iterator;
+    gf2n_product_iterator_init(&iterator,xe,x->length,ye,y->length,N,bits,mask);
     fq_nmod_mpoly_t out; fq_nmod_mpoly_init(out,ctx);
     fq_nmod_mpoly_fit_length_reset_bits(out,16,bits,ctx);
-    while(len) {
-        memcpy(exp,heap[0].exp,N*sizeof(ulong));
+    while(gf2n_product_iterator_active(&iterator)) {
+        memcpy(exp,gf2n_product_iterator_key(&iterator),N*sizeof(ulong));
         gf2128_t coeff={0,0};
         do {
-            slong i=heap[0].row,j=heap[0].col;
-            gf2128_t p=gf2n_native_mul(xc[i],yc[j],field);
+            slong i,j;gf2n_product_iterator_pop(&iterator,&i,&j);
+            gf2128_t p=gf2n_native_mul_fast(xc[i],yc[j],field);
             coeff.low^=p.low; coeff.high^=p.high;
-            if(++j<y->length) {
-                heap[0].col=j;
-                gf2n_monomial_add(heap[0].exp,xe+N*i,ye+N*j,N,bits);
-            } else heap[0]=heap[--len];
-            if(len) gf2n_heap_sift_down(heap,len,0,N,mask);
-        } while(len && mpoly_monomial_equal(exp,heap[0].exp,N));
+        } while(gf2n_product_iterator_active(&iterator) &&
+                mpoly_monomial_equal(exp,gf2n_product_iterator_key(&iterator),N));
         if(coeff.low|coeff.high) {
             slong k=out->length;
             fq_nmod_mpoly_fit_length(out,k+1,ctx);
@@ -63,7 +53,7 @@ static int gf2n_native_mpoly_mul(fq_nmod_mpoly_t res,
         }
     }
     fq_nmod_mpoly_swap(res,out,ctx); fq_nmod_mpoly_clear(out,ctx);
-    flint_free(heap); flint_free(exp); flint_free(mask); flint_free(keys);
+    gf2n_product_iterator_clear(&iterator); flint_free(exp); flint_free(mask);
     flint_free(xc); flint_free(xe); flint_free(ye);
     return 1;
 }

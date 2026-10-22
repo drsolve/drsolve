@@ -2,7 +2,11 @@
 #include "mq_poly_mat_det.h"
 #include <flint/nmod.h>
 #include <string.h>
+#include <stdlib.h>
 #include <flint/nmod_mat.h>
+#ifdef HAVE_DRSOLVE_PML_NTT
+#include "nmod_poly_mat_multiply.h"
+#endif
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -11,6 +15,18 @@
  * region for every scalar pivot. All views have one writer. */
 static void mq_block_mul(nmod_poly_mat_t C, const nmod_poly_mat_t A, const nmod_poly_mat_t B)
 {
+#ifdef HAVE_DRSOLVE_PML_NTT
+    /* Transform the shared right operand once, rather than separately for
+     * every row panel. The NTT backend parallelizes its independent points
+     * and rejects unsupported primes/workspaces without changing C. */
+    const char *mode=getenv("DRSOLVE_PML_MUL");
+    if((!mode || (strcmp(mode,"legacy") && strcmp(mode,"flint"))) &&
+       FLINT_MIN(A->r,FLINT_MIN(A->c,B->c))>=2) {
+        slong a=nmod_poly_mat_max_length(A),b=nmod_poly_mat_max_length(B);
+        if(a && b && a<=WORD_MAX-b &&
+           drsolve_nmod_poly_mat_mul_window_ntt(C,A,B,0,a+b-1)) return;
+    }
+#endif
     slong panels = 1;
 #ifdef _OPENMP
     if (!omp_in_parallel())

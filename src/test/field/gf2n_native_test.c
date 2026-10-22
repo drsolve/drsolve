@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "fq_unified_interface.h"
 #include <assert.h>
+#include <flint/nmod_poly_factor.h>
 #include <omp.h>
 
 static void check(const fq_nmod_ctx_t fq, flint_rand_t rng)
@@ -21,6 +22,8 @@ static void check(const fq_nmod_ctx_t fq, flint_rand_t rng)
         for(int software=0;software<2;software++) {
             c->clmul=software ? 0 : has_pclmulqdq();
             gf2n_native_to_fq(out,gf2n_native_mul(x,y,c),fq);
+            assert(fq_nmod_equal(out,ref,fq));
+            gf2n_native_to_fq(out,gf2n_native_mul_fast(x,y,c),fq);
             assert(fq_nmod_equal(out,ref,fq));
         }
         field_mul(&w,&u,&v,f.field_id,ar); field_elem_to_fq_nmod(out,&w,&f);
@@ -81,6 +84,20 @@ int main(void)
             }
         }
         fq_nmod_ctx_clear(fq); nmod_poly_clear(p);
+    }
+    /* Exercise the two-fold 128-bit reduction with dense lower halves,
+     * including bit 63, rather than only the usual sparse 0x87 modulus. */
+    for (int trial=0; trial<3; ++trial) {
+        nmod_poly_t modulus; nmod_poly_init(modulus,2);
+        do {
+            nmod_poly_randtest(modulus,rng,64);
+            nmod_poly_set_coeff_ui(modulus,0,1);
+            nmod_poly_set_coeff_ui(modulus,63,1);
+            nmod_poly_set_coeff_ui(modulus,128,1);
+        } while (!nmod_poly_is_irreducible(modulus));
+        fq_nmod_ctx_t fq; fq_nmod_ctx_init_modulus(fq,modulus,"t");
+        check(fq,rng);
+        fq_nmod_ctx_clear(fq); nmod_poly_clear(modulus);
     }
     /* Keep two distinct representations of the same degree live together.
      * Matching moduli share immutable tables; distinct moduli never do. */

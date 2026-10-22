@@ -992,7 +992,13 @@ void find_and_print_roots_of_univariate_resultant_with_file(const unified_mpoly_
         
         nmod_roots_t nmod_roots;
         nmod_roots_init(nmod_roots);
+        clock_t roots_cpu = clock();
+        double roots_wall = get_time_roots();
         slong num_roots = our_nmod_poly_roots(nmod_roots, nmod_poly, 1);
+        if (print_to_stdout)
+            dixon_maybe_print_parallel_step_time("Root finding",
+                (double)(clock() - roots_cpu) / CLOCKS_PER_SEC,
+                get_time_roots() - roots_wall);
 
         root_report_appendf(&root_report, &root_report_len, &root_report_cap,
                             "\nRoots in %s (degree %ld):\n", var_name, degree);
@@ -1030,7 +1036,13 @@ void find_and_print_roots_of_univariate_resultant_with_file(const unified_mpoly_
         fq_nmod_roots_t roots;
         char *gen_name = get_generator_name(result->ctx);
         fq_nmod_roots_init(roots, result->ctx);
+        clock_t roots_cpu = clock();
+        double roots_wall = get_time_roots();
         slong num_roots = our_fq_nmod_poly_roots(roots, poly, 1, result->ctx);
+        if (print_to_stdout)
+            dixon_maybe_print_parallel_step_time("Root finding",
+                (double)(clock() - roots_cpu) / CLOCKS_PER_SEC,
+                get_time_roots() - roots_wall);
 
         root_report_appendf(&root_report, &root_report_len, &root_report_cap,
                             "\nRoots in %s (degree %ld):\n", var_name, degree);
@@ -2776,6 +2788,8 @@ static void find_and_print_rational_roots_of_univariate_resultant(const qq_poly_
     qq_root_debug_log("[root-debug] Rational univariate polynomial in %s built: degree=%ld, coefficient reconstruction %.3f s.\n",
                       var_name, degree, coeff_recon_seconds);
 
+    clock_t roots_cpu = clock();
+    double roots_wall = get_time_roots();
     printf("\nRoots in %s (degree %ld):\n", var_name, degree);
 
     if (g_dixon_approximate_root_mode) {
@@ -2786,6 +2800,9 @@ static void find_and_print_rational_roots_of_univariate_resultant(const qq_poly_
                                       g_dixon_approximate_root_precision,
                                       g_dixon_print_complex_roots,
                                       fp_file, 1);
+        dixon_maybe_print_parallel_step_time("Root finding",
+            (double)(clock() - roots_cpu) / CLOCKS_PER_SEC,
+            get_time_roots() - roots_wall);
         fmpq_poly_clear(rat_poly);
         free(par_used);
         return;
@@ -2895,6 +2912,9 @@ static void find_and_print_rational_roots_of_univariate_resultant(const qq_poly_
         fmpq_acb_roots_clear(&all_roots);
     }
 
+    dixon_maybe_print_parallel_step_time("Root finding",
+        (double)(clock() - roots_cpu) / CLOCKS_PER_SEC,
+        get_time_roots() - roots_wall);
     fmpq_poly_clear(rat_poly);
     free(par_used);
 }

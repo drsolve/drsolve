@@ -134,7 +134,7 @@ static int SCHUR_SEED_NAME(unified_mpoly_struct ***matrix,
         if(ok && best) {
             *out_rows=best_rows;*out_cols=best_cols;*out_size=best;
             best_rows=best_cols=NULL;
-            dixon_info_log("  Schur-first selection: seed=%ld, selected=%ld, retained<=%ld; seed %.3fs, completion %.3fs\n",
+            if (g_dixon_verbose_level >= 2) dixon_info_log("  Schur-first selection: seed=%ld, selected=%ld, retained<=%ld; seed %.3fs, completion %.3fs\n",
                 count,best,best-count,seed_time,get_wall_time()-start-seed_time);
         }
     }

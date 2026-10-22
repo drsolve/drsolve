@@ -63,36 +63,26 @@ static int minor_dynamic_mul(gf2128_mpoly_t out, const gf2128_mpoly_t a,
     int ok=mpoly_repack_monomials(xe,bits,x->exps,x->bits,x->length,ctx->minfo) &&
            mpoly_repack_monomials(ye,bits,y->exps,y->bits,y->length,ctx->minfo);
     if(!ok) {flint_free(xe); flint_free(ye); return 0;}
-    ulong *keys=flint_malloc(N*x->length*sizeof(ulong));
     ulong *mask=flint_malloc(N*sizeof(ulong)),*exp=flint_malloc(N*sizeof(ulong));
     mpoly_get_cmpmask(mask,N,bits,ctx->minfo);
-    gf2n_product_heap_entry *heap=flint_malloc(x->length*sizeof(*heap));
-    slong len=x->length;
-    for(slong i=0;i<len;i++) {
-        heap[i]=(gf2n_product_heap_entry){i,0,keys+N*i};
-        gf2n_monomial_add(heap[i].exp,xe+N*i,ye,N,bits);
-    }
-    for(slong i=len/2;i-- >0;) gf2n_heap_sift_down(heap,len,i,N,mask);
-    while(len) {
-        memcpy(exp,heap[0].exp,N*sizeof(ulong));
+    gf2n_product_iterator iterator;
+    gf2n_product_iterator_init(&iterator,xe,x->length,ye,y->length,N,bits,mask);
+    while(gf2n_product_iterator_active(&iterator)) {
+        memcpy(exp,gf2n_product_iterator_key(&iterator),N*sizeof(ulong));
         gf2128_t c={0,0};
         do {
-            slong i=heap[0].row,j=heap[0].col;
-            gf2128_t p=gf2n_native_mul(x->coeffs[i],y->coeffs[j],field);
+            slong i,j;gf2n_product_iterator_pop(&iterator,&i,&j);
+            gf2128_t p=gf2n_native_mul_fast(x->coeffs[i],y->coeffs[j],field);
             c.low^=p.low; c.high^=p.high;
-            if(++j<y->length) {
-                heap[0].col=j;
-                gf2n_monomial_add(heap[0].exp,xe+N*i,ye+N*j,N,bits);
-            } else heap[0]=heap[--len];
-            if(len) gf2n_heap_sift_down(heap,len,0,N,mask);
-        } while(len && mpoly_monomial_equal(exp,heap[0].exp,N));
+        } while(gf2n_product_iterator_active(&iterator) &&
+                mpoly_monomial_equal(exp,gf2n_product_iterator_key(&iterator),N));
         if(c.low|c.high) {
             minor_dynamic_fit(out,out->length+1,bits,ctx);
             out->coeffs[out->length]=c;
             memcpy(out->exps+N*out->length++,exp,N*sizeof(ulong));
         }
     }
-    flint_free(heap); flint_free(mask); flint_free(exp); flint_free(keys);
+    gf2n_product_iterator_clear(&iterator); flint_free(mask); flint_free(exp);
     flint_free(xe); flint_free(ye); return 1;
 }
 #define DP_NAME(x) minor_dynamic_##x

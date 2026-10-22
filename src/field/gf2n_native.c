@@ -87,6 +87,9 @@ static gf2128_t reduce(uint64_t p[4],const gf2n_native_ctx *c)
 gf2128_t gf2n_native_mul(gf2128_t a,gf2128_t b,const gf2n_native_ctx *c)
 {
     if(c->n<=16) return (gf2128_t){gf2n_native_mul_word(a.low,b.low,c),0};
+#if defined(__PCLMUL__)
+    if(c->clmul && c->n<=64) return (gf2128_t){gf2n_native_mul_word_hw(a.low,b.low,c),0};
+#endif
     uint64_t p[4]; product(p,a,b,c); return reduce(p,c);
 }
 gf2128_t gf2n_native_sqr(gf2128_t a,const gf2n_native_ctx *c)
@@ -158,6 +161,15 @@ gf2n_native_ctx *gf2n_native_create(const fq_nmod_ctx_t fq)
             pthread_mutex_unlock(&precomputed_lock);
             return c;
         }
+    if(n>16 && n<=64) {
+        nmod_poly_t power,q;
+        nmod_poly_init(power,2); nmod_poly_init(q,2);
+        nmod_poly_set_coeff_ui(power,2*n,1);
+        nmod_poly_div(q,power,f);
+        for(unsigned i=0;i<n;i++)
+            c->reciprocal|=(uint64_t)nmod_poly_get_coeff_ui(q,i)<<i;
+        nmod_poly_clear(q); nmod_poly_clear(power);
+    }
     if(n<=16) {
         unsigned q=1U<<n,order=q-1;
         c->log=flint_calloc(q,sizeof(uint16_t));

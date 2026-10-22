@@ -30,10 +30,11 @@ with tempfile.TemporaryDirectory(prefix='extension-schur-') as work:
             run = subprocess.run(command, env=env, capture_output=True, text=True, timeout=180)
             log = run.stdout + run.stderr
             assert run.returncode == 0, log
-            assert ('Schur-first selection:' in log) == (enabled and not no_seed), (command, log)
+            assert 'Schur-first selection:' not in log, (command, log)
             results.append(output.read_text().split('Resultant:\n', 1)[1].splitlines()[0])
             if enabled:
-                assert 'compression ' in log, (command, log)
+                assert 'Schur' in log and ' -> ' in log, (command, log)
+                assert 'compression ' not in log, (command, log)
                 if field != '257':
                     assert 'Schur (extension field)' in log, log
             else:

@@ -464,6 +464,7 @@ if(DRSOLVE_ENABLE_PML)
     # PML compile definitions - avoid conflicting with FLINT's macros
     target_compile_definitions(pml PUBLIC
       HAVE_PML
+      HAVE_DRSOLVE_PML_NTT
       PACKAGE_NAME="PML"
       PACKAGE_VERSION="0.0.5-dev"
       PACKAGE_STRING="PML 0.0.5-dev"
@@ -603,6 +604,7 @@ list(APPEND _drsolve_deps ${_sys_libs})
 # Included implementation fragments; shared by all math targets and kept
 # visible to CMake/IDE source lists without compiling them independently.
 set(MATH_INTERNAL_HEADERS
+  src/gf2n_inline.h
   src/determinant/gf2n_minor_dp.h
   src/determinant/gf2n_minor_dp_template.h
   src/determinant/gf2n_minor_dynamic.h
@@ -1037,6 +1039,9 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME drsolve_extension_quotient_api COMMAND extension_quotient_api_test)
   if(Python3_Interpreter_FOUND)
+    add_test(NAME drsolve_root_timing_cli
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/root_timing_cli_test.py
+              $<TARGET_FILE:drsolve_exe>)
     add_test(NAME drsolve_extension_schur_cli
       COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/extension_schur_cli_test.py
               $<TARGET_FILE:drsolve_exe>)
@@ -1104,6 +1109,18 @@ if(BUILD_TESTING)
     target_sources(gf2n_native_test PRIVATE ${MATH_SOURCES})
   endif()
   add_test(NAME drsolve_gf2n_native COMMAND gf2n_native_test)
+
+  add_executable(gf2n_roots_test src/test/solver/gf2n_roots_test.c)
+  drsolve_target_common(gf2n_roots_test)
+  target_compile_options(gf2n_roots_test PRIVATE -UNDEBUG)
+  if(TARGET drsolve_static)
+    target_link_libraries(gf2n_roots_test PRIVATE drsolve_static)
+  elseif(TARGET drsolve_shared)
+    target_link_libraries(gf2n_roots_test PRIVATE drsolve_shared)
+  else()
+    target_sources(gf2n_roots_test PRIVATE ${MATH_SOURCES})
+  endif()
+  add_test(NAME drsolve_gf2n_roots COMMAND gf2n_roots_test)
   add_executable(unified_hnf_test src/test/matrix/unified_hnf_test.c)
   drsolve_target_common(unified_hnf_test)
   target_compile_options(unified_hnf_test PRIVATE -UNDEBUG)

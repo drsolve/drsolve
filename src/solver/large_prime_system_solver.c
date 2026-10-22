@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "large_prime_system_solver.h"
+#include "dixon_flint.h"
+#include "fq_nmod_roots.h"
 
 typedef struct {
     fmpz_t *values;
@@ -1910,12 +1912,19 @@ void large_prime_print_roots_from_resultant_string(const char *resultant_str,
         return;
     }
 
+    clock_t roots_cpu = clock();
+    double roots_wall = get_time_roots();
     lp_root_list_init(&roots);
     if (!lp_resultant_roots(resultant_str, remaining_vars[0], prime, &roots, &degree)) {
         lp_root_list_clear(&roots);
         lp_free_string_array(remaining_vars, num_remaining);
         return;
     }
+
+    if (print_to_stdout && degree > 0)
+        dixon_maybe_print_parallel_step_time("Root finding",
+            (double)(clock() - roots_cpu) / CLOCKS_PER_SEC,
+            get_time_roots() - roots_wall);
 
     if (degree > 0 && roots.count > 0) {
         if (print_to_stdout) {

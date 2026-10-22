@@ -92,6 +92,100 @@ static void gf2n_heap_sift_down(gf2n_product_heap_entry *heap, slong len,
    heap, merge equal exponents, and emit canonical terms. Auxiliary storage
    is O(N*(alen+blen)); there is no allocation proportional to the degree box.
    All coefficient operations are specialized at compile time. */
+/* Single-word exponents use FLINT's chained heap: equal monomials share a
+ * heap node, so collisions do not each require a full sift-down. */
+typedef struct {
+    mpoly_heap1_s *heap;
+    mpoly_heap_t *rows, *pending;
+    const ulong *a, *b;
+    slong length, next_loc, columns;
+    ulong mask, exponent;
+} gf2n_product_stream;
+
+static void gf2n_product_stream_init(gf2n_product_stream *s,
+    const ulong *a, slong rows, const ulong *b, slong columns, ulong mask)
+{
+    s->heap=flint_malloc((rows+1)*sizeof(*s->heap));
+    s->rows=flint_malloc(rows*sizeof(*s->rows));
+    s->pending=NULL;s->a=a;s->b=b;s->columns=columns;
+    s->length=1;s->next_loc=rows+1;s->mask=mask;
+    for(slong i=0;i<rows;i++) {
+        s->rows[i]=(mpoly_heap_t){i,0,NULL};
+        _mpoly_heap_insert1(s->heap,a[i]+b[0],s->rows+i,
+                           &s->next_loc,&s->length,mask);
+    }
+}
+static inline int gf2n_product_stream_active(const gf2n_product_stream *s)
+{ return s->pending!=NULL || s->length>1; }
+static inline void gf2n_product_stream_pop(gf2n_product_stream *s,slong *i,slong *j)
+{
+    if(!s->pending) {
+        s->exponent=s->heap[1].exp;
+        s->pending=_mpoly_heap_pop1(s->heap,&s->length,s->mask);
+    }
+    mpoly_heap_t *row=s->pending;
+    s->pending=row->next;*i=row->i;*j=row->j;
+    if(++row->j<(ulong)s->columns) {
+        row->next=NULL;
+        _mpoly_heap_insert1(s->heap,s->a[row->i]+s->b[row->j],row,
+                           &s->next_loc,&s->length,s->mask);
+    }
+}
+static void gf2n_product_stream_clear(gf2n_product_stream *s)
+{ flint_free(s->heap);flint_free(s->rows); }
+
+/* Common product iterator for fixed and arbitrary moduli. Multi-word
+ * exponents retain the general heap and FLINT's comparison mask. */
+typedef struct {
+    gf2n_product_stream stream;
+    gf2n_product_heap_entry *heap;
+    ulong *keys;
+    const ulong *a, *b, *mask;
+    slong length, columns, N;
+    flint_bitcnt_t bits;
+} gf2n_product_iterator;
+static void gf2n_product_iterator_init(gf2n_product_iterator *it,
+    const ulong *a,slong rows,const ulong *b,slong columns,
+    slong N,flint_bitcnt_t bits,const ulong *mask)
+{
+    it->N=N;it->bits=bits;it->mask=mask;
+    it->a=a;it->b=b;it->columns=columns;it->length=rows;
+    if(N==1) {
+        gf2n_product_stream_init(&it->stream,a,rows,b,columns,mask[0]);
+        return;
+    }
+    it->keys=flint_malloc(N*rows*sizeof(ulong));
+    it->heap=flint_malloc(rows*sizeof(*it->heap));
+    for(slong i=0;i<rows;i++) {
+        it->heap[i]=(gf2n_product_heap_entry){i,0,it->keys+N*i};
+        gf2n_monomial_add(it->heap[i].exp,a+N*i,b,N,bits);
+    }
+    for(slong i=rows/2;i-- >0;) gf2n_heap_sift_down(it->heap,rows,i,N,mask);
+}
+static inline int gf2n_product_iterator_active(const gf2n_product_iterator *it)
+{ return it->N==1 ? gf2n_product_stream_active(&it->stream) : it->length!=0; }
+static inline const ulong *gf2n_product_iterator_key(const gf2n_product_iterator *it)
+{
+    if(it->N!=1) return it->heap[0].exp;
+    return it->stream.pending ? &it->stream.exponent : &it->stream.heap[1].exp;
+}
+static inline void gf2n_product_iterator_pop(gf2n_product_iterator *it,slong *i,slong *j)
+{
+    if(it->N==1) { gf2n_product_stream_pop(&it->stream,i,j);return; }
+    *i=it->heap[0].row;*j=it->heap[0].col;
+    if(*j+1<it->columns) {
+        it->heap[0].col=*j+1;
+        gf2n_monomial_add(it->heap[0].exp,it->a+it->N*(*i),
+                         it->b+it->N*(*j+1),it->N,it->bits);
+    } else it->heap[0]=it->heap[--it->length];
+    if(it->length) gf2n_heap_sift_down(it->heap,it->length,0,it->N,it->mask);
+}
+static void gf2n_product_iterator_clear(gf2n_product_iterator *it)
+{
+    if(it->N==1) gf2n_product_stream_clear(&it->stream);
+    else { flint_free(it->keys);flint_free(it->heap); }
+}
+
 #define DEFINE_GF2N_SPARSE_MUL(FIELD, COEFF_T, IS_ZERO, ADD, MUL, INIT) \
 int FIELD##_mpoly_mul_sparse(FIELD##_mpoly_t res, \
     const FIELD##_mpoly_t a, const FIELD##_mpoly_t b, \
@@ -120,33 +214,23 @@ int FIELD##_mpoly_mul_sparse(FIELD##_mpoly_t res, \
         ye = ycopy; \
     } \
     if (!ok) { flint_free(xcopy); flint_free(ycopy); return 0; } \
-    ulong *keys = flint_malloc(sizeof(ulong) * N * x->length); \
     ulong *mask = flint_malloc(sizeof(ulong) * N); \
     ulong *exp = flint_malloc(sizeof(ulong) * N); \
     mpoly_get_cmpmask(mask, N, bits, ctx->minfo); \
-    gf2n_product_heap_entry *heap = flint_malloc(sizeof(*heap) * x->length); \
-    slong len = x->length; \
-    for (slong i = 0; i < len; ++i) { \
-        heap[i] = (gf2n_product_heap_entry){i, 0, keys + N*i}; \
-        gf2n_monomial_add(heap[i].exp, xe + N*i, ye, N, bits); \
-    } \
-    for (slong i = len / 2; i-- > 0;) gf2n_heap_sift_down(heap, len, i, N, mask); \
+    gf2n_product_iterator iterator; \
+    gf2n_product_iterator_init(&iterator,xe,x->length,ye,y->length,N,bits,mask); \
     FIELD##_mpoly_t out; \
     FIELD##_mpoly_init(out, ctx); \
     out->bits = bits; \
-    while (len) { \
-        memcpy(exp, heap[0].exp, sizeof(ulong) * N); \
+    while (gf2n_product_iterator_active(&iterator)) { \
+        memcpy(exp,gf2n_product_iterator_key(&iterator),sizeof(ulong)*N); \
         COEFF_T coeff = {0}; \
         do { \
-            slong i = heap[0].row, j = heap[0].col; \
+            slong i,j;gf2n_product_iterator_pop(&iterator,&i,&j); \
             COEFF_T product = MUL(x->coeffs[i], y->coeffs[j]); \
             coeff = ADD(coeff, product); \
-            if (++j < y->length) { \
-                heap[0].col = j; \
-                gf2n_monomial_add(heap[0].exp, xe + N*i, ye + N*j, N, bits); \
-            } else { heap[0] = heap[--len]; } \
-            if (len) gf2n_heap_sift_down(heap, len, 0, N, mask); \
-        } while (len && mpoly_monomial_equal(exp, heap[0].exp, N)); \
+        } while (gf2n_product_iterator_active(&iterator) && \
+                 mpoly_monomial_equal(exp,gf2n_product_iterator_key(&iterator),N)); \
         if (!IS_ZERO(coeff)) { \
             slong k = out->length; \
             if (k == out->coeffs_alloc) { \
@@ -162,7 +246,8 @@ int FIELD##_mpoly_mul_sparse(FIELD##_mpoly_t res, \
     } \
     FIELD##_mpoly_struct swap = *res; *res = *out; *out = swap; \
     FIELD##_mpoly_clear(out, ctx); \
-    flint_free(heap); flint_free(exp); flint_free(mask); flint_free(keys); \
+    gf2n_product_iterator_clear(&iterator); \
+    flint_free(exp); flint_free(mask); \
     flint_free(ycopy); flint_free(xcopy); \
     return 1; \
 }
