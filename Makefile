@@ -125,6 +125,12 @@ endif
 # You can still override at install time: make install PREFIX=/custom
 # ============================================================
 
+# Prefer the matching build/install library over stale LD_LIBRARY_PATH entries.
+# $ORIGIN also works when the executable is launched outside the project.
+ifeq ($(HOST_OS),Linux)
+RPATH_FLAGS := -Wl,--disable-new-dtags -Wl,-rpath,'$$ORIGIN:$$ORIGIN/../lib:$(abspath .)' $(RPATH_FLAGS)
+endif
+
 # Install tool
 INSTALL         ?= install
 INSTALL_PROGRAM ?= $(INSTALL) -m 755
@@ -1327,3 +1333,11 @@ $(BUILD_DIR)/bezout_fast_test: $(SRC_DIR)/test/field/bezout_fast_test.c $(DIXON_
 .PHONY: test-bezout-fast
 test-bezout-fast: $(BUILD_DIR)/bezout_fast_test
 	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=4 ./$(BUILD_DIR)/bezout_fast_test
+
+.PHONY: test-dynamic-cli
+test-dynamic-cli: drsolve-dynamic
+	python3 $(SRC_DIR)/test/cli/dynamic_link_cli_test.py ./drsolve
+
+.PHONY: test-solver-resultant-object-cli
+test-solver-resultant-object-cli: $(DIXON_TARGET)
+	python3 $(SRC_DIR)/test/cli/solver_resultant_object_cli_test.py ./$(DIXON_TARGET)

@@ -26,11 +26,14 @@ with tempfile.TemporaryDirectory() as tmp:
             assert re.sub(r'\s+', '', saved.split('Resultant:\n')[1]) == re.sub(r'\s+', '', explicit.split('Resultant:\n')[1]), field
         log, _ = run('-s', system, field)
         if field == big:
-            assert 'Compute subresultant for 2 variable(s)' in log, log
+            assert 'Compute Dixon resultant for 2 variable(s)' in log, log
         else:
-            expected = 'subresultant' if field == '9' else 'Dixon'
+            expected = 'Dixon'
             assert 'Pair elimination: ' + expected in log, (field, log)
         assert 'Found 2 solution set(s)' in log, (field, log)
+        assert 'quotient algebra' not in log.lower(), (field, log)
+        forced, _ = run('-s', system, field, '--solver', 'dixon')
+        assert 'Found 2 solution set(s)' in forced, (field, forced)
 
     log, _ = run('-s', 'x+y,(y-t)*(y-t-1)', '256')
     assert 'Pair elimination: Dixon' in log and 'Found 2 solution set(s)' in log

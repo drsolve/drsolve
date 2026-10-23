@@ -33,12 +33,10 @@ with tempfile.TemporaryDirectory() as tmp:
                   ['--quotient-max-degree', '1'],
                   ['--large-prime-reconstruct', '--max-primes', '8']):
         text = run('-s', system, prime, *flags)
-        if flags == ['--quotient-max-degree', '1']:
-            assert 'falling back to Dixon' in text
-        elif flags == ['--solver', 'dixon']:
-            assert 'quotient algebra' not in text
-        else:
+        if flags == ['--solver', 'quotient']:
             assert 'quotient algebra' in text
+        else:
+            assert 'quotient algebra' not in text
         results.append(sorted(re.findall(r'^  Solution \d+: (.*) \[pass\]$', text, re.M)))
     assert len(results[0]) == 4 and all(r == results[0] for r in results), results
     text = run('-s', 'x,y,x+y-1', prime)

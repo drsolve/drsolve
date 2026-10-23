@@ -41,9 +41,9 @@ with tempfile.TemporaryDirectory(prefix='drsolve-quotient-') as work:
     for q in ['9', '256']:
         system = 'x+y,(y-t)*(y-t-1)'
         text = run(system, q)
-        assert 'Back substitution: quotient algebra' in text and 'Found 2 solution set(s)' in text
+        assert 'quotient algebra' not in text and 'Found 2 solution set(s)' in text
         text = run(system, q, '--quotient-max-degree', '1')
-        assert 'falling back to Dixon' in text and 'Found 2 solution set(s)' in text
+        assert 'quotient algebra' not in text and 'Found 2 solution set(s)' in text
         text = run(system, q, '--solver', 'dixon')
         assert 'quotient algebra' not in text and 'Found 2 solution set(s)' in text
 

@@ -898,6 +898,15 @@ static void enumerate_all_monomials_recursive(monomial_t *monomials,
         return;
     }
 
+    /* The last exponent is forced by the remaining total degree.  Avoid
+       traversing candidates that the leaf would immediately discard. */
+    if (pos == total_indeterminates - 1) {
+        current_exp[pos] = remaining_degree;
+        enumerate_all_monomials_recursive(monomials, count, total_indeterminates,
+                                          current_exp, pos + 1, 0);
+        return;
+    }
+
     for (slong deg = 0; deg <= remaining_degree; deg++) {
         current_exp[pos] = deg;
         enumerate_all_monomials_recursive(monomials, count, total_indeterminates,
@@ -995,60 +1004,22 @@ static void generate_random_polynomial_mode(unified_mpoly_struct *poly, slong nv
         all_monomials[j] = temp;
     }
     
-    // Select first target_terms monomials and add them to polynomial
+    /* Monomials are unique.  Append without maintaining sorted order at
+       every insertion, then canonicalize once after the batch. */
+    fq_nmod_t coeff;
+    fq_nmod_init(coeff, ctx);
     for (slong i = 0; i < target_terms; i++) {
-        monomial_t *mon = &all_monomials[i];
-        
-        // Split exponents into variable and parameter parts
-        slong *var_exp = NULL;
-        slong *par_exp = NULL;
-        
-        // Extract variable exponents (first nvars positions)
-        if (nvars > 0) {
-            int has_var = 0;
-            for (slong j = 0; j < nvars; j++) {
-                if (mon->exponents[j] > 0) {
-                    has_var = 1;
-                    break;
-                }
-            }
-            if (has_var || (nvars > 0 && npars == 0)) {  // Include even if all zeros for pure variable case
-                var_exp = (slong*) malloc(nvars * sizeof(slong));
-                memcpy(var_exp, mon->exponents, nvars * sizeof(slong));
-            }
-        }
-        
-        // Extract parameter exponents (last npars positions)
-        if (npars > 0) {
-            int has_par = 0;
-            for (slong j = nvars; j < total_indeterminates; j++) {
-                if (mon->exponents[j] > 0) {
-                    has_par = 1;
-                    break;
-                }
-            }
-            if (has_par || (npars > 0 && nvars == 0)) {  // Include even if all zeros for pure parameter case
-                par_exp = (slong*) malloc(npars * sizeof(slong));
-                memcpy(par_exp, mon->exponents + nvars, npars * sizeof(slong));
-            }
-        }
-        
-        // Generate random non-zero coefficient
-        fq_nmod_t coeff;
-        fq_nmod_init(coeff, ctx);
+        const slong *exp = all_monomials[i].exponents;
         do {
             fq_nmod_randtest(coeff, state, ctx);
         } while (fq_nmod_is_zero(coeff, ctx));
-        
-        // Add the term to polynomial
-        dr_mpoly_add_term(poly, var_exp, par_exp, coeff);
 
-        // Cleanup
-        fq_nmod_clear(coeff, ctx);
-        if (var_exp) free(var_exp);
-        if (par_exp) free(par_exp);
+        dr_mpoly_add_term_fast(poly, nvars ? exp : NULL,
+                               npars ? exp + nvars : NULL, coeff);
     }
-    
+    fq_nmod_clear(coeff, ctx);
+    dr_mpoly_normalize(poly);
+
     // Cleanup monomial list
     for (slong i = 0; i < total_monomials; i++) {
         free(all_monomials[i].exponents);

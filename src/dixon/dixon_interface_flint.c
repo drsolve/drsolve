@@ -3154,9 +3154,27 @@ char* dixon(const char **poly_strings, slong num_polys,
     return dixon_with_file(poly_strings, num_polys, elim_vars, num_elim_vars, ctx, NULL, 1);
 }
 
+/* Array form for solver callers: no root analysis or result serialization. */
+int dixon_compute_result_poly_array(const char **polys, slong npolys,
+                                    const char **vars, slong nvars,
+                                    const fq_nmod_ctx_t ctx,
+                                    unified_mpoly_struct *result)
+{
+    char **remaining = NULL;
+    slong nremaining = 0;
+    if (!polys || !vars || !result || nvars < 1 || npolys != nvars + 1)
+        return 0;
+    char *unused = compute_dixon_internal_with_file(polys, npolys, vars, nvars,
+        ctx, &remaining, &nremaining, NULL, 0, result);
+    free(unused);
+    free_split_strings(remaining, nremaining);
+    return result->ctx_ptr != NULL;
+}
+
 // Implementation using unified_mpoly_resultant
-char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
-                                         const char *elim_var, const fq_nmod_ctx_t ctx) {
+static char *bivariate_resultant_internal(const char *poly1_str, const char *poly2_str,
+                                         const char *elim_var, const fq_nmod_ctx_t ctx,
+                                         unified_mpoly_struct *result_poly_out) {
     clock_t total_start = clock();
     clock_t compute_start, compute_end;
     clock_t total_end;
@@ -3538,18 +3556,14 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
         }
     }
 
-    // If it's a univariate polynomial, try to find roots
-    find_and_print_roots_of_univariate_resultant(&result_mvpoly, &state);
-    // printf("dr_mpoly_to_string\n");
-    // Convert result to string
-    char *result_string;
-    if (dr_mpoly_length(&(result_mvpoly)) == 0) {
-        result_string = strdup("0");
+    char *result_string = NULL;
+    if (result_poly_out) {
+        dr_mpoly_move(result_poly_out, &result_mvpoly);
     } else {
-        result_string = dr_mpoly_to_string(&result_mvpoly, state.par_names, gen_name);
+        find_and_print_roots_of_univariate_resultant(&result_mvpoly, &state);
+        result_string = dr_mpoly_length(&result_mvpoly) == 0 ? strdup("0") :
+            dr_mpoly_to_string(&result_mvpoly, state.par_names, gen_name);
     }
-    //printf("%s", result_string);
-    //printf("clean up\n");
 
     // Output remaining variable info
     if (num_remaining > 0) {
@@ -3608,6 +3622,23 @@ char* bivariate_resultant(const char *poly1_str, const char *poly2_str,
     free(result_par_degs);
 
     return result_string;
+}
+
+char *bivariate_resultant(const char *a, const char *b, const char *var,
+                           const fq_nmod_ctx_t ctx)
+{
+    return bivariate_resultant_internal(a, b, var, ctx, NULL);
+}
+
+int bivariate_compute_result_poly(const char *a, const char *b, const char *var,
+                                  const fq_nmod_ctx_t ctx,
+                                  unified_mpoly_struct *result)
+{
+    if (!a || !b || !var || !result) return 0;
+    char *unused = bivariate_resultant_internal(a, b, var, ctx, result);
+    int ok = unused == NULL && result->ctx_ptr != NULL;
+    free(unused);
+    return ok;
 }
 
 char* dixon_str_with_file(const char *poly_string,

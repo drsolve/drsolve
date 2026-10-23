@@ -791,6 +791,10 @@ else()
       BUILD_RPATH "${CMAKE_BINARY_DIR}/lib"
     )
   else()
+    # Keep a stale LD_LIBRARY_PATH library from overriding the matching build.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      target_link_options(drsolve_exe PRIVATE -Wl,--disable-new-dtags)
+    endif()
     # Linux: embed RPATH to bundled lib dir and FLINT/PML locations
     set(_rpath_dirs "${CMAKE_BINARY_DIR}/lib;\$ORIGIN/../lib")
     get_filename_component(_flint_lib_dir "${FLINT_LIBRARY}" DIRECTORY)

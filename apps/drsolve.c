@@ -121,6 +121,7 @@ void drsolve_cli_print_full_usage(const char *prog_name)
     puts("SOLVING:");
     puts("  -s, --solve                    Solve the system; automatic without elim vars.");
     puts("  --solver auto|dixon|quotient    Select solver and enable solving (default auto).");
+    puts("                                Auto uses Dixon for 2 equations in 2 variables, including back substitution.");
     puts("  --solve-rational-only          Solve over Q, keeping exact rational solutions.");
     puts("  --specialize-vars \"z=0,w=1\"    Fix variables before solving. In extensions,");
     puts("                                integers encode generator coefficients:");

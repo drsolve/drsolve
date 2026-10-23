@@ -144,6 +144,17 @@ char *dixon_str_with_scalar_screen(const char *poly_string, const char *vars_str
 int dixon_compute_result_poly(const char *poly_string, const char *vars_string,
                               const fq_nmod_ctx_t ctx, unified_mpoly_struct *result_poly);
 
+/* Object outputs must be zero-initialized or initialized dr_mpoly objects;
+ * caller clears them. These APIs skip root finding and string serialization.
+ * Return 1 on success (including a zero resultant), 0 on failure. */
+int dixon_compute_result_poly_array(const char **polys, slong npolys,
+                                    const char **vars, slong nvars,
+                                    const fq_nmod_ctx_t ctx,
+                                    unified_mpoly_struct *result);
+int bivariate_compute_result_poly(const char *a, const char *b, const char *var,
+                                  const fq_nmod_ctx_t ctx,
+                                  unified_mpoly_struct *result);
+
 char* dixon_str_with_file(const char *poly_string,    // comma-separated polynomials
                           const char *vars_string,     // comma-separated variables
                           const fq_nmod_ctx_t ctx,

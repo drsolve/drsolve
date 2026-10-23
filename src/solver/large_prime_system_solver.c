@@ -2072,7 +2072,11 @@ large_prime_solutions_t *solve_large_prime_polynomial_system_string(const char *
     state.original_vars = vars;
     state.num_original_vars = num_vars;
 
+    polynomial_solver_method_t saved_method = lp_method;
+    if (lp_method == POLYNOMIAL_SOLVER_AUTO && num_polys == 2 && num_vars == 2)
+        lp_method = POLYNOMIAL_SOLVER_DIXON;
     status = lp_solve_recursive(&state, poly_strings, num_polys, vars, num_vars, current_values);
+    lp_method = saved_method;
     if (status == LP_SOLVE_ERROR) {
         sols->is_valid = 0;
     } else {

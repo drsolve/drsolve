@@ -1264,6 +1264,71 @@ fq_nmod_t* solve_univariate_equation_all_roots(const char *poly_str, const char 
     return result_roots;
 }
 
+/* The elimination result already contains coefficients and exponents.  Keep
+ * this path independent of the public string parser and root-reporting API. */
+static fq_nmod_t *solve_resultant_poly_all_roots(const unified_mpoly_struct *poly,
+                                                slong *count,
+                                                const fq_nmod_ctx_t ctx)
+{
+    *count = -1;
+    if (!poly->ctx_ptr || poly->nvars != 0 || poly->npars > 1)
+        return NULL;
+
+    fq_nmod_t *values = NULL;
+    clock_t start = clock();
+    double wall = get_time_roots();
+    if (fq_nmod_ctx_degree(ctx) == 1) {
+        nmod_poly_t univ;
+        nmod_poly_init(univ, fq_nmod_ctx_prime(ctx));
+        for (slong i = 0; i < dr_mpoly_length(poly); i++) {
+            DR_MPOLY_TERM(term, poly, i);
+            slong degree = poly->npars ? term.par_exp[0] : 0;
+            nmod_poly_set_coeff_ui(univ, degree, nmod_poly_get_coeff_ui(term.coeff, 0));
+        }
+        nmod_roots_t roots;
+        nmod_roots_init(roots);
+        our_nmod_poly_roots(roots, univ, 1);
+        if (roots->num > 0) {
+            values = malloc(roots->num * sizeof(*values));
+            if (values) {
+                for (slong i = 0; i < roots->num; i++) {
+                    fq_nmod_init(values[i], ctx);
+                    fq_nmod_set_ui(values[i], roots->roots[i], ctx);
+                }
+            }
+        }
+        if (!roots->num || values) *count = roots->num;
+        nmod_roots_clear(roots);
+        nmod_poly_clear(univ);
+    } else {
+        fq_nmod_poly_t univ;
+        fq_nmod_poly_init(univ, ctx);
+        for (slong i = 0; i < dr_mpoly_length(poly); i++) {
+            DR_MPOLY_TERM(term, poly, i);
+            slong degree = poly->npars ? term.par_exp[0] : 0;
+            fq_nmod_poly_set_coeff(univ, degree, term.coeff, ctx);
+        }
+        fq_nmod_roots_t roots;
+        fq_nmod_roots_init(roots, ctx);
+        our_fq_nmod_poly_roots(roots, univ, 1, ctx);
+        if (roots->num > 0) {
+            values = malloc(roots->num * sizeof(*values));
+            if (values) {
+                for (slong i = 0; i < roots->num; i++) {
+                    fq_nmod_init(values[i], ctx);
+                    fq_nmod_set(values[i], roots->roots + i, ctx);
+                }
+            }
+        }
+        if (!roots->num || values) *count = roots->num;
+        fq_nmod_roots_clear(roots, ctx);
+        fq_nmod_poly_clear(univ, ctx);
+    }
+    dixon_maybe_print_parallel_step_time("Root finding",
+        (double)(clock() - start) / CLOCKS_PER_SEC, get_time_roots() - wall);
+    return values;
+}
+
 // Substitute a specific variable with its value in a polynomial string
 char* substitute_variable_in_polynomial(const char *poly_str, const char *var_name,
                                                 const fq_nmod_t value, const fq_nmod_ctx_t ctx) {
@@ -1394,6 +1459,19 @@ static char *solver_pair_resultant(const char *a, const char *b, const char *var
         return dixon(polys,2,vars,1,ctx);
     }
     return bivariate_resultant(a,b,var,ctx);
+}
+
+static int solver_pair_resultant_poly(const char *a, const char *b, const char *var,
+                                       const fq_nmod_ctx_t ctx,
+                                       unified_mpoly_struct *result)
+{
+    int use_dixon = solver_method == POLYNOMIAL_SOLVER_DIXON || dixon_prefer_bivariate(ctx);
+    solver_progress("Pair elimination: %s", use_dixon ? "Dixon" : "subresultant");
+    if (use_dixon) {
+        const char *polys[] = {a, b}, *vars[] = {var};
+        return dixon_compute_result_poly_array(polys, 2, vars, 1, ctx, result);
+    }
+    return bivariate_compute_result_poly(a, b, var, ctx, result);
 }
 
 // ENHANCED: Use Dixon resultant to eliminate variable with equation selection
@@ -2215,7 +2293,7 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
     // Try ALL elimination combinations and count successes
     slong successful_combinations = 0;
     slong total_combinations = 0;
-    char *working_resultant = NULL;
+    unified_mpoly_struct working_resultant = {0};
     
     // [Existing elimination logic - try all combinations, count successes]
     // This part was correct in the previous version
@@ -2226,9 +2304,11 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
             add_resultant_step(sols,
                                "Compute resultant of eq(1,2) eliminating %s",
                                elim_var);
-            char *resultant = solver_pair_resultant(poly_strings[0], poly_strings[1], elim_var, sols->ctx);
-            if (resultant && strcmp(resultant, "0") != 0) {
-                working_resultant = resultant;
+            unified_mpoly_struct resultant = {0};
+            int computed = solver_pair_resultant_poly(poly_strings[0], poly_strings[1],
+                                                       elim_var, sols->ctx, &resultant);
+            if (computed && dr_mpoly_length(&resultant) != 0) {
+                dr_mpoly_move(&working_resultant, &resultant);
                 successful_combinations = 1;
                 add_resultant_step(sols,
                                    "eq(1,2) -> non-zero resultant in %s",
@@ -2237,7 +2317,7 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
                 solver_trace_stdout("Bivariate resultant is zero\n");
                 add_resultant_step(sols,
                                    "eq(1,2) -> zero resultant");
-                if (resultant) free(resultant);
+                dr_mpoly_clear(&resultant);
             }
         } else if (num_polys > 2) {
             equation_combination_t *combinations = NULL;
@@ -2257,21 +2337,23 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
                                    combinations[comb_idx].equation_indices[1] + 1,
                                    elim_var);
                 
-                char *test_resultant = eliminate_variable_dixon_with_selection(poly_strings, num_polys, 
-                                                                              elim_var, sols->ctx,
-                                                                              &combinations[comb_idx]);
+                unified_mpoly_struct test_resultant = {0};
+                int computed = solver_pair_resultant_poly(
+                    poly_strings[combinations[comb_idx].equation_indices[0]],
+                    poly_strings[combinations[comb_idx].equation_indices[1]],
+                    elim_var, sols->ctx, &test_resultant);
                 
-                if (test_resultant && strcmp(test_resultant, "0") != 0) {
+                if (computed && dr_mpoly_length(&test_resultant) != 0) {
                     solver_trace_stdout("  ✓ Combination %ld succeeded!\n", comb_idx + 1);
                     add_resultant_step(sols,
                                        "eq(%ld,%ld) -> non-zero resultant in %s",
                                        combinations[comb_idx].equation_indices[0] + 1,
                                        combinations[comb_idx].equation_indices[1] + 1,
                                        keep_var);
-                    if (!working_resultant) {
-                        working_resultant = test_resultant;
+                    if (!working_resultant.ctx_ptr) {
+                        dr_mpoly_move(&working_resultant, &test_resultant);
                     } else {
-                        free(test_resultant);
+                        dr_mpoly_clear(&test_resultant);
                     }
                     successful_combinations++;
                 } else {
@@ -2280,7 +2362,7 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
                                        "eq(%ld,%ld) -> zero resultant",
                                        combinations[comb_idx].equation_indices[0] + 1,
                                        combinations[comb_idx].equation_indices[1] + 1);
-                    if (test_resultant) free(test_resultant);
+                    dr_mpoly_clear(&test_resultant);
                 }
             }
             
@@ -2304,10 +2386,12 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
                                "Compute Dixon resultant of eq(1..%ld) eliminating %ld variable(s)",
                                num_polys, num_elim_vars);
             
-            char *resultant = dixon(poly_const, num_polys, elim_vars, num_elim_vars, sols->ctx);
+            unified_mpoly_struct resultant = {0};
+            int computed = dixon_compute_result_poly_array(poly_const, num_polys,
+                elim_vars, num_elim_vars, sols->ctx, &resultant);
             
-            if (resultant && strcmp(resultant, "0") != 0) {
-                working_resultant = resultant;
+            if (computed && dr_mpoly_length(&resultant) != 0) {
+                dr_mpoly_move(&working_resultant, &resultant);
                 successful_combinations = 1;
                 add_resultant_step(sols,
                                    "eq(1..%ld) -> non-zero resultant in %s",
@@ -2316,7 +2400,7 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
                 add_resultant_step(sols,
                                    "eq(1..%ld) -> zero resultant",
                                    num_polys);
-                if (resultant) free(resultant);
+                dr_mpoly_clear(&resultant);
             }
             
             free(poly_const);
@@ -2346,20 +2430,22 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
                     poly_const[i] = poly_strings[combinations[comb_idx].equation_indices[i]];
                 }
                 
-                char *test_resultant = dixon(poly_const, num_vars, elim_vars, num_elim_vars, sols->ctx);
+                unified_mpoly_struct test_resultant = {0};
+                int computed = dixon_compute_result_poly_array(poly_const, num_vars,
+                    elim_vars, num_elim_vars, sols->ctx, &test_resultant);
                 
                 free(poly_const);
                 
-                if (test_resultant && strcmp(test_resultant, "0") != 0) {
+                if (computed && dr_mpoly_length(&test_resultant) != 0) {
                     solver_trace_stdout("  ✓ Combination %ld succeeded!\n", comb_idx + 1);
                     add_resultant_step(sols,
                                        "eq(%s) -> non-zero resultant in %s",
                                        eq_list ? eq_list : "?",
                                        keep_var);
-                    if (!working_resultant) {
-                        working_resultant = test_resultant;
+                    if (!working_resultant.ctx_ptr) {
+                        dr_mpoly_move(&working_resultant, &test_resultant);
                     } else {
-                        free(test_resultant);
+                        dr_mpoly_clear(&test_resultant);
                     }
                     successful_combinations++;
                 } else {
@@ -2367,7 +2453,7 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
                     add_resultant_step(sols,
                                        "eq(%s) -> zero resultant",
                                        eq_list ? eq_list : "?");
-                    if (test_resultant) free(test_resultant);
+                    dr_mpoly_clear(&test_resultant);
                 }
                 if (eq_list) free(eq_list);
             }
@@ -2398,7 +2484,7 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
     
     // Solve univariate resultant
     slong num_base_solutions;
-    fq_nmod_t *base_solutions = solve_univariate_equation_all_roots(working_resultant, keep_var, 
+    fq_nmod_t *base_solutions = solve_resultant_poly_all_roots(&working_resultant,
                                                                    &num_base_solutions, sols->ctx);
     sols->num_base_solutions = num_base_solutions;
     
@@ -2406,19 +2492,19 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
         solver_trace_stdout("Univariate resultant has no solutions\n");
         sols->is_valid = 1;
         sols->has_no_solutions = 1;
-        free(working_resultant);
+        dr_mpoly_clear(&working_resultant);
         return 1;
     }
     
     if (!base_solutions) {
         solver_trace_stdout("Failed to solve univariate resultant\n");
-        free(working_resultant);
+        dr_mpoly_clear(&working_resultant);
         return 0;
     }
     
     add_resultant_step(sols, "Found %ld value(s) for %s, starting back substitution",
                        num_base_solutions, keep_var);
-    free(working_resultant);
+    dr_mpoly_clear(&working_resultant);
     
     // Do back substitution
     int backtrack_success = solve_by_back_substitution_recursive_enhanced(poly_strings, num_polys, 
@@ -2467,6 +2553,14 @@ static int quotient_square_mq(char **polys, slong count,
 static int solve_selected(char **polys, slong count, variable_info_t *vars,
                           slong n, polynomial_solutions_t *sols)
 {
+    /* A 2x2 AUTO solve uses Dixon throughout, including back substitution. */
+    if (solver_method == POLYNOMIAL_SOLVER_AUTO && count == 2 && n == 2) {
+        solver_method = POLYNOMIAL_SOLVER_DIXON;
+        solver_progress("Solver: Dixon elimination (%ld equations, %ld variables)", count, n);
+        int ok = solve_by_elimination_enhanced(polys, count, vars, n, sols);
+        solver_method = POLYNOMIAL_SOLVER_AUTO;
+        return ok;
+    }
     int use_quotient = solver_method == POLYNOMIAL_SOLVER_QUOTIENT ||
         (solver_method == POLYNOMIAL_SOLVER_AUTO && count > n);
     if (solver_method != POLYNOMIAL_SOLVER_DIXON && quotient_square_mq(polys,count,vars,n,sols->ctx)) {
