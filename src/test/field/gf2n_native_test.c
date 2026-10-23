@@ -2,7 +2,6 @@
 #include "fq_unified_interface.h"
 #include <assert.h>
 #include <flint/nmod_poly_factor.h>
-#include <omp.h>
 
 static void check(const fq_nmod_ctx_t fq, flint_rand_t rng)
 {

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+#include <inttypes.h>
 #include "gf2n_inline.h"
 /* gf2n_field.c - Implementation of GF(2^n) field operations */
 #include "gf2n_field.h"
@@ -750,7 +751,7 @@ inline gf2128_t gf2128_add(const gf2128_t *a, const gf2128_t *b) {
 }
 
 void gf2128_print(const gf2128_t *a) {
-    printf("%016lx%016lx", a->high, a->low);
+    printf("%016" PRIx64 "%016" PRIx64, a->high, a->low);
 }
 
 /* Software multiplication for GF(2^128) */

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+#include "../test_env.h"
 /* Independent cancellation polynomial checks the recursive labels; determinant
  * comparisons cover shared selection/dispatch and construction-specific paths. */
 #define main recursive_arithmetic_fixture_main
@@ -157,14 +158,14 @@ static void check_pipeline(ulong prime, slong extension, slong nvars, slong npar
     /* Standard MQ/projection, recursive prediction, prediction-disabled fallback,
      * and recursive legacy arithmetic must agree after monic normalization. */
     dixon_global_method_step4=DET_METHOD_KRONECKER;
-    setenv("DRSOLVE_PREDICT_MAXRANK","1",1);
+    dr_test_setenv("DRSOLVE_PREDICT_MAXRANK","1",1);
     fq_dixon_resultant(result,p,nvars,npars);
-    setenv("DRSOLVE_FAST_NATIVE","1",1);
+    dr_test_setenv("DRSOLVE_FAST_NATIVE","1",1);
     fq_dixon_fast_resultant(result+1,p,nvars,npars);
-    setenv("DRSOLVE_PREDICT_MAXRANK","0",1);
+    dr_test_setenv("DRSOLVE_PREDICT_MAXRANK","0",1);
     fq_dixon_fast_resultant(result+2,p,nvars,npars);
-    setenv("DRSOLVE_FAST_NATIVE","0",1);
-    setenv("DRSOLVE_PREDICT_MAXRANK","1",1);
+    dr_test_setenv("DRSOLVE_FAST_NATIVE","0",1);
+    dr_test_setenv("DRSOLVE_PREDICT_MAXRANK","1",1);
     fq_dixon_fast_resultant_with_names(result+3,p,nvars,npars,NULL,NULL,NULL);
     for(slong i=1;i<4;i++) assert(pipeline_equal(result,result+i));
     for(slong i=0;i<4;i++) dr_mpoly_clear(result+i);
@@ -187,7 +188,7 @@ int main(void)
     check_pipeline(101,2,2,1,2);
     check_pipeline(101,1,2,0,2);
     check_pipeline(65537,1,3,1,4); /* Corrected rank 102, old bound 104. */
-    unsetenv("DRSOLVE_FAST_NATIVE");unsetenv("DRSOLVE_PREDICT_MAXRANK");
+    dr_test_unsetenv("DRSOLVE_FAST_NATIVE");dr_test_unsetenv("DRSOLVE_PREDICT_MAXRANK");
     dixon_global_method_step4=-1;
     puts("Dixon shared pipeline tests passed");
     return 0;

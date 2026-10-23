@@ -125,7 +125,8 @@ static int extension_degree_fits(slong n, slong d, slong memory_mb,
      * and the recursive FLINT eigenspaces. Account for fq limb allocations. */
     long double scalar=sizeof(field_elem_u)+3.0L*fq_nmod_ctx_degree(e->fq)*sizeof(ulong);
     long double bytes=(16.0L+4.0L*n)*N*N*scalar;
-    if (bytes>WORD_MAX) return -1;
+    /* Use the exact exclusive limit, including when long double is binary64. */
+    if (bytes >= (long double)(UWORD(1) << (FLINT_BITS - 1))) return -1;
     if (memory_mb && bytes>(long double)memory_mb*1024*1024) return 0;
     *columns=N; return 1;
 }

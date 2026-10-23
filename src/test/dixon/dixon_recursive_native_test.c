@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+#include "../test_env.h"
 /* Compare every recursive coefficient against both the legacy arithmetic
  * and the independent cancellation determinant, including sparse inputs. */
 #include "../../dixon/dixon_recursive.c"
@@ -75,9 +76,9 @@ static void check_field(ulong prime, slong extension, slong degree, int sparse, 
     fast_dixon_compute_degree_bounds(degrees,ptrs,3,2);
     fast_dixon_matrix_t legacy,native;
     fast_dixon_profile_reset(2); fast_dixon_subproblem_cache_reset_all();
-    setenv("DRSOLVE_FAST_NATIVE","0",1);
+    dr_test_setenv("DRSOLVE_FAST_NATIVE","0",1);
     fast_dixon_build_matrix(&legacy,ptrs,degrees,2,0,npars,ctx);
-    setenv("DRSOLVE_FAST_NATIVE","1",1);
+    dr_test_setenv("DRSOLVE_FAST_NATIVE","1",1);
     fast_dixon_build_matrix(&native,ptrs,degrees,2,0,npars,ctx);
     assert(native.rows==legacy.rows && native.cols==legacy.cols);
     for (slong i=0; i<native.rows*native.cols; i++)
@@ -141,7 +142,7 @@ int main(void)
         check_field(2,7,3,1,1,0);
         check_field(2,8,2,0,2,0x11d);
     }
-    unsetenv("DRSOLVE_FAST_NATIVE");
+    dr_test_unsetenv("DRSOLVE_FAST_NATIVE");
     puts("Recursive native/legacy coefficients and independent cancellation determinant PASS");
     flint_cleanup_master(); return 0;
 }

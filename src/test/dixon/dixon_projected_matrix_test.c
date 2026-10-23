@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+#include "../test_env.h"
 #define DRSOLVE_MQ_STEP2_TEST 1
 #define main projected_matrix_fixture_main
 #include "dixon_mq_filter_test.c"
@@ -116,7 +117,7 @@ int main(void)
     g_dixon_verbose_level=0; g_dixon_det_cache_limit=100000;
     flint_rand_t rng; flint_rand_init(rng); flint_rand_set_seed(rng,132,941);
     for(int reorder=0;reorder<2;reorder++) {
-        setenv("DRSOLVE_PREDICT_REORDER",reorder?"1":"0",1);
+        dr_test_setenv("DRSOLVE_PREDICT_REORDER",reorder?"1":"0",1);
         for(int threads=1;threads<=4;threads+=3) {
             omp_set_num_threads(threads);
             synthetic(257,1,1); synthetic(7,2,1);
@@ -139,7 +140,7 @@ int main(void)
      * deterministic last-write ordering and consuming cleanup. The row length
      * is not a multiple of 32, exercising partial staging flushes as well. */
     omp_set_num_threads(4); synthetic(257,1,20001);
-    unsetenv("DRSOLVE_PREDICT_REORDER");
+    dr_test_unsetenv("DRSOLVE_PREDICT_REORDER");
     flint_rand_clear(rng); flint_cleanup_master();
     puts("Direct projected matrix: 21 generic/direct comparisons, 17 consuming native comparisons and 102 native determinant checks PASS");
     return 0;

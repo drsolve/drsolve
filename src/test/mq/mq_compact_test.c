@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+#include "../test_env.h"
 #define main compact_fixture_main
 #include "../dixon/dixon_mq_filter_test.c"
 #undef main
@@ -17,7 +18,7 @@ static void same_polynomial(const unified_mpoly_struct *a, const unified_mpoly_s
 
 static void same_matrix(fq_mq_compact *compact, unified_mpoly_struct *legacy, slong n, int reorder)
 {
-    setenv("DRSOLVE_PREDICT_REORDER",reorder ? "1" : "0",1);
+    dr_test_setenv("DRSOLVE_PREDICT_REORDER",reorder ? "1" : "0",1);
     unified_mpoly_struct **unused = NULL, owned = {0};
     dr_mpoly_init(&owned, legacy->nvars, 1, legacy->ctx);
     dr_mpoly_copy(&owned, legacy);
@@ -40,9 +41,9 @@ static void same_matrix(fq_mq_compact *compact, unified_mpoly_struct *legacy, sl
         nmod_poly_clear(x);nmod_poly_clear(y);nmod_poly_mat_clear(small);
         dixon_mq_step4_profile_clear(&direct);
     }
-    setenv("DRSOLVE_MQ_DIRECT_CORE","0",1);
+    dr_test_setenv("DRSOLVE_MQ_DIRECT_CORE","0",1);
     dixon_extract_compact_matrix(actual,&cs,&cc,compact,degrees,&b,NULL);
-    unsetenv("DRSOLVE_MQ_DIRECT_CORE");
+    dr_test_unsetenv("DRSOLVE_MQ_DIRECT_CORE");
     assert(!compact->nvars && !compact->terms && !compact->rows && !compact->offset);
     assert(size==cs && content==cc);
     assert(nmod_poly_mat_equal(expected,actual));
@@ -57,7 +58,7 @@ static void same_matrix(fq_mq_compact *compact, unified_mpoly_struct *legacy, sl
     nmod_poly_mat_clear(expected);
     nmod_poly_mat_clear(actual);
     dr_mpoly_clear(&owned);
-    unsetenv("DRSOLVE_PREDICT_REORDER");
+    dr_test_unsetenv("DRSOLVE_PREDICT_REORDER");
 }
 
 int main(void)

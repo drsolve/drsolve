@@ -1310,3 +1310,9 @@ test-pair-dispatch-cli: $(DIXON_TARGET)
 .PHONY: test-help-cli
 test-help-cli: $(DIXON_TARGET)
 	python3 $(SRC_DIR)/test/cli/help_cli_test.py ./$(DIXON_TARGET)
+
+# Test-only environment compatibility, including fixtures included as .c files.
+$(addprefix $(BUILD_DIR)/,dixon_mq_filter_test dixon_mq_step4_test \
+  dixon_projected_matrix_test dixon_recursive_native_test dixon_pipeline_test \
+  mq_compact_test mq_pencil_test mq_direct_core_test mq_shared_core_test \
+  mq_core_interpolation_test mq_dag_core_test): $(SRC_DIR)/test/test_env.h

@@ -27,14 +27,14 @@ static slong hash_slot(uint64_t key, slong slots)
     return (slong)((key^(key>>31)) & (uint64_t)(slots-1));
 }
 
-static void basis_enumerate(basis_t *b, ulong *e, slong pos, slong left, slong degree)
+static void basis_enumerate(basis_t *b, ulong *e, slong n, slong pos, slong left, slong degree)
 {
-    if (pos==b->n-1) {
+    if (pos==n-1) {
         assert(b->count<b->capacity); e[pos]=left;
-        memcpy(b->exps+b->count*b->n,e,b->n*sizeof(ulong));
+        memcpy(b->exps+b->count*n,e,n*sizeof(ulong));
         b->degrees[b->count++]=degree; return;
     }
-    for (slong i=left;i>=0;i--) { e[pos]=i; basis_enumerate(b,e,pos+1,left-i,degree); }
+    for (slong i=left;i>=0;i--) { e[pos]=i; basis_enumerate(b,e,n,pos+1,left-i,degree); }
 }
 
 static void basis_init(basis_t *b, slong n, slong degree)
@@ -45,7 +45,7 @@ static void basis_init(basis_t *b, slong n, slong degree)
     b->capacity=count;
     b->exps=flint_malloc(count*n*sizeof(ulong)); b->degrees=flint_malloc(count*sizeof(slong));
     ulong e[n]; memset(e,0,sizeof(e));
-    for (slong d=degree;d>=0;d--) basis_enumerate(b,e,0,d,d);
+    for (slong d=degree;d>=0;d--) basis_enumerate(b,e,n,0,d,d);
     assert(b->count==count); b->slots=1;
     while (b->slots<2*count) b->slots*=2;
     b->lookup=flint_malloc(b->slots*sizeof(slong));

@@ -145,7 +145,8 @@ static int prime_degree_fits(slong n, slong d, slong memory_mb, const quotient_f
         3.0L * ((fmpz_bits(fmpz_mod_ctx_modulus(e->arithmetic)) + FLINT_BITS - 1) / FLINT_BITS) *
             sizeof(ulong);
     long double bytes = (16.0L + 4.0L * n) * N * N * scalar;
-    if (bytes > WORD_MAX)
+    /* Use the exact exclusive limit, including when long double is binary64. */
+    if (bytes >= (long double)(UWORD(1) << (FLINT_BITS - 1)))
         return -1;
     if (memory_mb && bytes > (long double)memory_mb * 1024 * 1024)
         return 0;

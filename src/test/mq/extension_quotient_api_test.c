@@ -70,7 +70,7 @@ static void check_field(ulong characteristic,slong degree)
  * A triangular linear system has the independently known resultant y - t. */
 static void check_dynamic_keys(ulong characteristic,slong degree)
 {
-    const slong n=17,nv=n-1;
+    enum { n=17, nv=n-1 };
     fmpz_t prime;fmpz_init_set_ui(prime,characteristic);
     fq_nmod_ctx_t ctx;fq_nmod_ctx_init(ctx,prime,degree,"t");
     fq_nmod_t c;fq_nmod_init(c,ctx);

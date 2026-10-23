@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+#include "../test_env.h"
 /* Private integration helpers are exercised without extending the public ABI. */
 #include "../../dixon/dixon_flint.c"
 #include <assert.h>
@@ -485,7 +486,7 @@ int main(int argc, char **argv)
     g_dixon_verbose_level = 0;
     omp_set_num_threads(4);
     assert(g_dixon_mq_step1_filter == 1);
-    unsetenv("DRSOLVE_PREDICT_MAXRANK");
+    dr_test_unsetenv("DRSOLVE_PREDICT_MAXRANK");
     if (argc == 2 && strcmp(argv[1], "--bench") == 0) {
         benchmark_projection();
         flint_cleanup_master();
