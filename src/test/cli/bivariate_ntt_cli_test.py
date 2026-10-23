@@ -21,6 +21,8 @@ with tempfile.TemporaryDirectory() as tmp:
              for d in (2, 3, 5, 8) for seed in (1, 7)]
     cases += [
         ['x+y,x-y', 'x', '65537'],
+        ['2*x^2+y^2+1,3*x^2+x+y+2', 'x', '5'],
+        ['x^3+y^3+1,x^3+y+2', 'x', '101'],
         ['2*x^3+y^3+1,3*x^2+y+2', 'x', '65537'],
         ['x^2+y^5+1,x+y^3+2', 'x', '65537'],
         ['(x+y)*(x+1),(x+y)*(x+2)', 'x', '65537'],
@@ -45,6 +47,12 @@ with tempfile.TemporaryDirectory() as tmp:
             log, actual = run(args, ['--threads', threads])
             assert 'Dixon/Bezout fast time:' in log and 'fallback' not in log, log
             assert actual == reference, (args, actual, reference)
+
+    # Both NTT and multipoint must accept resultants beyond the old 65536 cap.
+    for prime in ('998244353', '1000000007'):
+        log, actual = run(['x+y^65537,x+1', 'x', prime], ['--threads', '4'])
+        assert 'Dixon/Bezout fast time:' in log, log
+        assert actual == f'y^65537+{int(prime)-1}', (prime, actual)
 
     # Insufficient points, variable leading coefficients, zero input and
     # extra parameters retain the original matrix algorithm.

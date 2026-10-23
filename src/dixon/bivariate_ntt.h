@@ -28,13 +28,12 @@ static int dixon_try_bivariate_ntt(unified_mpoly_struct *result,
     if(nvars!=1 || npars!=1 || fq_nmod_ctx_degree(polys[0].ctx)!=1 ||
        g_field_equation_reduction) goto fallback;
     slong dx[2]={0},dt[2]={0};
-    /* Cap degrees before arithmetic and memory sizing. */
-    reason="degree or workspace limit exceeded";
+    reason="degree arithmetic overflow";
     for(int k=0;k<2;k++) for(slong j=0;j<dr_mpoly_length(polys+k);j++) {
         DR_MPOLY_TERM(term,polys+k,j);
         slong x=term.var_exp ? term.var_exp[0] : 0;
         slong t=term.par_exp ? term.par_exp[0] : 0;
-        if(x<0 || t<0 || x>65536 || t>65536) goto fallback;
+        if(x<0 || t<0 || x>WORD_MAX-t) goto fallback;
         dx[k]=FLINT_MAX(dx[k],x);dt[k]=FLINT_MAX(dt[k],x+t);
     }
     reason="requires positive x degrees and constant leading x coefficients";
@@ -45,16 +44,20 @@ static int dixon_try_bivariate_ntt(unified_mpoly_struct *result,
            term.par_exp && term.par_exp[0]) goto fallback;
     }
     /* Sylvester determinant weight: n*total(f)+m*total(g)-m*n.
-     * Use a wide temporary before the transform-length limit check. */
-    uint64_t wide_bound=(uint64_t)dx[1]*dt[0]+(uint64_t)dx[0]*(dt[1]-dx[1]);
-    reason="NTT length or workspace limit exceeded";
-    if(wide_bound>=65536) goto fallback;
-    ulong bound=(ulong)wide_bound;
+     * Only integer/array representation checks; no degree or memory budget. */
+    reason="degree or array length overflow";
+    if(dx[1]>(WORD_MAX-1)/dt[0])goto fallback;
+    ulong bound=dx[1]*dt[0];
+    if((ulong)(dt[1]-dx[1])>((ulong)WORD_MAX-1-bound)/(ulong)dx[0])goto fallback;
+    bound+=(ulong)dx[0]*(dt[1]-dx[1]);
     slong length=1;
-    while((ulong)length<=bound) length<<=1;
+    while((ulong)length<=bound) {
+        if(length>WORD_MAX/2)goto fallback;
+        length*=2;
+    }
+    if(dx[1]>WORD_MAX-2 || dx[0]>WORD_MAX-2-dx[1])goto fallback;
     slong rows=dx[0]+dx[1]+2;
-    size_t limit=(size_t)256*1024*1024/sizeof(ulong);
-    if((size_t)(rows+3)>limit/(size_t)length) goto fallback;
+    if((size_t)rows>SIZE_MAX/sizeof(ulong)/(size_t)length)goto fallback;
     ulong prime=fq_nmod_ctx_prime(polys[0].ctx);
     reason="prime field lacks roots of unity of the required order";
     if(prime<3 || (prime-1)%length) goto fallback;
@@ -156,7 +159,7 @@ static int dixon_try_bezout_fast(unified_mpoly_struct *result,
         fq_nmod_clear(coeff,polys[0].ctx);
         field_clear_elem(&c,field->field_id,field_ctx_data(field));
         dr_mpoly_make_monic(result);
-    } else dixon_debug_log("Dixon/Bezout fast resultant: unsupported input or insufficient field/workspace; using Dixon matrix\n");
+    } else dixon_debug_log("Dixon/Bezout fast resultant: unsupported input, insufficient field points or size overflow; using Dixon matrix\n");
     unified_mpoly_clear(temp);
     return ok;
 }

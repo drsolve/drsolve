@@ -6,7 +6,6 @@ cmake-build-*/
 # Temp directories
 out/
 temp/
-doc/
 paper/
 scripts/
 attack/

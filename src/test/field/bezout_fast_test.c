@@ -69,7 +69,7 @@ int main(void)
 {
     g_dixon_verbose_level=0;
     fmpz_t p;fmpz_init(p);
-    const char *primes[]={"65537","101","18446744073709551557",
+    const char *primes[]={"7","65537","101","18446744073709551557",
                          "18446744073709551629","170141183460469231731687303715884105727"};
     for(size_t i=0;i<sizeof(primes)/sizeof(*primes);i++) {
         fmpz_set_str(p,primes[i],10);

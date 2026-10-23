@@ -85,6 +85,31 @@ static int bezout_ntt(gr_ptr a, slong n, gr_srcptr roots, gr_ctx_t ctx)
     return status;
 }
 
+/* At the prime-field nodes 0,...,n-1, the inverse derivative of the
+ * node polynomial is (-1)^(n-1-i)/(i! (n-1-i)!). n <= p guarantees
+ * every factorial is invertible, including the boundary n == p.
+ * One inversion replaces derivative evaluation and n separate inversions. */
+static int bezout_grid_weights(gr_ptr weights, slong n, gr_ctx_t ctx)
+{
+    slong sz=ctx->sizeof_elem;
+    gr_ptr inverse_factorials=gr_heap_init_vec(n,ctx);
+    gr_ptr last=GR_ENTRY(inverse_factorials,n-1,sz);
+    int status=gr_one(last,ctx);
+    for(slong i=2;i<n;i++)status|=gr_mul_ui(last,last,i,ctx);
+    status|=gr_inv(last,last,ctx);
+    for(slong i=n-1;i>0;i--)
+        status|=gr_mul_ui(GR_ENTRY(inverse_factorials,i-1,sz),
+                          GR_ENTRY(inverse_factorials,i,sz),i,ctx);
+    for(slong i=0;i<n;i++) {
+        gr_ptr w=GR_ENTRY(weights,i,sz);
+        status|=gr_mul(w,GR_ENTRY(inverse_factorials,i,sz),
+                        GR_ENTRY(inverse_factorials,n-1-i,sz),ctx);
+        if((n-1-i)&1)status|=gr_neg(w,w,ctx);
+    }
+    gr_heap_clear_vec(inverse_factorials,n,ctx);
+    return status;
+}
+
 int unified_mpoly_resultant_bezout_try(unified_mpoly_t out,
     const unified_mpoly_t a, const unified_mpoly_t b, slong var, unified_mpoly_ctx_t ring)
 {
@@ -95,18 +120,25 @@ int unified_mpoly_resultant_bezout_try(unified_mpoly_t out,
     slong dx[2]={0},total[2]={0};ulong exps[2];
     for(int k=0;k<2;k++) {
         slong degrees[2];unified_mpoly_degrees_si(degrees,inputs[k]);
-        if(degrees[0]<0 || degrees[1]<0 || degrees[0]>65536 || degrees[1]>65536) return 0;
+        if(degrees[0]<0 || degrees[1]<0) return 0;
         dx[k]=degrees[var];total[k]=unified_mpoly_total_degree_si(inputs[k]);
-        if(dx[k]<1 || total[k]>131072) return 0;
+        if(dx[k]<1 || total[k]<dx[k]) return 0;
         for(slong i=0;i<unified_mpoly_length(inputs[k]);i++) {
             unified_mpoly_get_term_exp_ui(exps,inputs[k],i,ring);
             if(exps[var]==(ulong)dx[k] && exps[1-var]) return 0;
         }
     }
-    uint64_t wide=(uint64_t)dx[1]*total[0]+(uint64_t)dx[0]*(total[1]-dx[1]);
-    if(wide>=65536) return 0;
-    slong bound=wide,n=1,rows=dx[0]+dx[1]+2;
-    while(n<=bound)n<<=1;
+    /* Only representation/overflow checks, no degree or memory budget. */
+    if(dx[1]>(WORD_MAX-1)/total[0])return 0;
+    slong bound=dx[1]*total[0];
+    if(total[1]-dx[1]>(WORD_MAX-1-bound)/dx[0])return 0;
+    bound+=dx[0]*(total[1]-dx[1]);
+    if(dx[1]>WORD_MAX-2 || dx[0]>WORD_MAX-2-dx[1])return 0;
+    slong n=1,rows=dx[0]+dx[1]+2;
+    while(n<=bound) {
+        if(n>WORD_MAX/2){n=0;break;} /* Multipoint may still fit. */
+        n*=2;
+    }
     field_ctx_t *field=ring->field_ctx;
     gr_ctx_t ctx;fmpz_t order,qm1,exponent;
     fmpz_init(order);fmpz_init(qm1);fmpz_init(exponent);
@@ -127,13 +159,14 @@ int unified_mpoly_resultant_bezout_try(unified_mpoly_t out,
     if(field->field_id==FIELD_ID_NMOD || field->field_id==FIELD_ID_FMPZ_MOD)
         status=gr_ctx_set_is_field(ctx,T_TRUE);
     if(status!=GR_SUCCESS) goto cleanup_ctx;
-    /* Bound dynamic element payloads as well as headers and product trees. */
-    size_t elem_bytes=ctx->sizeof_elem+((size_t)fmpz_bits(order)+7)/8+32;
-    size_t limit=(size_t)256*1024*1024/elem_bytes;
-    if((size_t)(rows+48)>limit/(size_t)n || fmpz_cmp_ui(order,bound+1)<0) goto cleanup_ctx;
+    if(fmpz_cmp_ui(order,bound+1)<0) goto cleanup_ctx;
+    /* Validate both possible transform layouts before allocating scratch. */
+    slong count=n ? n : bound+1;
+    if(rows>WORD_MAX/count || (size_t)rows>SIZE_MAX/(size_t)ctx->sizeof_elem/(size_t)count ||
+       (size_t)rows>SIZE_MAX/sizeof(gr_poly_struct)) goto cleanup_ctx;
     gr_ptr root=gr_heap_init(ctx),temp=gr_heap_init(ctx),candidate=gr_heap_init(ctx);
     fmpz_sub_ui(qm1,order,1);
-    if(fmpz_fdiv_ui(qm1,n)==0) {
+    if(n && fmpz_fdiv_ui(qm1,n)==0) {
         fmpz_divexact_ui(exponent,qm1,n);
         for(ulong i=2;i<130;i++) {
             if(i<66 || field->field_id==FIELD_ID_NMOD || field->field_id==FIELD_ID_FMPZ_MOD)
@@ -222,13 +255,25 @@ int unified_mpoly_resultant_bezout_try(unified_mpoly_t out,
             status|=gr_poly_set_coeff_scalar(result,i,c,ctx);
         }
     } else if(status==GR_SUCCESS) {
-        status|=gr_poly_interpolate_fast(result,points,samples,ctx);
+        gr_ptr weights=gr_heap_init_vec(n,ctx);
+        if(field->field_id==FIELD_ID_NMOD || field->field_id==FIELD_ID_FMPZ_MOD)
+            status|=bezout_grid_weights(weights,n,ctx);
+        else status|=_gr_poly_interpolation_weights(weights,tree,n,ctx);
+        gr_poly_fit_length(result,n,ctx);
+        if(status==GR_SUCCESS) {
+            status|=_gr_poly_interpolate_fast_precomp(result->coeffs,samples->entries,tree,weights,n,ctx);
+            result->length=n;
+            _gr_poly_normalise(result,ctx);
+        }
+        gr_heap_clear_vec(weights,n,ctx);
     }
     if(status==GR_SUCCESS) {
         /* Publish only after all computations succeeded; aliases are safe. */
         unified_mpoly_t answer=unified_mpoly_init(ring);
         exps[0]=exps[1]=0;
-        for(slong i=0;i<result->length;i++) {
+        /* Descending parameter powers append in canonical monomial order;
+         * ascending insertion repeatedly shifts the already built output. */
+        for(slong i=result->length;i-- >0;) {
             exps[1-var]=i;
             bezout_set_coeff(answer,GR_ENTRY(result->coeffs,i,sz),exps);
         }
