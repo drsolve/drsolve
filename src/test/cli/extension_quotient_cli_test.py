@@ -24,6 +24,9 @@ with tempfile.TemporaryDirectory(prefix='extension-bezoutian-') as work:
         return resultant, log
 
     def compare(arguments, fallback=None):
+        # Bivariate fast resultants bypass the quotient construction and its
+        # fallback checks; compare the quotient and Dixon matrix paths here.
+        arguments = [*arguments, '--no-bezout-fast']
         reference, _ = run(arguments, '--no-quotient')
         for threads in (1, 4):
             result, log = run(arguments, '--quotient', threads)
