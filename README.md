@@ -3,8 +3,6 @@ A C implementation for computing Dixon resultants and solving polynomial systems
 
 Website: <https://drsolve.github.io>
 
-Author: Haohai Suo (<haohai.suo@mail.sdu.edu.cn>)
-
 ## Features
 - Dixon resultant computation for variable elimination
 - Polynomial system solver
@@ -276,6 +274,10 @@ Example:
 
 ---
 
+## Author
+
+Haohai Suo (<haohai.suo@mail.sdu.edu.cn>)
+
 ## Paper
 
 This library implements the methods described in:
@@ -286,3 +288,4 @@ This library implements the methods described in:
 
 ## License
 DRSolve is distributed under the GNU General Public License version 2.0 (GPL-2.0-or-later). See the file COPYING.
+

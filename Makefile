@@ -1316,3 +1316,14 @@ $(addprefix $(BUILD_DIR)/,dixon_mq_filter_test dixon_mq_step4_test \
   dixon_projected_matrix_test dixon_recursive_native_test dixon_pipeline_test \
   mq_compact_test mq_pencil_test mq_direct_core_test mq_shared_core_test \
   mq_core_interpolation_test mq_dag_core_test): $(SRC_DIR)/test/test_env.h
+
+.PHONY: test-bivariate-ntt-cli
+test-bivariate-ntt-cli: $(DIXON_TARGET)
+	python3 $(SRC_DIR)/test/cli/bivariate_ntt_cli_test.py ./$(DIXON_TARGET)
+
+$(BUILD_DIR)/bezout_fast_test: $(SRC_DIR)/test/field/bezout_fast_test.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+
+.PHONY: test-bezout-fast
+test-bezout-fast: $(BUILD_DIR)/bezout_fast_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=4 ./$(BUILD_DIR)/bezout_fast_test

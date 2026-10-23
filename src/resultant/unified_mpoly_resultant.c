@@ -288,9 +288,12 @@ void unified_mpoly_univar_to_mpoly_univar(mpoly_univar_t A,
    MAIN RESULTANT FUNCTION USING GENERIC RING INTERFACE
    ============================================================================ */
 
+#include "bezout_fast.h"
+
 int unified_mpoly_resultant(unified_mpoly_t R, const unified_mpoly_t A,
                            const unified_mpoly_t B, slong var,
                            unified_mpoly_ctx_t ctx) {
+    if (unified_mpoly_resultant_bezout_try(R,A,B,var,ctx)) return 1;
     if (ctx->field_ctx->field_id == FIELD_ID_FMPZ_MOD)
         return fmpz_mod_mpoly_resultant(GET_BIG_POLY(R), GET_BIG_POLY(A), GET_BIG_POLY(B), var, GET_BIG_CTX(ctx));
 

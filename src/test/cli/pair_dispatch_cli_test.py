@@ -11,7 +11,7 @@ system = 'x+y,y^2-y'
 with tempfile.TemporaryDirectory() as tmp:
     path = Path(tmp) / 'result.dr'
     def run(*args):
-        p = subprocess.run([binary, *args, '-o', str(path)], capture_output=True,
+        p = subprocess.run([binary, '--no-bezout-fast', *args, '-o', str(path)], capture_output=True,
                            text=True, check=True, timeout=120)
         return p.stdout + p.stderr, path.read_text()
 

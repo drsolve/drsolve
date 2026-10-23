@@ -1265,6 +1265,9 @@ if(BUILD_TESTING)
   add_test(NAME drsolve_fmpz_mat_poly COMMAND fmpz_mat_poly_test)
   set_tests_properties(drsolve_fmpz_mat_poly PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
   drsolve_add_test_program(fmpz_unified_test src/test/field/fmpz_unified_test.c)
+  drsolve_add_test_program(bezout_fast_test src/test/field/bezout_fast_test.c)
+  add_test(NAME drsolve_bezout_fast COMMAND bezout_fast_test)
+  set_tests_properties(drsolve_bezout_fast PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
   add_test(NAME drsolve_fmpz_unified COMMAND fmpz_unified_test)
   set_tests_properties(drsolve_fmpz_unified PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
   drsolve_add_test_program(mq_compact_test src/test/mq/mq_compact_test.c
@@ -1361,6 +1364,9 @@ if(BUILD_TESTING)
               --binary $<TARGET_FILE:drsolve_exe> --seeds 1 --threads 1 4 --cases "[3]*3" "[2,3,4]")
     add_test(NAME drsolve_large_prime_schur_cli
       COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/large_prime_schur_cli_test.py
+              $<TARGET_FILE:drsolve_exe>)
+    add_test(NAME drsolve_bivariate_ntt_cli
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/bivariate_ntt_cli_test.py
               $<TARGET_FILE:drsolve_exe>)
     add_test(NAME drsolve_large_prime_subres_cli
       COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/large_prime_subres_cli_test.py

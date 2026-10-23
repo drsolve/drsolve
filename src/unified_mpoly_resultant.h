@@ -88,6 +88,11 @@ void unified_mpoly_univar_to_mpoly_univar(mpoly_univar_t A,
    MAIN RESULTANT FUNCTION DECLARATION
    ============================================================================ */
 
+/* Exact fast path; unsupported inputs leave R unchanged. Controlled by
+ * g_dixon_bezout_fast (default on). Same context and aliasing rules as resultant. */
+int unified_mpoly_resultant_bezout_try(unified_mpoly_t R, const unified_mpoly_t A,
+    const unified_mpoly_t B, slong var, unified_mpoly_ctx_t ctx);
+
 int unified_mpoly_resultant(unified_mpoly_t R, const unified_mpoly_t A,
                            const unified_mpoly_t B, slong var,
                            unified_mpoly_ctx_t ctx);

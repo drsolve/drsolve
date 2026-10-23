@@ -5,8 +5,9 @@
 
 /* Map source variables to destination variables; rings share a field. */
 void unified_mpoly_reindex(unified_mpoly_t out, const unified_mpoly_t in, const slong *map);
-/* Prime fields: n+1 input polynomials, first n variables eliminated;
- * the result ring has only parameters. Returns 0 on unsupported input/failure. */
+/* n+1 input polynomials, first n variables eliminated; output has parameters
+ * only. Prime fields support the matrix fallback; extension-field pairs with
+ * one parameter support the fast Bezout path. Returns 0 if unsupported/failed. */
 int unified_dixon_resultant(unified_mpoly_t out, unified_mpoly_t *polys, slong n);
 /* Matrix helpers: specialization-based degree-aware selection, and exact
  * weighted-degree Schur reduction in place. The latter returns core size h;

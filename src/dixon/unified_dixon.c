@@ -530,8 +530,18 @@ static int interpolate_minor(unified_mpoly_t out, unified_mpoly_t **m, slong n)
 int unified_dixon_resultant(unified_mpoly_t out, unified_mpoly_t *polys, slong n)
 {
     field_ctx_t *f = out->ctx_ptr->field_ctx;
-    if (n < 0 || (f->field_id != FIELD_ID_NMOD && f->field_id != FIELD_ID_FMPZ_MOD))
-        return 0;
+    if (n < 0) return 0;
+    if(n==1 && out->ctx_ptr->nvars==1) {
+        unified_mpoly_t pair=unified_mpoly_init(polys[0]->ctx_ptr);
+        int fast=unified_mpoly_resultant_bezout_try(pair,polys[0],polys[1],0,polys[0]->ctx_ptr);
+        if(fast) {
+            const slong map[2]={0,0};
+            unified_mpoly_reindex(out,pair,map);
+        }
+        unified_mpoly_clear(pair);
+        if(fast) return 1;
+    }
+    if(f->field_id != FIELD_ID_NMOD && f->field_id != FIELD_ID_FMPZ_MOD) return 0;
     dixon_info_log("\nStep 1: Build Dixon polynomial\n");
     double step_start = get_wall_time();
     slong np = out->ctx_ptr->nvars, dim = 2 * n + np;

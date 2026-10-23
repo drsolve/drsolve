@@ -144,6 +144,11 @@ void drsolve_cli_print_full_usage(const char *prog_name)
     puts("");
     puts("RESULTANTS AND DETERMINANTS:");
     puts("  --dixon                       Dixon resultant (default).");
+    puts("  --bezout-fast / --no-bezout-fast");
+    puts("                                Dixon/Bezout fast pair resultant (default auto):");
+    puts("                                NTT or multipoint interpolation over finite fields.");
+    puts("                                Explicit resultant/determinant methods override auto.");
+    puts("                                --bivar-ntt / --no-bivar-ntt are compatibility aliases.");
     puts("  --macaulay                    Macaulay resultant.");
     puts("  --subres                      Subresultant: 2 polynomials, 1 elimination var.");
     puts("  --resultant NAME              dixon|macaulay|subres (alias --resultant-method).");
@@ -354,6 +359,10 @@ static int validate_cli_options(int argc, char *argv[])
         {"no-mq-step1-filter", no_argument, NULL, OPT_FLAG},
         {"mq-step4-schur", no_argument, NULL, OPT_FLAG},
         {"no-mq-step4-schur", no_argument, NULL, OPT_FLAG},
+        {"bezout-fast", no_argument, NULL, OPT_FLAG},
+        {"no-bezout-fast", no_argument, NULL, OPT_FLAG},
+        {"no-bivar-ntt", no_argument, NULL, OPT_FLAG},
+        {"bivar-ntt", no_argument, NULL, OPT_FLAG},
         {"no-schur-seed", no_argument, NULL, OPT_FLAG},
         {"step1", required_argument, NULL, OPT_FLAG},
         {"step4", required_argument, NULL, OPT_FLAG},

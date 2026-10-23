@@ -57,6 +57,7 @@ int g_dixon_mq_step1_rank = 1;
 int g_dixon_mq_step1_simplex = 0;
 int g_dixon_mq_step1_pencil = 0;
 int g_dixon_mq_step4_schur = 1;
+int g_dixon_bezout_fast = 1;
 int g_dixon_schur_seed = 1;
 int g_dixon_mq_quotient = 0;
 int g_dixon_step3_second_verification = 0;
@@ -6841,10 +6842,14 @@ int dixon_try_mq_quotient_resultant(unified_mpoly_struct *result,
     return 1;
 }
 
+#include "unified_mpoly_resultant.h"
+#include "bivariate_ntt.h"
+
 void fq_dixon_resultant(unified_mpoly_struct *result, unified_mpoly_struct *polys, slong nvars,
                         slong npars)
 {
     cleanup_unified_workspace();
+    if(dixon_try_bezout_fast(result,polys,nvars,npars))return;
     if(dixon_try_mq_quotient_resultant(result,polys,nvars,npars))return;
     dixon_info_log("\nStep 1: Build Dixon polynomial\n");
     clock_t step1_cpu_start = clock();
@@ -6999,6 +7004,7 @@ void fq_dixon_resultant_with_names(unified_mpoly_struct *result, unified_mpoly_s
                                    const char *gen_name)
 {
     cleanup_unified_workspace();
+    if(dixon_try_bezout_fast(result,polys,nvars,npars))return;
     if(dixon_try_mq_quotient_resultant(result,polys,nvars,npars))return;
     
     dixon_info_log("\nStep 1: Build Dixon polynomial\n");
