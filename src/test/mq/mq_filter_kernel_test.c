@@ -173,7 +173,13 @@ static void check_shared_shards(void)
     assert(prev.words == 3);
     mq_shared_empty(&shifts, prev.bits, prev.words);
     ulong exp[64] = {0}, key[3];
-    for (unsigned mask = 0; mask < 65536; mask++) {
+    /* Only an OpenMP build needs enough products to cross the sharding threshold. */
+#ifdef _OPENMP
+    const unsigned masks = 65536;
+#else
+    const unsigned masks = 256;
+#endif
+    for (unsigned mask = 0; mask < masks; mask++) {
         for (slong v = 0; v < 16; v++) exp[v] = (mask >> v) & 1;
         mpoly_set_monomial_ui(key, exp, prev.bits, ctx->minfo);
         mq_shared_insert(&prev, key);
@@ -191,12 +197,18 @@ static void check_shared_shards(void)
         const mq_det_filter *f = projected ? &filter : NULL;
         mq_shared_support reference;
         uint32_t *expected = mq_shared_next(&reference, &prev, &shifts, f, ctx, 1, 0);
-        int threads[] = {3, 4, 16};
-        for (unsigned t = 0; t < 3; t++) {
+        int threads[] = {1, 3, 4, 16};
+        for (unsigned t = 0; t < sizeof(threads)/sizeof(*threads); t++) {
             omp_set_num_threads(threads[t]);
             mq_shared_support actual;
             uint32_t *map = mq_shared_next(&actual, &prev, &shifts, f, ctx, 1, 1);
-            assert(actual.count == reference.count && actual.table == NULL);
+            assert(actual.count == reference.count);
+            /* Serial construction retains its lookup table; shards discard it. */
+#ifdef _OPENMP
+            assert((actual.table == NULL) == (threads[t] > 1));
+#else
+            assert(actual.table != NULL);
+#endif
             for (size_t i = 0; i < prev.count*shifts.count; i++) {
                 assert((map[i] == UINT32_MAX) == (expected[i] == UINT32_MAX));
                 if (map[i] != UINT32_MAX)

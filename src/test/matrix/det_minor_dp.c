@@ -189,7 +189,9 @@ static void check_field(ulong prime, slong degree, ulong zech_limit)
     unified_mpoly_ctx_t ctx = unified_mpoly_ctx_init(2, ORD_LEX, &field);
     flint_rand_init(state);
     flint_rand_set_seed(state, 123, 456);
-    for (slong n = 0; n <= 7; n++) {
+    /* Dense random polynomials stay small; numeric fixtures above retain
+     * the n=6 cache boundary and larger scheduling checks. */
+    for (slong n = 0; n <= 4; n++) {
         unified_mpoly_t **matrix = unified_mpoly_mat_init(n, n, ctx);
         unified_mpoly_t expected = unified_mpoly_init(ctx);
         unified_mpoly_t actual = unified_mpoly_init(ctx);
@@ -204,7 +206,7 @@ static void check_field(ulong prime, slong degree, ulong zech_limit)
             if (variant == 3 && n > 1)
                 for (slong j = 0; j < n; j++) unified_mpoly_set(matrix[1][j], matrix[0][j]);
             compute_unified_mpoly_det_recursive(expected, matrix, n, ctx);
-            /* n=6 needs exactly 35 entries for two adjacent layers. */
+            /* Exercise disabled, constrained, and generous DP budgets. */
             const slong limits[] = {0, 1, 34, 35, 1024};
             for (size_t l = 0; l < sizeof(limits) / sizeof(limits[0]); l++) {
                 g_dixon_det_cache_limit = limits[l];

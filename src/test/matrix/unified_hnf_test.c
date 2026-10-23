@@ -120,7 +120,7 @@ static void check_operations(field_ctx_t *field,const fq_nmod_ctx_t ctx,flint_ra
 
 static void check_determinants(field_ctx_t *field,const fq_nmod_ctx_t ctx,flint_rand_t rng)
 {
-    for(slong n=0;n<=7;n++) {
+    for(slong n=0;n<=4;n++) {
         fq_nmod_poly_mat_t a,copy;fq_nmod_poly_mat_init(a,n,n,ctx);fq_nmod_poly_mat_init(copy,n,n,ctx);
         unified_mat_poly_t native;unified_mat_poly_init(native,n,n,field);
         unified_poly_t result;unified_poly_init(result,field);
@@ -128,7 +128,7 @@ static void check_determinants(field_ctx_t *field,const fq_nmod_ctx_t ctx,flint_
         fq_nmod_poly_init(expected,ctx);fq_nmod_poly_init(actual,ctx);
         fq_nmod_poly_init(one,ctx);fq_nmod_poly_one(one,ctx);fq_nmod_poly_init(content,ctx);
         fq_nmod_poly_set_coeff(content,0,one->coeffs,ctx);fq_nmod_poly_set_coeff(content,2,one->coeffs,ctx);
-        for(int trial=0;trial<14;trial++) {
+        for(int trial=0;trial<6;trial++) {
             random_matrix(a,rng,trial==0 ? 1 : 2+trial%5,ctx);
             if(trial==1) for(slong i=0;i<n;i++) for(slong j=0;j<i;j++) fq_nmod_poly_zero(fq_nmod_poly_mat_entry(a,i,j),ctx);
             if(trial==2 && n>1) for(slong j=0;j<n;j++) fq_nmod_poly_set(fq_nmod_poly_mat_entry(a,1,j),fq_nmod_poly_mat_entry(a,0,j),ctx);

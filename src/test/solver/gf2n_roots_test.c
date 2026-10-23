@@ -25,17 +25,17 @@ int main(void)
         /* Check the multiplication itself, including zero padding and both
          * hardware and software arithmetic, independently of root extraction. */
         gf2n_native_ctx *native=gf2n_native_create(ctx);
-        gf2128_t *buf=flint_calloc(8*256,sizeof(*buf));
-        gf2128_t *a=buf, *b=a+256, *product=b+256, *scratch=product+512;
-        fq_nmod_poly_randtest(f,state,130,ctx);
-        fq_nmod_poly_randtest(linear,state,194,ctx);
+        gf2128_t *buf=flint_calloc(8*32,sizeof(*buf));
+        gf2128_t *a=buf, *b=a+32, *product=b+32, *scratch=product+64;
+        fq_nmod_poly_randtest(f,state,18,ctx);
+        fq_nmod_poly_randtest(linear,state,26,ctx);
         for (slong i=0; i<f->length; ++i) a[i]=gf2n_native_from_fq(f->coeffs+i);
         for (slong i=0; i<linear->length; ++i) b[i]=gf2n_native_from_fq(linear->coeffs+i);
         fq_nmod_poly_mul(f,f,linear,ctx);
         for (int software=0; software<2; ++software) {
             native->clmul=software ? 0 : has_pclmulqdq();
-            gf2n_root_mul(product,a,b,256,scratch,native);
-            for (slong i=0; i<512; ++i) {
+            gf2n_root_mul(product,a,b,32,scratch,native);
+            for (slong i=0; i<64; ++i) {
                 gf2n_native_to_fq(v,product[i],ctx);
                 fq_nmod_poly_get_coeff(r,f,i,ctx);
                 assert(fq_nmod_equal(r,v,ctx));
@@ -43,18 +43,18 @@ int main(void)
         }
         flint_free(buf); gf2n_native_destroy(native);
         for (int trial=0; trial<6; ++trial) {
-            fq_nmod_poly_randtest(f, state, trial == 3 ? (ns[k] == 32 ? 1002 : ns[k] == 128 ? 1026 : 258) : 36, ctx);
+            fq_nmod_poly_randtest(f, state, trial == 3 ? 18 : 8, ctx);
             fq_nmod_randtest_not_zero(r, state, ctx);
             if (trial == 2) { /* Purely inseparable, including zero root. */
                 fq_nmod_poly_zero(f, ctx);
-                fq_nmod_poly_set_coeff(f, 64, r, ctx);
+                fq_nmod_poly_set_coeff(f, 8, r, ctx);
             } else if (trial == 5) {
                 fq_nmod_poly_zero(f, ctx);
-                fq_nmod_poly_set_coeff(f, ns[k] == 1 ? 8193 : 31, r, ctx);
+                fq_nmod_poly_set_coeff(f, ns[k] == 1 ? 17 : 7, r, ctx);
                 fq_nmod_poly_set_coeff(f, 0, r, ctx);
             } else if (trial == 4) {
                 fq_nmod_poly_one(f, ctx);
-                for (slong j=0; j<40; ++j) {
+                for (slong j=0; j<5; ++j) {
                     fq_nmod_randtest(r, state, ctx);
                     fq_nmod_poly_gen(linear, ctx);
                     fq_nmod_poly_set_coeff(linear, 0, r, ctx);

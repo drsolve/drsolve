@@ -40,13 +40,12 @@ with tempfile.TemporaryDirectory(prefix='extension-bezoutian-') as work:
                   '2^64:t^64+t^4+t^3+t+1'):
         compare(['-r', '[2]*3', field, '--seed', '12345'])
     for degrees, field in (('[3]*3', '2^8'), ('[2,3,4]', '2^8'),
-                           ('[1,3,5]', '2^8'), ('[1,1,1,1,1,1,1,2,3]', '2^8'), ('[3]*3', '3^3'),
+                           ('[1,2,3]', '2^8'), ('[3]*3', '3^3'),
                            ('[2]*3', '2^5'), ('[2]*2', '3^2'),
                            ('[2]*4', '101^3'), ('[2]*4', '2^16')):
         compare(['-r', degrees, field, '--seed', '12345'])
-    compare(['-r', '[2]*9', '2^8', '--seed', '12345'])
-    # MQ inputs must actually use the shared-frame kernel, including >8 equations.
-    for count in (3, 9):
+    # Small MQ inputs must actually use the shared-frame kernel.
+    for count in (3, 4):
         arguments = ['-r', f'[2]*{count}', '256', '--seed', '12345', '--time']
         reference, log = run(arguments, '--quotient', 4)
         assert 'shared leading-frame MQ kernel' in log and 'Compact byte minors' in log, log

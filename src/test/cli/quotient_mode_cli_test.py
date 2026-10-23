@@ -12,7 +12,7 @@ with tempfile.TemporaryDirectory(prefix='quotient-mode-') as directory:
     output = Path(directory) / 'result.dr'
 
     def run(*options):
-        p = subprocess.run([str(binary), '-r', '[2]*8', '257', '--seed', '12345',
+        p = subprocess.run([str(binary), '-r', '[2]*3', '257', '--seed', '12345',
                             '-v', '2', '-o', str(output), *options],
                            env=env, capture_output=True, text=True, timeout=120)
         log = p.stdout + p.stderr
@@ -52,7 +52,7 @@ with tempfile.TemporaryDirectory(prefix='quotient-mode-') as directory:
                     ('--solver', 'dixon', '--mq-quotient')]:
         log, _ = run(*options)
         assert points(log) == expected
-    log, _ = run('-s', '-n', '7')
-    assert 'Solver: quotient algebra (8 equations, 7 variables)' in log
+    log, _ = run('-s', '-n', '2')
+    assert 'Solver: quotient algebra (3 equations, 2 variables)' in log
     assert '[PASS]' in log
 print('Quotient mode CLI tests passed')

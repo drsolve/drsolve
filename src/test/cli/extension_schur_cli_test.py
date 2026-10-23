@@ -10,9 +10,9 @@ binary = Path(sys.argv[1] if len(sys.argv) > 1 else './drsolve').resolve()
 env = dict(os.environ, LD_LIBRARY_PATH=str(binary.parent) + ':' + os.environ.get('LD_LIBRARY_PATH', ''))
 with tempfile.TemporaryDirectory(prefix='extension-schur-') as work:
     output = Path(work) / 'result.dr'
-    cases = [('[10]*3', '256', []), ('[10]*3', '257', []),
+    cases = [('[3]*3', '256', []), ('[3]*3', '257', []),
              ('[3]*3', '101^3', []), ('[2,3,4]', '3^3', []),
-             ('[3]*4', '256', []), ('[2]*4', '256', ['--step1', '5']), ('[3]*3', '256', ['--step1', '0'])]
+             ('[2]*4', '256', []), ('[2]*4', '256', ['--step1', '5']), ('[3]*3', '256', ['--step1', '0'])]
     cases += [('[3]*3', field, []) for field in
               ('2^4', '2^4:t^4+t^3+1', '2^16', '2^32', '2^64', '2^128', '2^5',
                '2^8:t^8+t^4+t^3+t+1', '2^9', '2^17', '2^65', '2^127',

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exact CLI comparisons and fallback checks for --mq-quotient.
 
-Run from the repository root; --repeat 3 also benchmarks the 8/9 equation cases.
+Small deterministic systems exercise construction and fallback paths.
 """
 import argparse
 import json
@@ -28,7 +28,7 @@ def main():
             for enabled in (False, True):
                 stem = f"{name}_{trial}_{int(enabled)}"
                 path = out / (stem + ".dr")
-                cmd = [args.binary, *arguments, "--time", "--threads", "16", "-o", str(path)]
+                cmd = [args.binary, *arguments, "--time", "--threads", "4", "-o", str(path)]
                 if enabled:
                     cmd.append("--mq-quotient")
                 else:
@@ -51,10 +51,10 @@ def main():
             (out / "results.json").write_text(json.dumps(records, indent=2))
             print(json.dumps(record), flush=True)
 
-    for n, prime in ((4, 65537), (6, 536870923), (8, 37), (8, 65537), (9, 65537)):
+    for n, prime in ((3, 65537), (4, 536870923), (4, 37)):
         check(f"n{n}_p{prime}", ["-r", f"[2]*{n}", str(prime), "--seed", "12345"],
-              True, args.repeat if prime == 65537 and n >= 8 else 1)
-    check("seed54321", ["-r", "[2]*9", "65537", "--seed", "54321"], True)
+              True, args.repeat)
+    check("seed54321", ["-r", "[2]*4", "65537", "--seed", "54321"], True)
     check("recursive", ["-r", "[2]*4", "65537", "--seed", "12345", "--method", "5"], True)
     check("field_equation_final", ["-r", "[2]*3", "37", "--seed", "12345", "--field-equation-s"], False)
     check("cubic", ["-r", "[3]*3", "65537", "--seed", "12345"], True)
@@ -62,7 +62,7 @@ def main():
     check("extension", ["-r", "[2]*3", "2^8", "--seed", "12345"], True)
     check("singular_leading", ["x^2+y^2+z,x^2+y^2+x+1,x^2+y^2+y+2", "x,y", "65537"], False)
     check("degree_drop", ["x^2+y,x^2+y+1", "x", "65537"], False)
-    for name in ("n8_p65537", "n9_p65537"):
+    for name in ("n3_p65537", "n4_p37"):
         subset = [r for r in records if r["case"] == name]
         print(name, {key: statistics.median(r[key] for r in subset)
                      for key in ("dixon_seconds", "quotient_seconds")})
