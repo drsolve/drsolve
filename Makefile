@@ -178,6 +178,7 @@ MATH_SOURCES = $(SRC_DIR)/dixon/dixon_complexity.c \
                $(SRC_DIR)/determinant/fq_multivariate_interpolation.c \
                $(SRC_DIR)/determinant/fq_poly_mat_det.c \
                $(SRC_DIR)/determinant/mq_poly_mat_det.c \
+               $(SRC_DIR)/determinant/inverse_block_det.c \
                $(SRC_DIR)/determinant/mq_quotient.c \
                $(SRC_DIR)/determinant/degree_quotient.c \
                $(SRC_DIR)/determinant/extension_quotient.c \
@@ -1413,3 +1414,11 @@ test-windows-gui: windows-gui $(BUILD_DIR)/win_gui_wrapper_test.exe
 $(BUILD_DIR)/win_gui_wrapper_test.exe: src/test/cli/win_gui_wrapper_test.c apps/win_gui/dixon_wrapper.c apps/win_gui/dixon_wrapper.h src/test/test_env.h Makefile
 	@mkdir -p $(BUILD_DIR)
 	$(WIN_GUI_CC) -O2 -Wall -Wextra -Werror -UNDEBUG -D_WIN32_WINNT=0x0601 -Iapps/win_gui -o $@ src/test/cli/win_gui_wrapper_test.c apps/win_gui/dixon_wrapper.c -lshlwapi
+
+$(BUILD_DIR)/inverse_block_test: $(SRC_DIR)/test/matrix/inverse_block_test.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+.PHONY: test-inverse-block test-inverse-block-cli
+test-inverse-block: $(BUILD_DIR)/inverse_block_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH ./$(BUILD_DIR)/inverse_block_test
+test-inverse-block-cli: $(DIXON_TARGET)
+	python3 $(SRC_DIR)/test/cli/inverse_block_cli_test.py ./$(DIXON_TARGET)

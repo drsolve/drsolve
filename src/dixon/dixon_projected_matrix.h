@@ -16,6 +16,13 @@ static void dixon_mq_native_det(fq_nmod_poly_t out, nmod_poly_mat_t matrix,
     ulong prime=fq_nmod_ctx_prime(ctx), factor=p->core_ready ? p->core_factor : 1;
     int compressed = p->core_ready;
     slong interpolation_bound = p->core_ready ? p->core_bound : -1;
+    nmod_poly_t det; nmod_poly_init(det,prime);
+    int attempted=0;
+    if (p->inverse_block && g_dixon_mq_step4_schur<0 && !p->core_ready) {
+        attempted=1;
+        if (dixon_inverse_block_try(det,matrix)) goto finish;
+        dixon_info_log("  Step 4 fallback: try Schur compression before the original determinant backend\n");
+    }
     if(p->size && p->size==matrix->r && matrix->r==matrix->c) {
         double start=get_wall_time();
         slong n=matrix->r;
@@ -80,10 +87,11 @@ static void dixon_mq_native_det(fq_nmod_poly_t out, nmod_poly_mat_t matrix,
                              get_wall_time()-start);
         nmod_poly_mat_clear(core);
     }
-    nmod_poly_t det; nmod_poly_init(det,prime);
-    int interpolated = fq_nmod_poly_mat_det_wants_interpolation() &&
+    int reconstructed = !attempted && p->inverse_block && dixon_inverse_block_try(det,matrix);
+    int interpolated = !reconstructed && fq_nmod_poly_mat_det_wants_interpolation() &&
         interpolation_bound >= 0 && dixon_nmod_poly_mat_det_interpolate(det,matrix,interpolation_bound);
-    if (!interpolated) dixon_nmod_poly_mat_det(det,matrix);
+    if (!reconstructed && !interpolated) dixon_nmod_poly_mat_det(det,matrix);
+finish:
     nmod_poly_scalar_mul_nmod(det,det,factor);
     fq_nmod_t coefficient; fq_nmod_init(coefficient,ctx); fq_nmod_poly_zero(out,ctx);
     for(slong k=0;k<det->length;k++) {

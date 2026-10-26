@@ -11,7 +11,7 @@ with tempfile.TemporaryDirectory() as tmp:
     output = Path(tmp) / 'result.dr'
     for degrees in ('[3]*3', '[2]*4', '[2,3,4]'):
         results = []
-        for flags in (['--no-mq-step4-schur'], [], ['--no-schur-seed'], ['--step4', '2']):
+        for flags in (['--no-step4-schur'], [], ['--no-schur-seed'], ['--step4', '2']):
             run = subprocess.run([binary, '-r', degrees, prime, '--seed', '12345',
                                   '--resultant-only', '-v', '2', '--time', *flags,
                                   '-o', str(output)], capture_output=True, text=True,
@@ -19,9 +19,9 @@ with tempfile.TemporaryDirectory() as tmp:
             log = run.stdout + run.stderr
             assert re.findall(r'^Step ([1-4]):', log, re.M) == ['1', '2', '3', '4'], log
             assert re.findall(r'^Step ([1-4]) time:', log, re.M) == ['1', '2', '3', '4'], log
-            assert ('Schur-first selection:' in log) == (flags in ([], ['--step4', '2'])), log
+            assert ('Schur-first selection:' in log) == (flags != ['--no-schur-seed']), log
             compressed = re.search(r'Step 4 adaptive Schur: (\d+) -> (\d+)', log)
-            if flags == ['--no-mq-step4-schur']:
+            if flags == ['--no-step4-schur']:
                 assert compressed is None, log
             else:
                 assert compressed and int(compressed[1]) > int(compressed[2]), log

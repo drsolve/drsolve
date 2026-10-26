@@ -239,7 +239,7 @@ slong unified_dixon_select_minor(slong *best_r, slong *best_c, unified_mpoly_t *
     for (slong i = 0; i < nr; i++)
         for (slong j = 0; j < nc; j++)
             cache[i * nc + j] = unified_mpoly_total_degree_si(m[i][j]);
-    if (np == 1 && g_dixon_mq_step4_schur && g_dixon_schur_seed &&
+    if (np == 1 && g_dixon_schur_seed &&
         schur_degrees(m, nr, nc, rd, cd, sigma))
         seed = schur_seed(ro, co, m, nr, nc, rd, cd, sigma);
     int best_verified = 0;
@@ -646,7 +646,7 @@ int unified_dixon_resultant(unified_mpoly_t out, unified_mpoly_t *polys, slong n
         unified_mpoly_t factor = unified_mpoly_init(out->ctx_ptr);
         unified_mpoly_one(factor);
         slong size = rank;
-        if (np == 1 && g_dixon_mq_step4_schur) {
+        if (np == 1 && dixon_step4_schur_enabled(n,np,f->field_id==FIELD_ID_NMOD)) {
             slong *rdeg = flint_malloc(rank * sizeof(slong)),
                   *cdeg = flint_malloc(rank * sizeof(slong));
             for (slong i = 0; i < rank; i++) {

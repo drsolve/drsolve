@@ -36,7 +36,8 @@ int nmod_poly_mat_mq_schur_coeffs(nmod_poly_mat_t core, ulong *factor,
  * No generic-rank assumption is used. Caller must supply a prime modulus.
  * Constant degree-diagonal blocks are factored once; block back substitution
  * computes E X = V and core = A - U X without a full copy or inverse of E.
- * The solver attempts this by default when eligible; --no-mq-step4-schur disables it.
+ * The solver uses this when enabled by policy or --step4-schur;
+ * --no-step4-schur disables it.
  */
 int nmod_poly_mat_mq_schur(nmod_poly_mat_t core, ulong *factor, const nmod_poly_mat_t B,
                           const slong *row_degree, const slong *col_degree, slong h, slong sigma);

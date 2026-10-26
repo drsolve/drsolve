@@ -5,7 +5,7 @@ static int dixon_compact_enabled(slong npars)
     const char *setting=getenv("DRSOLVE_MQ_COMPACT");
     return (!setting || strcmp(setting,"0")!=0) && npars==1 &&
         (dixon_global_method_step4==-1 ||
-         (g_dixon_mq_step4_schur && dixon_global_method_step4==DET_METHOD_KRONECKER));
+         (dixon_global_method_step4==DET_METHOD_KRONECKER));
 }
 
 static void dixon_print_compact(const fq_mq_compact *p,const fq_nmod_ctx_t ctx,
@@ -127,7 +127,8 @@ static int dixon_compact_core(nmod_poly_mat_t out,slong *content,
     const fq_mq_compact *p,const long *degrees,dixon_mq_step4_profile *published)
 {
     slong n=p->nrows;
-    if(!published || n!=p->ncols || !n)return 0;
+    if(!published || n!=p->ncols || !n ||
+       !dixon_step4_schur_enabled(p->nvars,1,1))return 0;
     const char *setting=getenv("DRSOLVE_MQ_DIRECT_CORE");
     if(setting && !strcmp(setting,"0"))return 0;
     slong *rows=flint_malloc(n*sizeof(slong)),*cols=flint_malloc(n*sizeof(slong));

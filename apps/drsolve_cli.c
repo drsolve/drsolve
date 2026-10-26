@@ -3276,8 +3276,10 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int mq_step1_rank = 1;
     int mq_step1_simplex = 0;
     int mq_step1_pencil = 0;
-    int mq_step4_schur = 1;
+    int step4_schur = -1; /* automatic: defer Schur until inverse-block fallback */
     int bezout_fast = -1;
+    int inverse_block = -1;
+    slong inverse_block_size = 0;
     int bezout_block = 1;
     int schur_seed = 1;
     int step3_verify_second = 0;
@@ -3575,12 +3577,34 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             mq_step1_simplex = 1; mq_step1_pencil = 0;
         } else if (strcmp(argv[i], "--no-mq-step1-simplex") == 0) {
             mq_step1_simplex = 0;
-        } else if (strcmp(argv[i], "--mq-step4-schur") == 0) {
-            mq_step4_schur = 1;
+        } else if (strcmp(argv[i], "--step4-schur") == 0 || strcmp(argv[i], "--mq-step4-schur") == 0) {
+            step4_schur = 1;
         } else if (strcmp(argv[i], "--pml-fft") == 0 || strcmp(argv[i], "--no-pml-fft") == 0) {
 #ifdef HAVE_PML
             drsolve_pml_set_fft_enabled(strcmp(argv[i], "--pml-fft") == 0);
 #endif
+        } else if (strcmp(argv[i], "--inverse-block") == 0) {
+            inverse_block = 1;
+        } else if (strcmp(argv[i], "--no-inverse-block") == 0) {
+            inverse_block = 0;
+        } else if (strcmp(argv[i], "--inverse-block-auto") == 0) {
+            inverse_block = -1;
+            inverse_block_size = 0;
+        } else if (strcmp(argv[i], "--inverse-block-size") == 0 || strncmp(argv[i], "--inverse-block-size=",21) == 0) {
+            const char *argument = strncmp(argv[i], "--inverse-block-size=",21) == 0 ? argv[i]+21 : NULL;
+            if (!argument && i+1>=argc) {
+                fprintf(stderr,"Error: --inverse-block-size requires a nonnegative integer.\n");
+                return 1;
+            }
+            char *end=NULL;errno=0;
+            if (!argument) argument=argv[++i];
+            long value=strtol(argument,&end,10);
+            if (errno || end==argument || *end || value<0) {
+                fprintf(stderr,"Error: --inverse-block-size requires a nonnegative integer.\n");
+                return 1;
+            }
+            inverse_block_size=(slong)value;
+            inverse_block=1;
         } else if (strcmp(argv[i], "--bezout-block") == 0) {
             bezout_block = 1;
             bezout_fast = 1;
@@ -3596,8 +3620,8 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             resultant_method_explicit = 1;
         } else if (strcmp(argv[i], "--no-schur-seed") == 0) {
             schur_seed = 0;
-        } else if (strcmp(argv[i], "--no-mq-step4-schur") == 0) {
-            mq_step4_schur = 0;
+        } else if (strcmp(argv[i], "--no-step4-schur") == 0 || strcmp(argv[i], "--no-mq-step4-schur") == 0) {
+            step4_schur = 0;
         } else if (strcmp(argv[i], "--no-mq-step1-filter") == 0) {
             mq_step1_filter = 0;
         } else if (strcmp(argv[i], "--step3-verify-second") == 0) {
@@ -4650,7 +4674,9 @@ random_done:
     g_dixon_mq_step1_rank = mq_step1_rank;
     g_dixon_mq_step1_simplex = mq_step1_simplex;
     g_dixon_mq_step1_pencil = mq_step1_pencil;
-    g_dixon_mq_step4_schur = mq_step4_schur;
+    g_dixon_mq_step4_schur = step4_schur;
+    g_dixon_inverse_block = inverse_block;
+    g_dixon_inverse_block_size = inverse_block_size;
     g_dixon_bezout_block = bezout_block;
     g_dixon_bezout_fast = bezout_fast < 0
         ? !resultant_method_explicit && !determinant_method_explicit : bezout_fast;

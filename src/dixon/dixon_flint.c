@@ -10,6 +10,7 @@
 #include "dixon_flint.h"
 #include "drsolve_memory.h"
 #include "mq_poly_mat_det.h"
+#include "inverse_block_det.h"
 #include "mq_quotient.h"
 #include "mq_simplex_det.h"
 #include "mq_pencil_det.h"
@@ -56,13 +57,32 @@ int g_dixon_mq_step1_shared = 1;
 int g_dixon_mq_step1_rank = 1;
 int g_dixon_mq_step1_simplex = 0;
 int g_dixon_mq_step1_pencil = 0;
-int g_dixon_mq_step4_schur = 1;
+int g_dixon_mq_step4_schur = -1;
 int g_dixon_bezout_fast = 1;
+int g_dixon_inverse_block = -1;
+slong g_dixon_inverse_block_size = 0;
 int g_dixon_bezout_block = 1;
 int g_dixon_schur_seed = 1;
 int g_dixon_mq_quotient = 0;
 int g_dixon_step3_second_verification = 0;
 slong g_dixon_det_cache_limit = 1024;
+
+int dixon_step4_schur_enabled(slong nvars, slong npars, int word_prime_field)
+{
+    if (g_dixon_mq_step4_schur >= 0) return g_dixon_mq_step4_schur != 0;
+#ifdef HAVE_PML
+    /* Defer compression while inverse-block is selected. Profiles are still
+     * prepared for its fallback. Explicit Schur switches override this. */
+    int inverse=g_dixon_inverse_block>0 || (g_dixon_inverse_block<0 &&
+        (nvars==2 || nvars==3) &&
+        fq_nmod_poly_mat_det_get_method()==FQ_NMOD_POLY_DET_METHOD_AUTO);
+    if (word_prime_field && npars==1 && inverse && !g_field_equation_reduction)
+        return 0;
+#else
+    (void)nvars;(void)npars;(void)word_prime_field;
+#endif
+    return 1;
+}
 
 const char *dixon_det_method_name(det_method_t method)
 {
@@ -5276,10 +5296,90 @@ static int dixon_compute_step1(unified_mpoly_struct *result, unified_mpoly_struc
 /* Metadata belongs to one selected matrix, never to a global monomial order.
  * In particular Step 3 may reorder or repair the candidate independently on
  * the two axes. The explicit permutations below retain its determinant sign. */
+static int dixon_inverse_block_enabled(slong nvars, slong npars)
+{
+    if (!g_dixon_inverse_block || npars!=1 || g_field_equation_reduction) return 0;
+    if (g_dixon_inverse_block>0) return 1;
+    return (nvars==2 || nvars==3) &&
+        fq_nmod_poly_mat_det_get_method()==FQ_NMOD_POLY_DET_METHOD_AUTO;
+}
+
+static int dixon_inverse_block_try(nmod_poly_t det, const nmod_poly_mat_t matrix)
+{
+    flint_rand_t state;flint_rand_init(state);
+    dr_inverse_block_stats stats;
+    double start=get_wall_time();
+    int ok=dr_nmod_poly_mat_det_inverse_block_try(det,matrix,
+        g_dixon_inverse_block_size,0,state,&stats);
+    flint_rand_clear(state);
+    if (ok) {
+        if (g_dixon_verbose_level >= 2) {
+            dixon_info_log("  Dixon inverse-block: %ld x %ld, degree bound %ld, block %ld, points %ld, attempts %ld\n",
+                matrix->r,matrix->c,stats.degree_bound,stats.block,stats.points,stats.attempts);
+            dixon_info_log("  Dixon inverse-block time: %.6fs (setup %.6f, evaluation %.6f, inverse %.6f, reconstruction %.6f, determinant %.6f, verification %.6f; %ld checks)\n",
+                get_wall_time()-start,stats.setup,stats.evaluation,stats.inverse,
+                stats.interpolation,stats.determinant,stats.verification,stats.checks);
+        }
+    } else dixon_info_log("  Dixon inverse-block: unavailable or verification failed; fallback to existing determinant backend\n");
+    return ok;
+}
+
+static int dixon_inverse_block_fq_try(fq_nmod_poly_t det,
+    const fq_nmod_poly_mat_t matrix, const fq_nmod_ctx_t ctx)
+{
+    if (fq_nmod_ctx_degree(ctx)!=1) return 0;
+    ulong p=fq_nmod_ctx_prime(ctx);
+    nmod_poly_mat_t native;nmod_poly_mat_init(native,matrix->r,matrix->c,p);
+    for (slong i=0;i<matrix->r;i++) for (slong j=0;j<matrix->c;j++) {
+        const fq_nmod_poly_struct *entry=fq_nmod_poly_mat_entry(matrix,i,j);
+        for (slong k=0;k<entry->length;k++)
+            nmod_poly_set_coeff_ui(nmod_poly_mat_entry(native,i,j),k,
+                nmod_poly_get_coeff_ui(entry->coeffs+k,0));
+    }
+    nmod_poly_t candidate;nmod_poly_init(candidate,p);
+    int ok=dixon_inverse_block_try(candidate,native);
+    if (ok) {
+        fq_nmod_poly_zero(det,ctx);fq_nmod_t c;fq_nmod_init(c,ctx);
+        for (slong k=0;k<candidate->length;k++) {
+            fq_nmod_set_ui(c,candidate->coeffs[k],ctx);
+            fq_nmod_poly_set_coeff(det,k,c,ctx);
+        }
+        fq_nmod_clear(c,ctx);
+    }
+    nmod_poly_clear(candidate);nmod_poly_mat_clear(native);return ok;
+}
+
+static int dixon_inverse_block_dense_try(unified_mpoly_struct *out,
+    unified_mpoly_struct **matrix, slong size, const fq_nmod_ctx_t ctx)
+{
+    if (fq_nmod_ctx_degree(ctx)!=1) return 0;
+    ulong p=fq_nmod_ctx_prime(ctx);
+    nmod_poly_mat_t native;nmod_poly_mat_init(native,size,size,p);
+    for (slong i=0;i<size;i++) for (slong j=0;j<size;j++)
+        for (slong k=0;k<dr_mpoly_length(&matrix[i][j]);k++) {
+            DR_MPOLY_TERM(term, &matrix[i][j], k);
+            slong degree=term.par_exp ? term.par_exp[0] : 0;
+            nmod_poly_set_coeff_ui(nmod_poly_mat_entry(native,i,j),degree,
+                nmod_poly_get_coeff_ui(term.coeff,0));
+        }
+    nmod_poly_t det;nmod_poly_init(det,p);
+    int ok=dixon_inverse_block_try(det,native);
+    if (ok) {
+        dr_mpoly_init(out,0,1,ctx);fq_nmod_t c;fq_nmod_init(c,ctx);
+        for (slong k=0;k<det->length;k++) if (det->coeffs[k]) {
+            fq_nmod_set_ui(c,det->coeffs[k],ctx);
+            dr_mpoly_add_term_fast(out,NULL,&k,c);
+        }
+        fq_nmod_clear(c,ctx);
+    }
+    nmod_poly_clear(det);nmod_poly_mat_clear(native);return ok;
+}
+
 typedef struct {
     slong size, h, sigma;
     slong *rows, *cols, *rd, *cd;
     int odd;
+    int inverse_block;
     int core_ready;
     ulong core_factor;
     slong core_bound;
@@ -5501,7 +5601,8 @@ static int dixon_mq_step4_try(fq_nmod_poly_t det, const fq_nmod_poly_mat_t matri
         }
         dixon_print_schur_compression(adaptive ? "adaptive Schur" : "Schur",
             size, core->r, get_wall_time()-start);
-        fq_nmod_poly_mat_det_iter(det, small, ctx);
+        if (!p->inverse_block || !dixon_inverse_block_fq_try(det,small,ctx))
+            fq_nmod_poly_mat_det_iter(det, small, ctx);
         if (p->odd) factor = prime - factor;
         fq_nmod_set_ui(coefficient, factor, ctx);
         fq_nmod_poly_scalar_mul_fq_nmod(det, det, coefficient, ctx);
@@ -5546,7 +5647,7 @@ void dixon_bivariate_native_selected_det(unified_mpoly_struct *result,
             }
     }
     dixon_mq_step4_profile profile = {0};
-    if (g_dixon_mq_step4_schur) {
+    if (g_dixon_mq_step4_schur != 0) {
         monom_t *rm = flint_malloc(size*sizeof(*rm)), *cm = flint_malloc(size*sizeof(*cm));
         slong *exps = flint_malloc(4*size*sizeof(slong)), *indices = flint_malloc(size*sizeof(slong));
         for (slong i = 0; i < size; i++) {
@@ -5567,6 +5668,7 @@ void dixon_bivariate_native_selected_det(unified_mpoly_struct *result,
         flint_free(indices); flint_free(exps); flint_free(cm); flint_free(rm);
     }
     fq_nmod_poly_t det; fq_nmod_poly_init(det,ctx);
+    profile.inverse_block=dixon_inverse_block_enabled(2,1);
     dixon_mq_native_det(det,native,&profile,ctx);
     dixon_mq_step4_profile_clear(&profile);
     dr_mpoly_init(result, 0, 1, ctx);
@@ -5755,7 +5857,7 @@ void dixon_select_submatrix(unified_mpoly_struct ***full_matrix, slong nx_monoms
     const fq_nmod_ctx_t ctx, slong **selected_rows, slong **selected_cols, slong *size)
 {
     *selected_rows=NULL; *selected_cols=NULL; *size=0;
-    if (g_dixon_mq_step4_schur && npars==1 && ksy_constant_col<0 &&
+    if (npars==1 && ksy_constant_col<0 &&
         degrees && num_polys==nvars+1 && g_dixon_schur_seed &&
         dixon_schur_seed_select(full_matrix,nx_monoms,ndual_monoms,
             x_monoms,dual_monoms,nvars,degrees,ctx,
@@ -6714,15 +6816,33 @@ static void dixon_step4_resultant(unified_mpoly_struct *result,
         matrix=small_matrix;
         univariate=0;
     }
-    dixon_info_log("  Determinant method: %s\n",dixon_det_method_name(method));
+    int try_inverse=method==DET_METHOD_KRONECKER &&
+        fq_nmod_ctx_degree(polys[0].ctx)==1 && dixon_inverse_block_enabled(nvars,npars);
+    dixon_info_log("  Determinant method: %s\n",try_inverse ?
+        (g_dixon_verbose_level >= 2 ? "inverse-block (verified; existing backend on failure)" :
+         "inverse-block") : dixon_det_method_name(method));
+    if (mq_profile) mq_profile->inverse_block=try_inverse;
     if (univariate) {
         fq_nmod_poly_t det;
         fq_nmod_poly_init(det,polys[0].ctx);
-        if (g_dixon_verbose_level >= 2 && g_dixon_mq_step4_schur && !mq_profile->size && !mq_profile->core_ready)
+        if (g_dixon_verbose_level >= 2 && dixon_step4_schur_enabled(nvars,npars,
+                fq_nmod_ctx_degree(polys[0].ctx)==1) && !mq_profile->size && !mq_profile->core_ready)
             dixon_info_log("  Step 4 Schur: no predicted complement profile; checking adaptive fallback\n");
         if (prime_matrix) dixon_mq_native_det(det,prime_matrix,mq_profile,polys[0].ctx);
-        else if (!dixon_mq_step4_try(det,poly_matrix,mq_profile,polys[0].ctx))
-            fq_nmod_poly_mat_det_iter(det,poly_matrix,polys[0].ctx);
+        else {
+            int done=0;
+            if (mq_profile->inverse_block && g_dixon_mq_step4_schur<0) {
+                done=dixon_inverse_block_fq_try(det,poly_matrix,polys[0].ctx);
+                if (!done) {
+                    mq_profile->inverse_block=0;
+                    dixon_info_log("  Step 4 fallback: try Schur compression before the original determinant backend\n");
+                }
+            }
+            if (!done && !dixon_mq_step4_try(det,poly_matrix,mq_profile,polys[0].ctx)) {
+                if (!mq_profile->inverse_block || !dixon_inverse_block_fq_try(det,poly_matrix,polys[0].ctx))
+                    fq_nmod_poly_mat_det_iter(det,poly_matrix,polys[0].ctx);
+            }
+        }
         dr_mpoly_init(result,0,1,polys[0].ctx);
         for (slong i=0; i<=fq_nmod_poly_degree(det,polys[0].ctx); i++)
             if (!fq_nmod_is_zero(det->coeffs+i,polys[0].ctx)) {
@@ -6750,7 +6870,11 @@ static void dixon_step4_resultant(unified_mpoly_struct *result,
             if (content>0) dixon_info_log("  Pre-determinant row/column x-content: x^%ld\n",content);
             slong bound=compute_fq_dixon_resultant_degree_bound(polys,nvars+1,nvars,npars);
             dixon_debug_log("  Degree bound: %ld\n",bound);
-            compute_fq_coefficient_matrix_det(result,matrix,size,npars,polys[0].ctx,method,bound);
+            int reconstructed=method==DET_METHOD_KRONECKER &&
+                dixon_inverse_block_enabled(nvars,npars) &&
+                dixon_inverse_block_dense_try(result,matrix,size,polys[0].ctx);
+            if (!reconstructed)
+                compute_fq_coefficient_matrix_det(result,matrix,size,npars,polys[0].ctx,method,bound);
         }
         dr_mpoly_multiply_by_x_power_inplace(result,extracted_power);
         if (extracted_power>0) {
@@ -6917,7 +7041,7 @@ void fq_dixon_resultant(unified_mpoly_struct *result, unified_mpoly_struct *poly
     unified_mpoly_struct **coeff_matrix = NULL;
     fq_nmod_poly_mat_t poly_matrix;
     int use_poly_matrix = (npars == 1 && (dixon_global_method_step4 == -1 ||
-                           (g_dixon_mq_step4_schur && dixon_global_method_step4 == DET_METHOD_KRONECKER)));
+                           (dixon_global_method_step4 == DET_METHOD_KRONECKER)));
     int use_prime_matrix = use_poly_matrix && (projected_verified || nvars == 2) && fq_nmod_ctx_degree(polys[0].ctx)==1;
     nmod_poly_mat_t prime_matrix;
     slong *row_indices = use_prime_matrix && projected_verified
@@ -6930,7 +7054,7 @@ void fq_dixon_resultant(unified_mpoly_struct *result, unified_mpoly_struct *poly
     slong extracted_x_power = 0;
     
     dixon_mq_step4_profile mq_profile = {0};
-    int try_mq_step4 = g_dixon_mq_step4_schur && use_poly_matrix &&
+    int try_mq_step4 = (g_dixon_mq_step4_schur != 0) && use_poly_matrix &&
                       dixon_mq_step4_eligible(polys, nvars, npars);
     long *rank_degrees = dixon_polynomial_degrees(polys, nvars + 1, nvars);
     if(compact.nvars)
@@ -7058,7 +7182,7 @@ void fq_dixon_resultant_with_names(unified_mpoly_struct *result, unified_mpoly_s
     unified_mpoly_struct **coeff_matrix = NULL;
     fq_nmod_poly_mat_t poly_matrix;
     int use_poly_matrix = (npars == 1 && (dixon_global_method_step4 == -1 ||
-                           (g_dixon_mq_step4_schur && dixon_global_method_step4 == DET_METHOD_KRONECKER)));
+                           (dixon_global_method_step4 == DET_METHOD_KRONECKER)));
     int use_prime_matrix = use_poly_matrix && (projected_verified || nvars == 2) && fq_nmod_ctx_degree(polys[0].ctx)==1;
     nmod_poly_mat_t prime_matrix;
     slong max_indices = dr_mpoly_length(&(d_poly)) > 0 ? dr_mpoly_length(&(d_poly)) : 1;
@@ -7068,7 +7192,7 @@ void fq_dixon_resultant_with_names(unified_mpoly_struct *result, unified_mpoly_s
     slong extracted_x_power = 0;
     
     dixon_mq_step4_profile mq_profile = {0};
-    int try_mq_step4 = g_dixon_mq_step4_schur && use_poly_matrix &&
+    int try_mq_step4 = (g_dixon_mq_step4_schur != 0) && use_poly_matrix &&
                       dixon_mq_step4_eligible(polys, nvars, npars);
     long *rank_degrees = dixon_polynomial_degrees(polys, nvars + 1, nvars);
     if(compact.nvars)

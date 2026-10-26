@@ -23,7 +23,7 @@ with tempfile.TemporaryDirectory(prefix='extension-schur-') as work:
                                           (True, 4, False), (True, 1, True)):
             command = [str(binary), '-r', degrees, field, '--seed', '12345',
                        '--no-quotient', '--threads', str(threads), '-v', '1',
-                       '--mq-step4-schur' if enabled else '--no-mq-step4-schur',
+                       '--step4-schur' if enabled else '--no-step4-schur',
                        '-o', str(output), *extra]
             if no_seed:
                 command.append('--no-schur-seed')

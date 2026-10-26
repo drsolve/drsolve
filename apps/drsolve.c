@@ -146,6 +146,10 @@ void drsolve_cli_print_full_usage(const char *prog_name)
     puts("RESULTANTS AND DETERMINANTS:");
     puts("  --dixon                       Dixon resultant (default).");
     puts("  --pml-fft / --no-pml-fft      Enable supported FFT matrix backend (default) / fall back.");
+    puts("  --inverse-block / --no-inverse-block / --inverse-block-auto");
+    puts("                                Dixon inverse projection (nmod); auto for 3/4 equations");
+    puts("                                with one remaining variable. Failure uses the existing backend.");
+    puts("  --inverse-block-size N        Set block size and enable; 0 selects automatically.");
     puts("  --bezout-block / --no-bezout-block");
     puts("                                nmod Dixon/Bezout block-Hankel path (default on).");
     puts("                                Randomized verification; fallback on failure.");
@@ -276,10 +280,10 @@ void drsolve_cli_print_full_usage(const char *prog_name)
     puts("                                Experimental degree recurrence (default off).");
     puts("  --mq-step1-simplex / --no-mq-step1-simplex");
     puts("                                Experimental total-degree interpolation (off).");
-    puts("  --mq-step4-schur / --no-mq-step4-schur");
-    puts("                                Checked Schur compression (default on) for");
-    puts("                                single-parameter prime/extension-field systems,");
-    puts("                                any degree, automatic/HNF Step 4.");
+    puts("  --step4-schur / --no-step4-schur");
+    puts("                                Enable/disable checked Step 4 Schur compression.");
+    puts("                                Default: direct inverse-block first; Schur on fallback");
+    puts("                                or when inverse-block is off. Any degree.");
     puts("  --no-schur-seed                Disable complement-first minor selection");
     puts("                                (default on), retaining Step 4 compression.");
     puts("  --fast-ksy / --no-fast-ksy      KSY precondition check for method 5 (default off;");
@@ -288,7 +292,7 @@ void drsolve_cli_print_full_usage(const char *prog_name)
     puts("  --step3-verify-second / --no-step3-verify-second");
     puts("                                Second Step 3 verification pass (default off).");
     puts("  Examples:");
-    printf("    %s --no-quotient --no-mq-step4-schur -r \"[2]*3\" 257 --seed 1234\n", prog_name);
+    printf("    %s --no-quotient --no-step4-schur -r \"[2]*3\" 257 --seed 1234\n", prog_name);
     printf("    %s --method 5 --fast-ksy --step3-verify-second \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
 }
 
@@ -362,10 +366,17 @@ static int validate_cli_options(int argc, char *argv[])
         {"mq-step1-simplex", no_argument, NULL, OPT_FLAG},
         {"no-mq-step1-simplex", no_argument, NULL, OPT_FLAG},
         {"no-mq-step1-filter", no_argument, NULL, OPT_FLAG},
+        {"step4-schur", no_argument, NULL, OPT_FLAG},
+        {"no-step4-schur", no_argument, NULL, OPT_FLAG},
+        /* Compatibility aliases; new help uses the degree-independent names. */
         {"mq-step4-schur", no_argument, NULL, OPT_FLAG},
         {"no-mq-step4-schur", no_argument, NULL, OPT_FLAG},
         {"pml-fft", no_argument, NULL, OPT_FLAG},
         {"no-pml-fft", no_argument, NULL, OPT_FLAG},
+        {"inverse-block", no_argument, NULL, OPT_FLAG},
+        {"no-inverse-block", no_argument, NULL, OPT_FLAG},
+        {"inverse-block-auto", no_argument, NULL, OPT_FLAG},
+        {"inverse-block-size", required_argument, NULL, OPT_FLAG},
         {"bezout-block", no_argument, NULL, OPT_FLAG},
         {"no-bezout-block", no_argument, NULL, OPT_FLAG},
         {"bezout-fast", no_argument, NULL, OPT_FLAG},

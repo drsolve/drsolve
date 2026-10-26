@@ -97,8 +97,12 @@ extern int g_dixon_mq_step1_shared;
 extern int g_dixon_mq_step1_rank;
 extern int g_dixon_mq_step1_simplex;
 extern int g_dixon_mq_step1_pencil;
+/* Legacy symbol retained: -1 automatic, 0 disabled, 1 explicitly enabled. */
 extern int g_dixon_mq_step4_schur;
+int dixon_step4_schur_enabled(slong nvars, slong npars, int word_prime_field);
 extern int g_dixon_bezout_fast;
+extern int g_dixon_inverse_block; /* -1: auto for 3/4 equations, 0: off, 1: on */
+extern slong g_dixon_inverse_block_size; /* 0: automatic */
 extern int g_dixon_bezout_block; /* nmod block-Hankel path, enabled by default */
 extern int g_dixon_schur_seed;
 /* 0: disabled, 1: explicit attempt, -1: automatic supported MQ inputs. */

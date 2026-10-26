@@ -2316,6 +2316,9 @@ static void dixon_complexity_write_report_body(
         const dixon_complexity_report_t *report,
         double omega) {
     int verbose_level = g_dixon_verbose_level;
+    int schur_enabled=dixon_step4_schur_enabled(num_elim,num_parameter_vars,
+        fmpz_sgn(field_characteristic)>0 && fmpz_bits(field_characteristic)<=FLINT_BITS &&
+        fmpz_equal(field_characteristic,field_order));
     /* Detailed reports use a separate view; the public report and -v 1 keep
      * their original full-size method selection. */
     dixon_complexity_report_t detailed;
@@ -2357,13 +2360,13 @@ static void dixon_complexity_write_report_body(
                                    detailed.step4_sparse_term_bound_log2 + 2 * loglogq) : la;
             }
             detailed.step4_log2 = select_step4_best_method(&detailed, &detailed.step4_best_method);
-            if (g_dixon_mq_step4_schur && detailed.step4_mq_schur_log2 < detailed.step4_log2) {
+            if (schur_enabled && detailed.step4_mq_schur_log2 < detailed.step4_log2) {
                 detailed.step4_log2 = detailed.step4_mq_schur_log2;
                 detailed.step4_best_method = "blocked Schur + core determinant";
             }
         }
         detailed.overall_log2 = FLINT_MAX(detailed.step1_best_log2, detailed.step4_log2);
-        if (g_dixon_mq_step4_schur && isfinite(detailed.step3_schur_selection_log2))
+        if (g_dixon_schur_seed && isfinite(detailed.step3_schur_selection_log2))
             detailed.overall_log2=FLINT_MAX(detailed.overall_log2,detailed.step3_schur_selection_log2);
         report = &detailed;
     }
@@ -2864,9 +2867,9 @@ static void dixon_complexity_write_report_body(
                 report->step4_ordinary_interp_log2);
         fprintf(fp, "Step 4 sparse interpolation (log2): %.6f\n",
                 report->step4_sparse_log2);
-        if (verbose_level >= 2 && !g_dixon_mq_step4_schur)
-            fprintf(fp, "Step 4 Schur estimate: disabled by --no-mq-step4-schur.\n");
-        if (verbose_level >= 2 && g_dixon_mq_step4_schur && isfinite(report->step4_mq_schur_log2)) {
+        if (verbose_level >= 2 && !schur_enabled)
+            fprintf(fp, "Step 4 Schur estimate: disabled by policy or --no-step4-schur.\n");
+        if (verbose_level >= 2 && schur_enabled && isfinite(report->step4_mq_schur_log2)) {
             fprintf(fp, "Step 4 blocked Schur + core determinant (soft-O, log2): %.6f\n",
                     report->step4_mq_schur_log2);
             fprintf(fp, "  Core size: %ld; formation: %.6f; core determinant: %.6f; certificate scan: %.6f (soft-O, log2).\n",
@@ -2969,7 +2972,7 @@ static void dixon_complexity_write_report_body(
             report->step4_best_method ? report->step4_best_method : "unknown",
             rank_view ? " (rank prediction)" : "",
             report->step4_log2);
-    if (verbose_level>=2 && g_dixon_mq_step4_schur && isfinite(report->step3_schur_selection_log2))
+    if (verbose_level>=2 && g_dixon_schur_seed && isfinite(report->step3_schur_selection_log2))
         fprintf(fp, "Overall complexity = max(step1/2, step3 selection, step4) (soft-O, log2): %.6f\n",
                 dixon_complexity_best_total_log2(report));
     else

@@ -617,6 +617,7 @@ set(MATH_SOURCES
   src/determinant/fq_multivariate_interpolation.c
   src/determinant/fq_poly_mat_det.c
   src/determinant/mq_poly_mat_det.c
+  src/determinant/inverse_block_det.c
   src/determinant/mq_quotient.c
   src/determinant/degree_quotient.c
   src/determinant/extension_quotient.c
@@ -1269,6 +1270,8 @@ if(BUILD_TESTING)
   drsolve_add_test_program(bezout_prefix_test src/test/field/bezout_prefix_test.c)
   add_test(NAME drsolve_bezout_prefix COMMAND bezout_prefix_test)
   if(TARGET pml)
+    drsolve_add_test_program(inverse_block_test src/test/matrix/inverse_block_test.c)
+    add_test(NAME drsolve_inverse_block COMMAND inverse_block_test)
     drsolve_add_test_program(bezout_block_test src/test/field/bezout_block_test.c)
     add_test(NAME drsolve_bezout_block COMMAND bezout_block_test)
     set_tests_properties(drsolve_bezout_block PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=1")
@@ -1374,6 +1377,8 @@ if(BUILD_TESTING)
       COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/large_prime_schur_cli_test.py
               $<TARGET_FILE:drsolve_exe>)
     if(TARGET pml)
+      add_test(NAME drsolve_inverse_block_cli
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/src/test/cli/inverse_block_cli_test.py" "$<TARGET_FILE:drsolve_exe>")
       add_test(NAME drsolve_bezout_block_cli
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/src/test/cli/bezout_block_cli_test.py" "$<TARGET_FILE:drsolve_exe>")
     endif()
