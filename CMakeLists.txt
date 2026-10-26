@@ -436,6 +436,7 @@ if(DRSOLVE_ENABLE_PML)
       "${PML_SOURCE_DIR}/src/nmod_poly_mat_extra/interpolant_basis.c"
       "${PML_SOURCE_DIR}/src/nmod_poly_mat_extra/interpolant_basis_geometric.c"
       "${PML_SOURCE_DIR}/src/nmod_mat_poly_extra/nmod_mat_poly_mintbasis.c"
+      "${PML_SOURCE_DIR}/src/nmod_poly_mat_extra/mul_sd_fft_direct.c"
       "${PML_SOURCE_DIR}/src/nmod_poly_mat_extra/middle_product.c"
       "${PML_SOURCE_DIR}/src/nmod_mat_poly_extra/nmod_mat_poly_mbasis.c"
       "${PML_SOURCE_DIR}/src/nmod_mat_poly_extra/nmod_mat_poly_mbasis_resupdate.c"
@@ -463,6 +464,28 @@ if(DRSOLVE_ENABLE_PML)
     target_link_libraries(pml PUBLIC FLINT::FLINT ${GMP_LIBRARY} ${MPFR_LIBRARY})
     if(NOT DRSOLVE_WINDOWS)
       target_link_libraries(pml PUBLIC pthread)
+    endif()
+
+    option(DRSOLVE_ENABLE_PML_FFT "Enable supported FLINT FFT matrix backend" ON)
+    if(DRSOLVE_ENABLE_PML_FFT)
+      include(CheckCSourceCompiles)
+      include(CMakePushCheckState)
+      cmake_push_check_state(RESET)
+      set(CMAKE_REQUIRED_LIBRARIES FLINT::FLINT ${GMP_LIBRARY} ${MPFR_LIBRARY})
+      if(NOT DRSOLVE_WINDOWS)
+        list(APPEND CMAKE_REQUIRED_LIBRARIES m pthread)
+      endif()
+      # Match the ISA used for the actual PML target.
+      if(_march_native AND CMAKE_BUILD_TYPE STREQUAL "Release")
+        set(CMAKE_REQUIRED_FLAGS "-march=native")
+      endif()
+      file(READ "${PML_SOURCE_DIR}/fft_small_probe.c" _pml_fft_probe)
+      unset(DRSOLVE_HAVE_PML_FFT_SMALL CACHE)
+      check_c_source_compiles("${_pml_fft_probe}" DRSOLVE_HAVE_PML_FFT_SMALL)
+      cmake_pop_check_state()
+      if(DRSOLVE_HAVE_PML_FFT_SMALL)
+        target_compile_definitions(pml PUBLIC HAVE_DRSOLVE_PML_FFT_SMALL)
+      endif()
     endif()
 
     # PML compile definitions - avoid conflicting with FLINT's macros
@@ -935,6 +958,12 @@ if(BUILD_TESTING)
   endforeach()
 
   if(TARGET pml)
+    add_executable(pml_fft_test src/test/matrix/pml_fft_test.c)
+    drsolve_target_common(pml_fft_test)
+    target_compile_options(pml_fft_test PRIVATE -UNDEBUG)
+    target_link_libraries(pml_fft_test PRIVATE pml)
+    add_test(NAME drsolve_pml_fft COMMAND pml_fft_test)
+    set_tests_properties(drsolve_pml_fft PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
     add_executable(pml_upstream_test src/test/matrix/pml_upstream_test.c)
     drsolve_target_common(pml_upstream_test)
     target_compile_options(pml_upstream_test PRIVATE -UNDEBUG)

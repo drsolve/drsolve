@@ -1,4 +1,4 @@
-"""Opt-in nmod Dixon/Bezout inverse-Hankel reconstruction and safe fallback."""
+"""Default nmod Dixon/Bezout inverse-Hankel reconstruction and safe fallback."""
 import re
 import subprocess
 import sys
@@ -18,11 +18,22 @@ with tempfile.TemporaryDirectory() as tmp:
     for prime in ['65537', '998244353', '1000000007', '18446744069414584321']:
         for d in [2, 5, 8, 16]:
             args = ['-r', f'[{d}]*2', prime, '--seed', '19']
-            _, ref = run(args, ['--bezout-fast'])
-            log, got = run(args, ['--bezout-block'])
+            _, ref = run(args, ['--no-bezout-block'])
+            log, got = run(args, [])
+            explicit_log, explicit = run(args, ['--bezout-block'])
+            assert explicit == got and ('Dixon/Bezout block time:' in explicit_log) == ('Dixon/Bezout block time:' in log)
             assert got == ref, (args, log, got, ref)
             successes += 'Dixon/Bezout block time:' in log
     assert successes >= 12, successes
+    # New backend can be explicitly disabled, then re-enabled (last flag wins).
+    for prime in [998244353, 1000000007]:
+        args = ['-r', '[32]*2', str(prime), '--seed', '19']
+        _, ref = run(args, ['--bezout-block', '--no-pml-fft'])
+        for flags in [['--bezout-block', '--pml-fft'],
+                      ['--bezout-block', '--no-pml-fft', '--pml-fft']]:
+            _, got = run(args, flags)
+            assert got == ref, (prime, flags)
+
     # Unsupported field/shape, shared factors and too few interpolation points.
     for args in [
         ['x+y,x-y', 'x', '17'],
@@ -33,13 +44,15 @@ with tempfile.TemporaryDirectory() as tmp:
         ['x^2+y^2+1,x^2+x+y+2', 'x', '65537^2'],
         ['x^2+y^2+1,x^2+x+y+2', 'x', '18446744073709551629'],
     ]:
-        _, ref = run(args, [])
-        _, got = run(args, ['--bezout-block'])
+        _, ref = run(args, ['--no-bezout-block'])
+        _, got = run(args, [])
         assert got == ref, (args, got, ref)
     args = ['-r', '[8]*2', '65537', '--seed', '19']
     _, ref = run(args, [])
     log, got = run(args, ['--bezout-block', '--no-bezout-block'])
     assert 'block-Hankel' not in log and got == ref, log
-    log, got = run(args, ['--bezout-block', '--silent'])
+    log, got = run(args, ['--no-bezout-block', '--bezout-block'])
+    assert 'Dixon/Bezout block time:' in log and got == ref, log
+    log, got = run(args, ['--silent'])
     assert re.sub(r'\s+', '', log) == got == ref, log
 print(f'Bezout block CLI: {successes} direct successes; exact outputs, fallback and silent mode PASS')

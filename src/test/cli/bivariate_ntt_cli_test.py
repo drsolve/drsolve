@@ -1,4 +1,4 @@
-"""Default Dixon/Bezout fast resultant over prime and extension fields."""
+"""Dixon/Bezout eval-interpolation fallback resultant over prime and extension fields."""
 import re
 import subprocess
 import sys
@@ -11,7 +11,7 @@ with tempfile.TemporaryDirectory() as tmp:
     output = Path(tmp) / 'result.dr'
 
     def run(args, flags):
-        proc = subprocess.run([binary, *args, *flags, '--resultant-only',
+        proc = subprocess.run([binary, *args, '--no-bezout-block', *flags, '--resultant-only',
                                '-o', str(output)], capture_output=True, text=True,
                               check=True, timeout=120)
         result = re.sub(r'\s+', '', output.read_text().split('Resultant:\n', 1)[1])
@@ -78,4 +78,4 @@ with tempfile.TemporaryDirectory() as tmp:
     log, result = run(cases[0], ['--bezout-fast', '--silent'])
     assert re.sub(r'\s+', '', log) == result, log
 
-print('Dixon/Bezout fast default, field, parallel and fallback checks passed.')
+print('Dixon/Bezout eval-interpolation field, parallel and fallback checks passed.')

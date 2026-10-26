@@ -21,6 +21,7 @@
 #include <flint/nmod_poly.h>
 #include <flint/nmod_poly_mat.h>
 
+#include "sd_fft_backend.h"
 #include "nmod_extra.h"
 #include "nmod_poly_mat_multiply.h"
 
@@ -170,6 +171,16 @@ int drsolve_nmod_poly_mat_mul_window_ntt(nmod_poly_mat_t C,
     return 1;
 }
 
+static int drsolve_pml_fft_enabled = 1;
+void drsolve_pml_set_fft_enabled(int enabled) { drsolve_pml_fft_enabled = enabled != 0; }
+int drsolve_pml_fft_available(void) {
+#ifdef HAVE_DRSOLVE_PML_FFT_SMALL
+    return 1;
+#else
+    return 0;
+#endif
+}
+
 /* legacy: original full products; flint: bounded inputs without NTT;
  * ntt: force a transform attempt; auto: conservative shape/field dispatch. */
 static int drsolve_mul_mode(void)
@@ -178,21 +189,47 @@ static int drsolve_mul_mode(void)
     if (mode && strcmp(mode,"legacy") == 0) return -1;
     if (mode && strcmp(mode,"flint") == 0) return 0;
     if (mode && strcmp(mode,"ntt") == 0) return 1;
+    if (mode && strcmp(mode,"fft") == 0) return 3;
     return 2;
 }
 
 static int drsolve_try_ntt(const nmod_poly_mat_t A, const nmod_poly_mat_t B, int mode)
 {
     if (mode == 1) return 1;
+#ifdef HAVE_DRSOLVE_PML_FFT_SMALL
+    /* With the new backend enabled, small products use FLINT directly.
+     * Disabling it restores the original NTT/FLINT dispatcher exactly. */
+    if (drsolve_pml_fft_enabled && mode >= 2) return 0;
+#endif
     /* Dispatch depends on shape; the backend checks root availability and
      * integer representability uniformly for every prime. */
-    return mode == 2 &&
+    return mode >= 2 &&
         FLINT_MIN(A->r,FLINT_MIN(A->c,B->c)) >= 2;
 }
+
+/* Small products use FLINT directly: transform setup is not free.
+ * This is a performance crossover, not a size or field restriction. */
+#ifdef HAVE_DRSOLVE_PML_FFT_SMALL
+static int drsolve_try_fft(const nmod_poly_mat_t A, const nmod_poly_mat_t B, int mode)
+{
+    slong dim = FLINT_MIN(A->r,FLINT_MIN(A->c,B->c));
+    /* The 12x12 interpolation bases amortize FFT setup even at length 8.
+     * Keep a conservative crossover for smaller matrices. */
+    slong crossover = dim >= 8 ? 8 : 128;
+    return drsolve_pml_fft_enabled && mode >= 2 &&
+        (mode == 3 || (dim >= 2 &&
+            FLINT_MAX(nmod_poly_mat_max_length(A),nmod_poly_mat_max_length(B)) >= crossover));
+}
+#endif
 
 void drsolve_nmod_poly_mat_mul(nmod_poly_mat_t C,
     const nmod_poly_mat_t A, const nmod_poly_mat_t B)
 {
+#ifdef HAVE_DRSOLVE_PML_FFT_SMALL
+    if (drsolve_try_fft(A,B,drsolve_mul_mode())) {
+        drsolve_nmod_poly_mat_mul_sd_fft_direct(C,A,B); return;
+    }
+#endif
     if (drsolve_try_ntt(A,B,drsolve_mul_mode())) {
         slong a = nmod_poly_mat_max_length(A), b = nmod_poly_mat_max_length(B);
         if (a && b && a <= WORD_MAX-b &&
@@ -205,6 +242,29 @@ void drsolve_nmod_poly_mat_middle_product(nmod_poly_mat_t C,
     const nmod_poly_mat_t A, const nmod_poly_mat_t B, slong start, slong count)
 {
     int mode = drsolve_mul_mode();
+#ifdef HAVE_DRSOLVE_PML_FFT_SMALL
+    if (start >= 0 && count > 0 && start <= WORD_MAX-count && drsolve_try_fft(A,B,mode)) {
+        slong hi=start+count;
+        slong a=FLINT_MIN(hi,nmod_poly_mat_max_length(A));
+        slong b=FLINT_MIN(hi,nmod_poly_mat_max_length(B));
+        if (a <= WORD_MAX-b) {
+            nmod_poly_mat_t at,bt;
+            const nmod_poly_mat_struct *ap=A, *bp=B;
+            if (a < nmod_poly_mat_max_length(A)) {
+                nmod_poly_mat_init(at,A->r,A->c,A->modulus);
+                nmod_poly_mat_set_trunc(at,A,a); ap=at;
+            }
+            if (b < nmod_poly_mat_max_length(B)) {
+                nmod_poly_mat_init(bt,B->r,B->c,B->modulus);
+                nmod_poly_mat_set_trunc(bt,B,b); bp=bt;
+            }
+            drsolve_nmod_poly_mat_mulmid_sd_fft_direct(C,ap,a,bp,b,start,hi);
+            if (ap != A) nmod_poly_mat_clear(at);
+            if (bp != B) nmod_poly_mat_clear(bt);
+            return;
+        }
+    }
+#endif
     if (drsolve_try_ntt(A,B,mode) &&
         drsolve_nmod_poly_mat_mul_window_ntt(C,A,B,start,count)) return;
     /* Coefficients >= start+count cannot contribute. In the first PMBasis

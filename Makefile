@@ -87,6 +87,11 @@ PML_A_PATH := $(PML_BUNDLED_LIB)
 PML_DIR_EXISTS := yes
 PML_AVAILABLE := yes
 PML_FLAGS := -DHAVE_PML -DHAVE_DRSOLVE_PML_NTT -DPML_HAVE_MACHINE_VECTORS=0
+# Feature is detected by configure; users can disable it at build time too.
+PML_FFT_SMALL ?= $(PML_FFT_SMALL_AVAILABLE)
+ifeq ($(PML_FFT_SMALL),yes)
+PML_FLAGS += -DHAVE_DRSOLVE_PML_FFT_SMALL
+endif
 PML_LIBS := $(PML_BUNDLED_LIB)
 PML_STATIC_LIBS := $(PML_BUNDLED_LIB)
 INCLUDE_FLAGS := $(filter-out -I$(PML_INCLUDE_ROOT) -I$(PML_INCLUDE_PATH),$(INCLUDE_FLAGS))
@@ -106,6 +111,7 @@ PML_REL_SOURCES := \
 	nmod_poly_mat_extra/interpolant_basis_geometric.c \
 	nmod_mat_poly_extra/nmod_mat_poly_mintbasis.c \
 	nmod_poly_mat_extra/middle_product.c \
+	nmod_poly_mat_extra/mul_sd_fft_direct.c \
 	nmod_mat_poly_extra/nmod_mat_poly_mbasis.c \
 	nmod_mat_poly_extra/nmod_mat_poly_mbasis_resupdate.c \
 	nmod_mat_poly_extra/nmod_mat_poly_mem.c \
@@ -229,7 +235,7 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 ifeq ($(PML_BUNDLED_AVAILABLE),yes)
-$(PML_OBJ_DIR)/%.o: $(PML_SOURCE_DIR)/src/%.c | $(BUILD_DIR)
+$(PML_OBJ_DIR)/%.o: $(PML_SOURCE_DIR)/src/%.c config.mk | $(BUILD_DIR)
 	@echo "Compiling bundled PML source $<..."
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(INCLUDE_FLAGS) $(FLINT_FLAGS) $(PML_FLAGS) -MMD -MP -c -o $@ $<
@@ -507,7 +513,7 @@ $(BUILD_DIR)/det_minor_dp_test: $(DET_MINOR_TEST_SOURCES) $(DIXON_SHARED_LIB)
 # ============================================================
 # Object file compilation (src/**/*.c -> build/**/*.o)
 # ============================================================
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR) $(PML_BUILD_PREREQS)
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c config.mk | $(BUILD_DIR) $(PML_BUILD_PREREQS)
 	@echo "Compiling $<..."
 	@mkdir -p $(dir $@)
 	$(CC) $(ALL_CFLAGS) -MMD -MP -c -o $@ $<
@@ -1351,8 +1357,8 @@ test-dynamic-cli: drsolve-dynamic
 test-solver-resultant-object-cli: $(DIXON_TARGET)
 	python3 $(SRC_DIR)/test/cli/solver_resultant_object_cli_test.py ./$(DIXON_TARGET)
 
-$(BUILD_DIR)/pml_interpolant_test: $(SRC_DIR)/test/matrix/pml_interpolant_test.c $(PML_BUNDLED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< $(PML_BUNDLED_LIB) $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS)
+$(BUILD_DIR)/pml_interpolant_test: $(SRC_DIR)/test/matrix/pml_interpolant_test.c $(PML_BUNDLED_LIB) config.mk Makefile
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< $(PML_BUNDLED_LIB) $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 
 .PHONY: test-pml-interpolant
 test-pml-interpolant: $(BUILD_DIR)/pml_interpolant_test
@@ -1360,8 +1366,8 @@ test-pml-interpolant: $(BUILD_DIR)/pml_interpolant_test
 
 $(PML_OBJ_DIR)/nmod_mat_poly_extra/transpose.o $(PML_OBJ_DIR)/nmod_mat_poly_extra/nmod_mat_poly_set_from.o $(PML_OBJ_DIR)/nmod_poly_mat_extra/nmod_poly_mat_utils.o: $(PML_SOURCE_DIR)/src/nmod_mat_poly_extra/transpose.h
 
-$(BUILD_DIR)/pml_upstream_test: $(SRC_DIR)/test/matrix/pml_upstream_test.c $(PML_BUNDLED_LIB)
-	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< $(PML_BUNDLED_LIB) $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS)
+$(BUILD_DIR)/pml_upstream_test: $(SRC_DIR)/test/matrix/pml_upstream_test.c $(PML_BUNDLED_LIB) config.mk Makefile
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< $(PML_BUNDLED_LIB) $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 .PHONY: test-pml-upstream
 test-pml-upstream: $(BUILD_DIR)/pml_upstream_test
 	OMP_NUM_THREADS=1 ./$(BUILD_DIR)/pml_upstream_test
@@ -1383,3 +1389,9 @@ $(BUILD_DIR)/bezout_prefix_test: $(SRC_DIR)/test/field/bezout_prefix_test.c $(BU
 .PHONY: test-bezout-prefix
 test-bezout-prefix: $(BUILD_DIR)/bezout_prefix_test
 	./$(BUILD_DIR)/bezout_prefix_test
+
+$(BUILD_DIR)/pml_fft_test: $(SRC_DIR)/test/matrix/pml_fft_test.c $(PML_BUNDLED_LIB) config.mk Makefile
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< $(PML_BUNDLED_LIB) $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+.PHONY: test-pml-fft
+test-pml-fft: $(BUILD_DIR)/pml_fft_test
+	OMP_NUM_THREADS=1 ./$(BUILD_DIR)/pml_fft_test

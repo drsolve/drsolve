@@ -99,7 +99,7 @@ extern int g_dixon_mq_step1_simplex;
 extern int g_dixon_mq_step1_pencil;
 extern int g_dixon_mq_step4_schur;
 extern int g_dixon_bezout_fast;
-extern int g_dixon_bezout_block; /* experimental nmod block-Hankel path, opt-in */
+extern int g_dixon_bezout_block; /* nmod block-Hankel path, enabled by default */
 extern int g_dixon_schur_seed;
 /* 0: disabled, 1: explicit attempt, -1: automatic supported MQ inputs. */
 extern int g_dixon_mq_quotient;

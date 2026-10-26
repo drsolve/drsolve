@@ -21,6 +21,8 @@
  * Supports C == A and C == B. */
 int drsolve_nmod_poly_mat_mul_window_ntt(nmod_poly_mat_t C,
     const nmod_poly_mat_t A, const nmod_poly_mat_t B, slong start, slong count);
+void drsolve_pml_set_fft_enabled(int enabled);
+int drsolve_pml_fft_available(void);
 void drsolve_nmod_poly_mat_mul(nmod_poly_mat_t C,
     const nmod_poly_mat_t A, const nmod_poly_mat_t B);
 void drsolve_nmod_poly_mat_middle_product(nmod_poly_mat_t C,

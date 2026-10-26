@@ -37,6 +37,7 @@ trap cleanup_configure_temp EXIT
 CC="${CC:-cc}"
 ENABLE_ASAN="no"
 ENABLE_STATIC="no"
+FLINT_LIB_EXPLICIT="no"
 HOST_OS=$(uname -s 2>/dev/null || echo unknown)
 HOST_ARCH=$(uname -m 2>/dev/null || echo unknown)
 DEFAULT_PREFIX="/usr/local"
@@ -84,7 +85,7 @@ for arg in "$@"; do
         --mandir=*)        MANDIR="${arg#--mandir=}" ;;
         --cc=*)            CC="${arg#--cc=}" ;;
         --flint-include=*) FLINT_INCLUDE_PATH="${arg#--flint-include=}" ;;
-        --flint-lib=*)     FLINT_LIB_PATH="${arg#--flint-lib=}" ;;
+        --flint-lib=*)     FLINT_LIB_PATH="${arg#--flint-lib=}"; FLINT_LIB_EXPLICIT=yes ;;
         --enable-static)   ENABLE_STATIC="yes" ;;
         --disable-static)  ENABLE_STATIC="no" ;;
         --enable-asan)     ENABLE_ASAN="yes" ;;
@@ -395,7 +396,7 @@ done
 # ============================================================
 find_shared_lib() {
     _name="$1"
-    for path in $SYSTEM_LIB_PATHS; do
+    for path in ${2:-$SYSTEM_LIB_PATHS}; do
         if [ -n "$path" ] && [ -d "$path" ]; then
             if [ -f "$path/lib$_name.$SHARED_LIB_EXT" ]; then echo "$path/lib$_name.$SHARED_LIB_EXT"; return 0; fi
             for f in "$path"/lib"$_name".$SHARED_LIB_EXT.*; do
@@ -412,7 +413,7 @@ find_shared_lib() {
 
 find_static_lib() {
     _name="$1"
-    for path in $SYSTEM_LIB_PATHS; do
+    for path in ${2:-$SYSTEM_LIB_PATHS}; do
         if [ -n "$path" ] && [ -f "$path/lib$_name.a" ]; then
             echo "$path/lib$_name.a"
             return 0
@@ -422,7 +423,7 @@ find_static_lib() {
 
 check_shared_lib() {
     _name="$1"
-    for path in $SYSTEM_LIB_PATHS; do
+    for path in ${2:-$SYSTEM_LIB_PATHS}; do
         if [ -n "$path" ] && [ -d "$path" ]; then
             if [ -f "$path/lib$_name.$SHARED_LIB_EXT" ]; then echo "yes"; return 0; fi
             for f in "$path"/lib"$_name".$SHARED_LIB_EXT.*; do
@@ -440,7 +441,7 @@ check_shared_lib() {
 
 check_static_lib() {
     _name="$1"
-    for path in $SYSTEM_LIB_PATHS; do
+    for path in ${2:-$SYSTEM_LIB_PATHS}; do
         if [ -n "$path" ] && [ -f "$path/lib$_name.a" ]; then
             echo "yes"
             return 0
@@ -515,9 +516,13 @@ else
 fi
 
 # --- FLINT libraries (required) ---
+FLINT_SEARCH_PATHS="$SYSTEM_LIB_PATHS"
+if [ "$FLINT_LIB_EXPLICIT" = yes ]; then
+    FLINT_SEARCH_PATHS="$FLINT_LIB_PATH"
+fi
 printf "checking for FLINT shared library... "
-FLINT_DYNAMIC_LIB_CHECK=$(check_shared_lib "flint")
-FLINT_SO_PATH=$(find_shared_lib "flint")
+FLINT_DYNAMIC_LIB_CHECK=$(check_shared_lib "flint" "$FLINT_SEARCH_PATHS")
+FLINT_SO_PATH=$(find_shared_lib "flint" "$FLINT_SEARCH_PATHS")
 if [ "$FLINT_DYNAMIC_LIB_CHECK" = "yes" ]; then
     echo "$FLINT_SO_PATH"
 else
@@ -525,8 +530,8 @@ else
 fi
 
 printf "checking for FLINT static library... "
-FLINT_STATIC_LIB_CHECK=$(check_static_lib "flint")
-FLINT_A_PATH=$(find_static_lib "flint")
+FLINT_STATIC_LIB_CHECK=$(check_static_lib "flint" "$FLINT_SEARCH_PATHS")
+FLINT_A_PATH=$(find_static_lib "flint" "$FLINT_SEARCH_PATHS")
 if [ "$FLINT_STATIC_LIB_CHECK" = "yes" ]; then
     echo "$FLINT_A_PATH"
 else
@@ -635,6 +640,17 @@ fi
 # --- Compiler feature detection ---
 detect_compiler_features
 
+# New FFT plans/transposes are optional, including on development snapshots.
+printf "checking for FLINT FFT plan/middle-product API... "
+PML_FFT_SMALL_AVAILABLE=no
+mkdir -p build-temp
+if $CC $ARCH_CFLAGS -I"$FLINT_HEADER_DIR" pml_det/fft_small_probe.c \
+    -L"$FLINT_LIB_PATH" -lflint -lmpfr -lgmp -lm -lpthread \
+    -o build-temp/fft-small-probe > build-temp/fft-small-probe.log 2>&1; then
+    PML_FFT_SMALL_AVAILABLE=yes
+fi
+echo "$PML_FFT_SMALL_AVAILABLE"
+
 # ============================================================
 # Determine PML availability
 # ============================================================
@@ -720,6 +736,7 @@ PML_LIB_PATH = $PML_LIB_PATH
 FLINT_HEADER_CHECK = $FLINT_HEADER_CHECK
 FLINT_HEADER_DIR = $FLINT_HEADER_DIR
 FLINT_VERSION = $FLINT_VERSION
+PML_FFT_SMALL_AVAILABLE = $PML_FFT_SMALL_AVAILABLE
 FLINT_DYNAMIC_LIB_CHECK = $FLINT_DYNAMIC_LIB_CHECK
 FLINT_STATIC_LIB_CHECK = $FLINT_STATIC_LIB_CHECK
 FLINT_SO_PATH = $FLINT_SO_PATH

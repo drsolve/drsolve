@@ -145,8 +145,9 @@ void drsolve_cli_print_full_usage(const char *prog_name)
     puts("");
     puts("RESULTANTS AND DETERMINANTS:");
     puts("  --dixon                       Dixon resultant (default).");
+    puts("  --pml-fft / --no-pml-fft      Enable supported FFT matrix backend (default) / fall back.");
     puts("  --bezout-block / --no-bezout-block");
-    puts("                                Experimental nmod Dixon/Bezout block-Hankel path.");
+    puts("                                nmod Dixon/Bezout block-Hankel path (default on).");
     puts("                                Randomized verification; fallback on failure.");
     puts("  --bezout-fast / --no-bezout-fast");
     puts("                                Dixon/Bezout fast pair resultant (default auto):");
@@ -363,6 +364,8 @@ static int validate_cli_options(int argc, char *argv[])
         {"no-mq-step1-filter", no_argument, NULL, OPT_FLAG},
         {"mq-step4-schur", no_argument, NULL, OPT_FLAG},
         {"no-mq-step4-schur", no_argument, NULL, OPT_FLAG},
+        {"pml-fft", no_argument, NULL, OPT_FLAG},
+        {"no-pml-fft", no_argument, NULL, OPT_FLAG},
         {"bezout-block", no_argument, NULL, OPT_FLAG},
         {"no-bezout-block", no_argument, NULL, OPT_FLAG},
         {"bezout-fast", no_argument, NULL, OPT_FLAG},

@@ -105,6 +105,8 @@ int main(void)
             trial(primes[p],counts[d],shape==0?1:4,shape==0?1:shape==1?2:5,pattern,rng);cases++;
         }
     trial(17,8,4,2,0,rng);trial(2,1,4,2,0,rng);trial(2,0,4,2,0,rng);
+    trial(998244353,513,4,2,0,rng); cases++;
+    trial(1000000007,513,4,2,2,rng); cases++;
     large_ntt(rng);
     flint_rand_clear(rng);flint_cleanup();
     printf("PASS: %ld interpolation cases, four backends each\n",cases+3);

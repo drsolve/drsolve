@@ -15,6 +15,11 @@
 extern "C" {
 #endif
 
+/* Optional FLINT FFT backend; disable to retain the original dispatcher. */
+void drsolve_pml_set_fft_enabled(int enabled);
+int drsolve_pml_fft_available(void);
+
+
 void nmod_poly_mat_det_iter(nmod_poly_t det, nmod_poly_mat_t mat);
 
 int nmod_poly_mat_det_hnf(nmod_poly_t det,
