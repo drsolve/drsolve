@@ -30,7 +30,6 @@ option(DRSOLVE_USE_BUNDLED_DEPS "Use bundled third-party dependencies (cross-com
 
 # Hint paths exposed to the user  (override via -DFLINT_ROOT=... etc.)
 set(FLINT_ROOT ""   CACHE PATH "Root directory of FLINT installation")
-set(PML_ROOT   ""   CACHE PATH "Root directory of PML installation")
 
 # ============================================================
 # Default build type
@@ -416,7 +415,7 @@ if(DRSOLVE_WINDOWS)
 endif()
 
 # ============================================================
-# Find PML or build from source  (optional)
+# Build bundled PML only (optional)
 # ============================================================
 set(PML_AVAILABLE FALSE)
 set(PML_STATUS "disabled")
@@ -434,11 +433,15 @@ if(DRSOLVE_ENABLE_PML)
       "${PML_SOURCE_DIR}/src/nmod_poly_mat_extra/degrees_pivots_leadingmatrix.c"
       "${PML_SOURCE_DIR}/src/nmod_poly_mat_extra/kernel.c"
       "${PML_SOURCE_DIR}/src/nmod_poly_mat_extra/approximant_basis.c"
+      "${PML_SOURCE_DIR}/src/nmod_poly_mat_extra/interpolant_basis.c"
+      "${PML_SOURCE_DIR}/src/nmod_poly_mat_extra/interpolant_basis_geometric.c"
+      "${PML_SOURCE_DIR}/src/nmod_mat_poly_extra/nmod_mat_poly_mintbasis.c"
       "${PML_SOURCE_DIR}/src/nmod_poly_mat_extra/middle_product.c"
       "${PML_SOURCE_DIR}/src/nmod_mat_poly_extra/nmod_mat_poly_mbasis.c"
       "${PML_SOURCE_DIR}/src/nmod_mat_poly_extra/nmod_mat_poly_mbasis_resupdate.c"
       "${PML_SOURCE_DIR}/src/nmod_mat_poly_extra/nmod_mat_poly_mem.c"
       "${PML_SOURCE_DIR}/src/nmod_mat_poly_extra/nmod_mat_poly_arith.c"
+      "${PML_SOURCE_DIR}/src/nmod_mat_poly_extra/transpose.c"
       "${PML_SOURCE_DIR}/src/nmod_mat_poly_extra/nmod_mat_poly_set_from.c"
       "${PML_SOURCE_DIR}/src/nmod_mat_poly_extra/nmod_mat_poly_shift.c"
       "${PML_SOURCE_DIR}/src/nmod_mat_extra/left_nullspace.c"
@@ -498,61 +501,7 @@ if(DRSOLVE_ENABLE_PML)
     set(PML_AVAILABLE TRUE)
     set(PML_STATUS "bundled subset: ${PML_SOURCE_DIR}")
   else()
-    message(STATUS "PML: bundled source not found under ${PML_SOURCE_DIR}; trying system installation...")
-
-    find_path(PML_INCLUDE_DIR
-      NAMES pml.h pml/pml.h
-      HINTS "${PML_ROOT}/include"
-            /usr/local/include
-            /opt/homebrew/include
-    )
-
-    if(DRSOLVE_STATIC)
-      find_library(PML_LIBRARY NAMES libpml.a
-        HINTS "${PML_ROOT}/lib" /usr/local/lib /opt/homebrew/lib)
-    else()
-      find_library(PML_LIBRARY NAMES pml
-        HINTS "${PML_ROOT}/lib" /usr/local/lib /opt/homebrew/lib)
-    endif()
-
-    if(PML_INCLUDE_DIR AND PML_LIBRARY)
-      set(_pml_extra_inc "")
-      if(EXISTS "${PML_INCLUDE_DIR}/nmod_poly_mat_utils.h")
-        set(_pml_extra_inc "")
-      elseif(EXISTS "${PML_INCLUDE_DIR}/pml/nmod_poly_mat_utils.h")
-        set(_pml_extra_inc "${PML_INCLUDE_DIR}/pml")
-      else()
-        message(STATUS "PML: nmod_poly_mat_utils.h not found under ${PML_INCLUDE_DIR}")
-        set(PML_LIBRARY "")
-      endif()
-
-      if(PML_LIBRARY)
-        if(NOT EXISTS "${PML_INCLUDE_DIR}/config.h" AND
-           NOT EXISTS "${PML_INCLUDE_DIR}/pml/config.h")
-          message(STATUS "PML: config.h not found under ${PML_INCLUDE_DIR}")
-          set(PML_LIBRARY "")
-        endif()
-      endif()
-    endif()
-
-    if(PML_INCLUDE_DIR AND PML_LIBRARY)
-      set(PML_AVAILABLE TRUE)
-      set(PML_STATUS "${PML_LIBRARY}")
-      message(STATUS "PML: using installed library ${PML_LIBRARY}")
-
-      add_library(PML::PML UNKNOWN IMPORTED GLOBAL)
-      set_target_properties(PML::PML PROPERTIES
-        IMPORTED_LOCATION             "${PML_LIBRARY}"
-        INTERFACE_INCLUDE_DIRECTORIES "${PML_INCLUDE_DIR}"
-        INTERFACE_COMPILE_DEFINITIONS "HAVE_PML"
-      )
-      if(_pml_extra_inc)
-        set_property(TARGET PML::PML APPEND PROPERTY
-          INTERFACE_INCLUDE_DIRECTORIES "${_pml_extra_inc}")
-      endif()
-    else()
-      message(STATUS "PML: not found (optional) -- building without PML support")
-    endif()
+    message(FATAL_ERROR "Bundled pml_det is missing; restore it or set DRSOLVE_ENABLE_PML=OFF")
   endif()
 endif()
 
@@ -664,6 +613,8 @@ set(MATH_SOURCES
   src/field/unified_mpoly_interface.c
   src/resultant/macaulay_flint.c
   src/resultant/resultant_with_ideal_reduction.c
+  src/resultant/bezout_prefix.c
+  src/resultant/bezout_block.c
   src/resultant/unified_mpoly_resultant.c
   src/solver/complex_solver.c
   src/solver/fmpq_acb_roots.c
@@ -799,10 +750,6 @@ else()
     set(_rpath_dirs "${CMAKE_BINARY_DIR}/lib;\$ORIGIN/../lib")
     get_filename_component(_flint_lib_dir "${FLINT_LIBRARY}" DIRECTORY)
     list(APPEND _rpath_dirs "${_flint_lib_dir}")
-    if(PML_AVAILABLE AND PML_LIBRARY)
-      get_filename_component(_pml_lib_dir "${PML_LIBRARY}" DIRECTORY)
-      list(APPEND _rpath_dirs "${_pml_lib_dir}")
-    endif()
     string(REPLACE ";" ":" _rpath_str "${_rpath_dirs}")
     set_target_properties(drsolve_exe PROPERTIES
       INSTALL_RPATH           "\$ORIGIN/../lib"
@@ -988,6 +935,18 @@ if(BUILD_TESTING)
   endforeach()
 
   if(TARGET pml)
+    add_executable(pml_upstream_test src/test/matrix/pml_upstream_test.c)
+    drsolve_target_common(pml_upstream_test)
+    target_compile_options(pml_upstream_test PRIVATE -UNDEBUG)
+    target_link_libraries(pml_upstream_test PRIVATE pml)
+    add_test(NAME drsolve_pml_upstream COMMAND pml_upstream_test)
+    set_tests_properties(drsolve_pml_upstream PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=1")
+    add_executable(pml_interpolant_test src/test/matrix/pml_interpolant_test.c)
+    drsolve_target_common(pml_interpolant_test)
+    target_compile_options(pml_interpolant_test PRIVATE -UNDEBUG)
+    target_link_libraries(pml_interpolant_test PRIVATE pml)
+    add_test(NAME drsolve_pml_interpolant COMMAND pml_interpolant_test)
+    set_tests_properties(drsolve_pml_interpolant PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=1")
     add_executable(pml_prime_step4_test src/test/matrix/pml_prime_step4_test.c)
     drsolve_target_common(pml_prime_step4_test)
     target_compile_options(pml_prime_step4_test PRIVATE -UNDEBUG)
@@ -1269,6 +1228,13 @@ if(BUILD_TESTING)
   add_test(NAME drsolve_fmpz_mat_poly COMMAND fmpz_mat_poly_test)
   set_tests_properties(drsolve_fmpz_mat_poly PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
   drsolve_add_test_program(fmpz_unified_test src/test/field/fmpz_unified_test.c)
+  drsolve_add_test_program(bezout_prefix_test src/test/field/bezout_prefix_test.c)
+  add_test(NAME drsolve_bezout_prefix COMMAND bezout_prefix_test)
+  if(TARGET pml)
+    drsolve_add_test_program(bezout_block_test src/test/field/bezout_block_test.c)
+    add_test(NAME drsolve_bezout_block COMMAND bezout_block_test)
+    set_tests_properties(drsolve_bezout_block PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=1")
+  endif()
   drsolve_add_test_program(bezout_fast_test src/test/field/bezout_fast_test.c)
   add_test(NAME drsolve_bezout_fast COMMAND bezout_fast_test)
   set_tests_properties(drsolve_bezout_fast PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=4")
@@ -1369,6 +1335,10 @@ if(BUILD_TESTING)
     add_test(NAME drsolve_large_prime_schur_cli
       COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/large_prime_schur_cli_test.py
               $<TARGET_FILE:drsolve_exe>)
+    if(TARGET pml)
+      add_test(NAME drsolve_bezout_block_cli
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/src/test/cli/bezout_block_cli_test.py" "$<TARGET_FILE:drsolve_exe>")
+    endif()
     add_test(NAME drsolve_bivariate_ntt_cli
       COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/bivariate_ntt_cli_test.py
               $<TARGET_FILE:drsolve_exe>)

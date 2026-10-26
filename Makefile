@@ -102,11 +102,15 @@ PML_REL_SOURCES := \
 	nmod_poly_mat_extra/degrees_pivots_leadingmatrix.c \
 	nmod_poly_mat_extra/kernel.c \
 	nmod_poly_mat_extra/approximant_basis.c \
+	nmod_poly_mat_extra/interpolant_basis.c \
+	nmod_poly_mat_extra/interpolant_basis_geometric.c \
+	nmod_mat_poly_extra/nmod_mat_poly_mintbasis.c \
 	nmod_poly_mat_extra/middle_product.c \
 	nmod_mat_poly_extra/nmod_mat_poly_mbasis.c \
 	nmod_mat_poly_extra/nmod_mat_poly_mbasis_resupdate.c \
 	nmod_mat_poly_extra/nmod_mat_poly_mem.c \
 	nmod_mat_poly_extra/nmod_mat_poly_arith.c \
+	nmod_mat_poly_extra/transpose.c \
 	nmod_mat_poly_extra/nmod_mat_poly_set_from.c \
 	nmod_mat_poly_extra/nmod_mat_poly_shift.c \
 	nmod_mat_extra/left_nullspace.c \
@@ -116,6 +120,9 @@ PML_SOURCES := $(addprefix $(PML_SOURCE_DIR)/src/,$(PML_REL_SOURCES))
 PML_OBJECTS := $(addprefix $(PML_OBJ_DIR)/,$(PML_REL_SOURCES:.c=.o))
 PML_BUILD_PREREQS := $(PML_BUNDLED_LIB)
 else
+ifeq ($(NEED_CONFIG),yes)
+$(error Missing bundled PML source in $(PML_SOURCE_DIR); restore pml_det before building)
+endif
 PML_BUILD_PREREQS :=
 endif
 
@@ -184,6 +191,8 @@ MATH_SOURCES = $(SRC_DIR)/dixon/dixon_complexity.c \
                $(SRC_DIR)/field/unified_mpoly_interface.c \
                $(SRC_DIR)/resultant/macaulay_flint.c \
                $(SRC_DIR)/resultant/resultant_with_ideal_reduction.c \
+               $(SRC_DIR)/resultant/bezout_prefix.c \
+               $(SRC_DIR)/resultant/bezout_block.c \
                $(SRC_DIR)/resultant/unified_mpoly_resultant.c \
                $(SRC_DIR)/solver/complex_solver.c \
                $(SRC_DIR)/solver/fmpq_acb_roots.c \
@@ -223,7 +232,7 @@ ifeq ($(PML_BUNDLED_AVAILABLE),yes)
 $(PML_OBJ_DIR)/%.o: $(PML_SOURCE_DIR)/src/%.c | $(BUILD_DIR)
 	@echo "Compiling bundled PML source $<..."
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(INCLUDE_FLAGS) $(FLINT_FLAGS) $(PML_FLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) $(INCLUDE_FLAGS) $(FLINT_FLAGS) $(PML_FLAGS) -MMD -MP -c -o $@ $<
 
 $(PML_BUNDLED_LIB): $(PML_OBJECTS) | $(BUILD_DIR)
 	@echo "Building bundled PML static library..."
@@ -1341,3 +1350,36 @@ test-dynamic-cli: drsolve-dynamic
 .PHONY: test-solver-resultant-object-cli
 test-solver-resultant-object-cli: $(DIXON_TARGET)
 	python3 $(SRC_DIR)/test/cli/solver_resultant_object_cli_test.py ./$(DIXON_TARGET)
+
+$(BUILD_DIR)/pml_interpolant_test: $(SRC_DIR)/test/matrix/pml_interpolant_test.c $(PML_BUNDLED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< $(PML_BUNDLED_LIB) $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS)
+
+.PHONY: test-pml-interpolant
+test-pml-interpolant: $(BUILD_DIR)/pml_interpolant_test
+	OMP_NUM_THREADS=1 ./$(BUILD_DIR)/pml_interpolant_test
+
+$(PML_OBJ_DIR)/nmod_mat_poly_extra/transpose.o $(PML_OBJ_DIR)/nmod_mat_poly_extra/nmod_mat_poly_set_from.o $(PML_OBJ_DIR)/nmod_poly_mat_extra/nmod_poly_mat_utils.o: $(PML_SOURCE_DIR)/src/nmod_mat_poly_extra/transpose.h
+
+$(BUILD_DIR)/pml_upstream_test: $(SRC_DIR)/test/matrix/pml_upstream_test.c $(PML_BUNDLED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< $(PML_BUNDLED_LIB) $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS)
+.PHONY: test-pml-upstream
+test-pml-upstream: $(BUILD_DIR)/pml_upstream_test
+	OMP_NUM_THREADS=1 ./$(BUILD_DIR)/pml_upstream_test
+
+-include $(PML_OBJECTS:.o=.d)
+
+$(BUILD_DIR)/bezout_block_test: $(SRC_DIR)/test/field/bezout_block_test.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+.PHONY: test-bezout-block
+test-bezout-block: $(BUILD_DIR)/bezout_block_test
+	OMP_NUM_THREADS=1 ./$(BUILD_DIR)/bezout_block_test
+
+.PHONY: test-bezout-block-cli
+test-bezout-block-cli: $(DIXON_TARGET)
+	python3 $(SRC_DIR)/test/cli/bezout_block_cli_test.py ./$(DIXON_TARGET)
+
+$(BUILD_DIR)/bezout_prefix_test: $(SRC_DIR)/test/field/bezout_prefix_test.c $(BUILD_DIR)/resultant/bezout_prefix.o
+	$(CC) $(ALL_CFLAGS) -o $@ $^ $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS)
+.PHONY: test-bezout-prefix
+test-bezout-prefix: $(BUILD_DIR)/bezout_prefix_test
+	./$(BUILD_DIR)/bezout_prefix_test

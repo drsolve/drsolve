@@ -223,8 +223,9 @@ void _nmod_poly_vec_pivot_profile(slong * pivind,
                     max = d+shift[piv];
                 }
             }
-            *pivind = piv;
-            *pivdeg = (piv == -1) ? len : (max - shift[piv]);
+            /* Upstream f28e97ec: zero rows keep the upper-form sentinel. */
+            *pivind = (piv == -1) ? len : piv;
+            *pivdeg = (piv == -1) ? -1 : (max - shift[piv]);
         }
     }
 }

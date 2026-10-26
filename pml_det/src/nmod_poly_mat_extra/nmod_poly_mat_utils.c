@@ -10,6 +10,7 @@
     <https://www.gnu.org/licenses/>.
 */
 
+#include "nmod_mat_poly_extra/transpose.h"
 #include <stdlib.h> // for qsort
 #include <time.h>
 #include <flint/nmod_poly.h>
@@ -217,11 +218,23 @@ void nmod_poly_mat_set_trunc_from_mat_poly(nmod_poly_mat_t pmat,
         for (slong j = 0; j < pmat->c; j++)
             nmod_poly_fit_length(nmod_poly_mat_entry(pmat, i, j), order);
 
-    // fill data
-    for (slong k = 0; k < order; k++)
-        for (slong i = 0; i < pmat->r; i++)
-            for (slong j = 0; j < pmat->c; j++)
-                nmod_poly_mat_entry(pmat, i, j)->coeffs[k] = nmod_mat_poly_entry(matp, k, i, j);
+    if (order < 8 || pmat->c < 8 || (double)order*pmat->r*pmat->c < 512) {
+        for (slong k=0;k<order;k++)
+            for (slong i=0;i<pmat->r;i++)
+                for (slong j=0;j<pmat->c;j++)
+                    nmod_poly_mat_entry(pmat,i,j)->coeffs[k]=nmod_mat_poly_entry(matp,k,i,j);
+    } else {
+        nn_srcptr *src=flint_malloc(order*sizeof(nn_srcptr));
+        nn_ptr *dst=flint_malloc(pmat->c*sizeof(nn_ptr));
+        slong *lengths=flint_malloc(order*sizeof(slong));
+        for (slong k=0;k<order;k++) lengths[k]=pmat->c;
+        for (slong i=0;i<pmat->r;i++) {
+            for (slong k=0;k<order;k++) src[k]=nmod_mat_entry_ptr(matp->coeffs+k,i,0);
+            for (slong j=0;j<pmat->c;j++) dst[j]=nmod_poly_mat_entry(pmat,i,j)->coeffs;
+            drsolve_pml_transpose(dst,pmat->c,src,lengths,order,1);
+        }
+        flint_free(src);flint_free(dst);flint_free(lengths);
+    }
 
     // normalize
     for (slong i = 0; i < pmat->r; i++)

@@ -93,6 +93,12 @@ void unified_mpoly_univar_to_mpoly_univar(mpoly_univar_t A,
 int unified_mpoly_resultant_bezout_try(unified_mpoly_t R, const unified_mpoly_t A,
     const unified_mpoly_t B, slong var, unified_mpoly_ctx_t ctx);
 
+/* Experimental nmod block-Hankel path, independent of the CLI enable flag.
+ * Failure leaves R unchanged; supports aliases. Success uses randomized
+ * verification, including extension-field checks when needed; see bezout_block.h. */
+int unified_mpoly_resultant_bezout_block_try(unified_mpoly_t R,
+    const unified_mpoly_t A,const unified_mpoly_t B,slong var,unified_mpoly_ctx_t ctx);
+
 int unified_mpoly_resultant(unified_mpoly_t R, const unified_mpoly_t A,
                            const unified_mpoly_t B, slong var,
                            unified_mpoly_ctx_t ctx);

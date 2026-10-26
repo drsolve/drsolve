@@ -1,3 +1,4 @@
+#include "transpose.h"
 #include "nmod_mat_poly.h"
 #include <flint/nmod_poly.h>
 #include <flint/nmod_poly_mat.h>
@@ -40,11 +41,27 @@ void nmod_mat_poly_set_trunc_from_poly_mat(nmod_mat_poly_t matp,
     nmod_mat_poly_fit_length(matp, order);
     _nmod_mat_poly_set_length(matp, order);
 
-    // fill data
-    for (slong k = 0; k < order; k++)
-        for (slong i = 0; i < matp->r; i++)
-            for (slong j = 0; j < matp->c; j++)
-                nmod_mat_poly_entry(matp, k, i, j) = nmod_poly_get_coeff_ui(nmod_poly_mat_entry(pmat, i, j), k);
+    /* Upstream's blocked transpose, using logical rows for compatibility
+     * with the bundled matrix storage and old FLINT row permutations. */
+    if (order < 8 || matp->c < 8 || (double)order*matp->r*matp->c < 512) {
+        for (slong k=0;k<order;k++)
+            for (slong i=0;i<matp->r;i++)
+                for (slong j=0;j<matp->c;j++)
+                    nmod_mat_poly_entry(matp,k,i,j)=nmod_poly_get_coeff_ui(nmod_poly_mat_entry(pmat,i,j),k);
+    } else {
+        nn_srcptr *src=flint_malloc(matp->c*sizeof(nn_srcptr));
+        nn_ptr *dst=flint_malloc(order*sizeof(nn_ptr));
+        slong *lengths=flint_malloc(matp->c*sizeof(slong));
+        for (slong i=0;i<matp->r;i++) {
+            for (slong j=0;j<matp->c;j++) {
+                const nmod_poly_struct *p=nmod_poly_mat_entry(pmat,i,j);
+                src[j]=p->coeffs; lengths[j]=FLINT_MIN(p->length,order);
+            }
+            for (slong k=0;k<order;k++) dst[k]=nmod_mat_entry_ptr(matp->coeffs+k,i,0);
+            drsolve_pml_transpose(dst,order,src,lengths,matp->c,0);
+        }
+        flint_free(src);flint_free(dst);flint_free(lengths);
+    }
 
     // normalize (useless if order==len)
     if (order < len)

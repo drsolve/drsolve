@@ -11,6 +11,7 @@
 */
 
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #ifdef _OPENMP
 #include <omp.h>
@@ -35,7 +36,7 @@ static void drsolve_ntt(ulong *a, slong n, const ulong *roots, nmod_t mod)
         j ^= bit;
         if (i < j) { ulong t = a[i]; a[i] = a[j]; a[j] = t; }
     }
-    for (slong len = 2; len <= n; len <<= 1) {
+    for (slong len = 2; len <= n;) {
         slong half = len >> 1, step = n / len;
         for (slong i = 0; i < n; i += len)
             for (slong j = 0; j < half; j++) {
@@ -43,6 +44,8 @@ static void drsolve_ntt(ulong *a, slong n, const ulong *roots, nmod_t mod)
                 a[i+j] = nmod_add(u, v, mod);
                 a[i+j+half] = nmod_sub(u, v, mod);
             }
+        if (len == n) break;
+        len <<= 1;
     }
 }
 
@@ -62,15 +65,19 @@ int drsolve_nmod_poly_mat_mul_window_ntt(nmod_poly_mat_t C,
     slong plen = alen + blen - 1;
     if (start >= plen) { nmod_poly_mat_zero(C); return 1; }
     slong need = FLINT_MAX(FLINT_MIN(hi, plen), plen-start), len = 1;
-    /* Bound both transform length and total workspace before allocating.
-     * This backend is optional; unsupported fields use FLINT unchanged. */
-    while (len < need && len < 65536) len <<= 1;
-    if (len < need || A->modulus < 3 || (A->modulus-1) % len) return 0;
-    size_t limit = (size_t)256*1024*1024/sizeof(ulong);
-    if ((size_t)m > limit/(size_t)k || (size_t)k > limit/(size_t)n ||
-        (size_t)m > limit/(size_t)n) return 0;
+    /* Only integer/address-space representability checks, no size budget. */
+    while (len < need) {
+        if (len > WORD_MAX/2) return 0;
+        len <<= 1;
+    }
+    if (A->modulus < 3 || (A->modulus-1) % len) return 0;
+    const size_t max_elements = SIZE_MAX/sizeof(ulong);
+    if ((size_t)m > max_elements/(size_t)k ||
+        (size_t)k > max_elements/(size_t)n ||
+        (size_t)m > max_elements/(size_t)n) return 0;
     size_t na = (size_t)m*k, nb = (size_t)k*n, nc = (size_t)m*n;
-    if (na+nb+nc+3 > limit/(size_t)(len+1)) return 0;
+    if ((size_t)len > max_elements || na > max_elements/(size_t)len ||
+        nb > max_elements/(size_t)len || nc > max_elements/(size_t)len) return 0;
     /* The caller uses prime fields. Checking here also makes this standalone
      * entry point reject composite moduli instead of searching for a root. */
     if (!n_is_prime(A->modulus)) return 0;
@@ -94,18 +101,13 @@ int drsolve_nmod_poly_mat_mul_window_ntt(nmod_poly_mat_t C,
         roots[i] = nmod_mul(roots[i-1],root,mod);
         inverse[i] = nmod_mul(inverse[i-1],invroot,mod);
     }
-    /* Bound per-worker scratch as well as the shared transforms. Small
-     * products and calls inside an existing team stay serial. */
+    /* Small products and calls inside an existing team stay serial. */
 #ifdef _OPENMP
     int workers = 1;
     if (!omp_in_parallel()) {
-        /* Amortize team overhead with at least 32K coefficient slots
-         * per worker; pointwise products add more work on wide matrices. */
-        size_t jobs = (na+nb+nc)*(size_t)len / 32768;
-        size_t scratch = na+nb+nc+(size_t)len;
-        size_t available = limit-(na+nb+nc+2)*(size_t)len;
-        workers = (int) FLINT_MAX(1, FLINT_MIN((size_t)omp_get_max_threads(),
-            FLINT_MIN((size_t)len, FLINT_MIN(jobs, available/scratch))));
+        double jobs = ((double)na+nb+nc)*(double)len / 32768.0;
+        workers = (int) FLINT_MAX(1, FLINT_MIN(omp_get_max_threads(),
+            FLINT_MIN((double)len, jobs)));
     }
 #endif
     ulong scale = nmod_inv((ulong)len,mod);
@@ -183,7 +185,7 @@ static int drsolve_try_ntt(const nmod_poly_mat_t A, const nmod_poly_mat_t B, int
 {
     if (mode == 1) return 1;
     /* Dispatch depends on shape; the backend checks root availability and
-     * workspace uniformly for every prime. */
+     * integer representability uniformly for every prime. */
     return mode == 2 &&
         FLINT_MIN(A->r,FLINT_MIN(A->c,B->c)) >= 2;
 }

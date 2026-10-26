@@ -104,3 +104,6 @@ dll/
 /.agents/skills/
 /.codex/skills/
 /skills/
+
+# Local research worktrees and experiments
+/experiments/

@@ -695,6 +695,14 @@ void nmod_mat_poly_mbasis_resupdate_profile_print(void);
 
 //@} // doxygen group: M-Basis algorithm (uniform approximant order)
 
+/* Point-evaluation interpolation bases (PML, Gilles Villard, 2026). */
+void nmod_mat_poly_mintbasis(nmod_mat_poly_t basis, slong *shift,
+    const ulong *points, const nmod_mat_struct *values, slong count);
+void nmod_mat_poly_mintbasis_rescomp(nmod_mat_poly_t basis, slong *shift,
+    const ulong *points, const nmod_mat_struct *values, slong count);
+void nmod_mat_poly_mintbasis_resupdate(nmod_mat_poly_t basis, slong *shift,
+    const ulong *points, const nmod_mat_struct *values, slong count);
+
 #ifdef __cplusplus
 }
 #endif

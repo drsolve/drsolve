@@ -3275,6 +3275,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int mq_step1_pencil = 0;
     int mq_step4_schur = 1;
     int bezout_fast = -1;
+    int bezout_block = 0;
     int schur_seed = 1;
     int step3_verify_second = 0;
     fq_nmod_poly_det_method_t fq_det_method = FQ_NMOD_POLY_DET_METHOD_AUTO;
@@ -3573,6 +3574,13 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             mq_step1_simplex = 0;
         } else if (strcmp(argv[i], "--mq-step4-schur") == 0) {
             mq_step4_schur = 1;
+        } else if (strcmp(argv[i], "--bezout-block") == 0) {
+            bezout_block = 1;
+            bezout_fast = 1;
+            resultant_method = RESULTANT_METHOD_DIXON;
+            resultant_method_explicit = 1;
+        } else if (strcmp(argv[i], "--no-bezout-block") == 0) {
+            bezout_block = 0;
         } else if (strcmp(argv[i], "--no-bezout-fast") == 0 || strcmp(argv[i], "--no-bivar-ntt") == 0) {
             bezout_fast = 0;
         } else if (strcmp(argv[i], "--bezout-fast") == 0 || strcmp(argv[i], "--bivar-ntt") == 0) {
@@ -4636,6 +4644,7 @@ random_done:
     g_dixon_mq_step1_simplex = mq_step1_simplex;
     g_dixon_mq_step1_pencil = mq_step1_pencil;
     g_dixon_mq_step4_schur = mq_step4_schur;
+    g_dixon_bezout_block = bezout_block;
     g_dixon_bezout_fast = bezout_fast < 0
         ? !resultant_method_explicit && !determinant_method_explicit : bezout_fast;
     g_dixon_schur_seed = schur_seed;

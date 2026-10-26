@@ -140,10 +140,14 @@ fallback:
 static int dixon_try_bezout_fast(unified_mpoly_struct *result,
     unified_mpoly_struct *polys, slong nvars, slong npars)
 {
-    if(!g_dixon_bezout_fast || nvars!=1 || npars!=1 || g_field_equation_reduction) return 0;
-    if(dixon_try_bivariate_ntt(result,polys,nvars,npars)) return 1;
+    if((!g_dixon_bezout_fast && !g_dixon_bezout_block) || nvars!=1 || npars!=1 || g_field_equation_reduction) return 0;
     unified_mpoly_t temp=unified_mpoly_init(polys[0].ctx_ptr);
-    int ok=unified_mpoly_resultant_bezout_try(temp,polys,polys+1,0,polys[0].ctx_ptr);
+    int ok=g_dixon_bezout_block && unified_mpoly_resultant_bezout_block_try(temp,polys,polys+1,0,polys[0].ctx_ptr);
+    if(!ok) {
+        if(g_dixon_bezout_block)dixon_info_log("Dixon/Bezout block-Hankel: fallback to existing resultant backend\n");
+        if(dixon_try_bivariate_ntt(result,polys,nvars,npars)) {unified_mpoly_clear(temp);return 1;}
+        ok=unified_mpoly_resultant_bezout_try(temp,polys,polys+1,0,polys[0].ctx_ptr);
+    }
     if(ok) {
         dr_mpoly_init(result,0,1,polys[0].ctx);
         field_ctx_t *field=polys[0].ctx_ptr->field_ctx;

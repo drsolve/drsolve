@@ -649,7 +649,8 @@ fi
 if [ "$PML_AVAILABLE" = "yes" ]; then
     echo "*** bundled PML source FOUND - will build with bundled static PML support ***"
 else
-    echo "*** bundled PML source NOT FOUND - will build without PML support ***"
+    echo "configure: error: bundled pml_det is missing or incomplete; restore it before building." >&2
+    exit 1
 fi
 
 # ============================================================
