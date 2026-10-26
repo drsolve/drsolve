@@ -35,6 +35,7 @@ def main():
                         p = subprocess.run(
                             [args.binary, "-r", case, "65537", "--seed", str(seed),
                              "--quotient" if quotient else "--no-quotient",
+                             "--no-bezout-block", "--no-bezout-fast",
                              "--threads", str(threads), "--time", "-v", "1", "-o", str(path)],
                             env=env, capture_output=True, text=True, timeout=120, check=True)
                         log = p.stdout + p.stderr

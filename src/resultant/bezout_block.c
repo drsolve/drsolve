@@ -82,7 +82,7 @@ static int verify(nmod_poly_t candidate,const nmod_poly_struct *coeffs,
 }
 static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
     slong d,slong m,slong count,int shifted,ulong root,ulong dilation,
-    dr_bezout_block_stats *stats)
+    const slong *indices,dr_bezout_block_stats *stats)
 {
     const slong rows=2*(d+1);const ulong p=result->mod.n;
     if((size_t)count>SIZE_MAX/sizeof(ulong)/(size_t)rows ||
@@ -127,14 +127,17 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
                 g->coeffs[i]=values[(size_t)(d+1+i)*count+k];
             }
             f->length=g->length=d+1;
-            /* Leading cancellation is scalar because both x^d coefficients
-             * are nonzero constants. Validation uses the original pair. */
+            /* The x^d coefficient of f is a nonzero constant. Cancel the
+             * constant x^d coefficient of g (already zero after reduction).
+             * Validation uses the pair before this cancellation. */
             ulong scale=nmod_div(g->coeffs[d],f->coeffs[d],result->mod);
             for(slong i=0;i<=d;i++)g->coeffs[i]=nmod_sub(g->coeffs[i],nmod_mul(scale,f->coeffs[i],result->mod),result->mod);
             _nmod_poly_normalise(g);
-            if(dr_bezout_left_moments(h,f,g,2*m-1,1024,NULL)!=1){failed=1;continue;}
+            slong precision=2*(indices?indices[m-1]:m-1)+1;
+            if(dr_bezout_left_moments(h,f,g,precision,1024,NULL)!=1){failed=1;continue;}
             for(slong i=0;i<m;i++) {
-                for(slong j=0;j<m;j++)nmod_mat_entry(blocks+k,i,j)=nmod_poly_get_coeff_ui(h,i+j);
+                for(slong j=0;j<m;j++)nmod_mat_entry(blocks+k,i,j)=
+                    nmod_poly_get_coeff_ui(h,indices?indices[i]+indices[j]:i+j);
                 nmod_mat_entry(blocks+k,m+i,i)=1;
             }
         }
@@ -175,6 +178,60 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
     for(slong k=0;k<count;k++)nmod_mat_clear(blocks+k);
     flint_free(blocks);return ok;
 }
+
+/* Integer cube root: the direct matrix FFT uses classical matrix products.
+ * This is an asymptotic block-size choice, not a cap on the input size. */
+static slong default_unbalanced_block(slong d)
+{
+    slong lo=1,hi=d;
+    while(lo<hi) {
+        slong mid=lo+(hi-lo+1)/2;
+        if(mid<=d/mid/mid)lo=mid;else hi=mid-1;
+    }
+    return lo;
+}
+
+/* Encode x=z^(A+1), y=z. Since Q has constant nonzero x^B coefficient,
+ * division in K[y][x] preserves total degree <= A. Its remainder has x-degree
+ * < B, so its encoding has degree < B*(A+1). Thus ordinary univariate
+ * remainder is exactly the encoding of P mod Q (no coefficient carry).
+ * Normalize Q to monic so specialization of Res(Q, remainder) remains valid
+ * even when the degree of the remainder drops at a verification point. */
+static int prepare_unbalanced(nmod_poly_struct *coeffs,ulong *correction,
+    const nmod_mpoly_t a,const nmod_mpoly_t b,slong var,
+    const nmod_mpoly_ctx_t ctx,slong A,slong B,int a_is_large)
+{
+    const nmod_mpoly_struct *P=a_is_large?a:b,*Q=a_is_large?b:a;
+    slong base=A+1;
+    if(A>(WORD_MAX-1)/base)return 0;
+    ulong p=nmod_mpoly_ctx_modulus(ctx),exps[2];
+    nmod_poly_t packed_p,packed_q,rem;
+    nmod_poly_init(packed_p,p);nmod_poly_init(packed_q,p);nmod_poly_init(rem,p);
+    const nmod_mpoly_struct *inputs[2]={P,Q};
+    for(int k=0;k<2;k++)for(slong i=0;i<inputs[k]->length;i++) {
+        nmod_mpoly_get_term_exp_ui(exps,inputs[k],i,ctx);
+        slong index=(slong)exps[var]*base+(slong)exps[1-var];
+        nmod_poly_set_coeff_ui(k?packed_q:packed_p,index,
+            nmod_mpoly_get_term_coeff_ui(inputs[k],i,ctx));
+    }
+    ulong leading=nmod_poly_get_coeff_ui(packed_q,B*base);
+    nmod_poly_scalar_mul_nmod(packed_q,packed_q,nmod_inv(leading,packed_q->mod));
+    nmod_poly_rem(rem,packed_p,packed_q);
+    int ok=!nmod_poly_is_zero(rem);
+    if(ok) {
+        const nmod_poly_struct *reduced[2]={packed_q,rem};
+        for(int k=0;k<2;k++)for(slong i=0;i<reduced[k]->length;i++)
+            if(reduced[k]->coeffs[i])
+                nmod_poly_set_coeff_ui(coeffs+k*(B+1)+i/base,i%base,reduced[k]->coeffs[i]);
+        slong degree_p=nmod_mpoly_degree_si(P,var,ctx);
+        *correction=nmod_pow_ui(leading,(ulong)degree_p,packed_q->mod);
+        /* Res(P,Q)=(-1)^(deg_x(P)*B) lc_x(Q)^deg_x(P) Res(Q_monic,P mod Q). */
+        if(a_is_large && (degree_p&1) && (B&1))
+            *correction=nmod_neg(*correction,packed_q->mod);
+    }
+    nmod_poly_clear(packed_p);nmod_poly_clear(packed_q);nmod_poly_clear(rem);
+    return ok;
+}
 int dr_nmod_mpoly_resultant_bezout_block_try(nmod_poly_t out,
     const nmod_mpoly_t a,const nmod_mpoly_t b,slong var,
     const nmod_mpoly_ctx_t ctx,slong block,flint_rand_t state,dr_bezout_block_stats *stats)
@@ -184,43 +241,76 @@ int dr_nmod_mpoly_resultant_bezout_block_try(nmod_poly_t out,
        out->mod.n!=nmod_mpoly_ctx_modulus(ctx) || !n_is_prime(out->mod.n) ||
        !nmod_mpoly_degrees_fit_si(a,ctx) || !nmod_mpoly_degrees_fit_si(b,ctx) ||
        !nmod_mpoly_total_degree_fits_si(a,ctx) || !nmod_mpoly_total_degree_fits_si(b,ctx))return 0;
-    slong d=nmod_mpoly_total_degree_si(a,ctx);
-    if(d<1 || d!=nmod_mpoly_total_degree_si(b,ctx) ||
-       nmod_mpoly_degree_si(a,var,ctx)!=d || nmod_mpoly_degree_si(b,var,ctx)!=d ||
-       d>(WORD_MAX-2)/2 || d>(WORD_MAX-1)/d)return 0;
-    slong m=block?block:FLINT_MIN(6,d),bound=d*d;
+    slong da=nmod_mpoly_total_degree_si(a,ctx),db=nmod_mpoly_total_degree_si(b,ctx);
+    slong A=FLINT_MAX(da,db),d=FLINT_MIN(da,db);
+    int unbalanced=da!=db;
+    if(d<1 || A>(WORD_MAX-2)/2 || A>(WORD_MAX-1)/d)return 0;
+    if(unbalanced) {
+        const nmod_mpoly_struct *small=da<db?a:b;
+        if(nmod_mpoly_degree_si(small,var,ctx)!=d)return 0;
+    } else if(nmod_mpoly_degree_si(a,var,ctx)!=d ||
+              nmod_mpoly_degree_si(b,var,ctx)!=d)return 0;
+    slong m=block?block:(unbalanced?default_unbalanced_block(d):FLINT_MIN(6,d));
+    slong bound=A*d;
     if(m>d || m>WORD_MAX/2 ||
        (size_t)(2*m)>SIZE_MAX/sizeof(nmod_poly_struct)/(size_t)(2*m))return 0;
-    slong half=bound/m+(bound%m!=0);
-    if(half>(WORD_MAX-1-2*d)/2)return 0;
-    slong short_count=1+2*half-2*d+2*m,full_count=1+2*half+2*d;
+    slong short_count,full_count;
+    if(unbalanced) {
+        slong stride=d/m+(d%m!=0);
+        if(A>((WORD_MAX-1)/2)/stride)return 0;
+        short_count=full_count=2*A*stride+1;
+    } else {
+        slong half=bound/m+(bound%m!=0);
+        if(half>(WORD_MAX-1-2*d)/2)return 0;
+        short_count=1+2*half-2*d+2*m;full_count=1+2*half+2*d;
+    }
     if((ulong)short_count>(out->mod.n-1)/2)return 0;
     slong rows=2*(d+1);
     if((size_t)rows>SIZE_MAX/sizeof(nmod_poly_struct))return 0;
     nmod_poly_struct *coeffs=flint_malloc(rows*sizeof(*coeffs));
     for(slong i=0;i<rows;i++)nmod_poly_init(coeffs+i,out->mod.n);
-    const nmod_mpoly_struct *inputs[2]={a,b};ulong exps[2];
-    for(int k=0;k<2;k++)for(slong i=0;i<inputs[k]->length;i++) {
-        nmod_mpoly_get_term_exp_ui(exps,inputs[k],i,ctx);
-        nmod_poly_set_coeff_ui(coeffs+k*(d+1)+exps[var],exps[1-var],
-            nmod_mpoly_get_term_coeff_ui(inputs[k],i,ctx));
+    ulong correction=1;int prepared=1;
+    double prep_start=seconds();
+    if(unbalanced)prepared=prepare_unbalanced(coeffs,&correction,a,b,var,ctx,A,d,da>db);
+    else {
+        const nmod_mpoly_struct *inputs[2]={a,b};ulong exps[2];
+        for(int k=0;k<2;k++)for(slong i=0;i<inputs[k]->length;i++) {
+            nmod_mpoly_get_term_exp_ui(exps,inputs[k],i,ctx);
+            nmod_poly_set_coeff_ui(coeffs+k*(d+1)+exps[var],exps[1-var],
+                nmod_mpoly_get_term_coeff_ui(inputs[k],i,ctx));
+        }
+    }
+    if(unbalanced)stats->evaluation+=seconds()-prep_start;
+    slong *indices=NULL;
+    if(unbalanced) {
+        indices=flint_malloc(m*sizeof(*indices));
+        slong stride=d/m+(d%m!=0);
+        /* The default m=floor(cuberoot(d)) permits a uniform stride. For
+         * larger caller-selected blocks, rounded spacing still covers all
+         * d basis positions with gaps <= ceil(d/m), with the same degree
+         * bound. Neither branch requires a cap on valid block sizes. */
+        for(slong i=0;i<m;i++)indices[i]=(m-1)<=(d-1)/stride?i*stride:i*d/m;
     }
     nmod_poly_t candidate;nmod_poly_init(candidate,out->mod.n);
-    ulong root=n_primitive_root_prime(out->mod.n);int ok=0;
+    ulong root=prepared?n_primitive_root_prime(out->mod.n):1;int ok=0;
     stats->block=m;
-    for(int attempt=0;attempt<2;attempt++) {
+    for(int attempt=0;prepared && attempt<2;attempt++) {
         slong count=attempt?full_count:short_count;
         if((ulong)count>(out->mod.n-1)/2)break;
         stats->points=count;stats->attempts++;
         ulong dilation=1+n_randint(state,out->mod.n-1);
         nmod_poly_zero(candidate);
-        if(!reconstruct(candidate,coeffs,d,m,count,!attempt,root,dilation,stats))continue;
+        if(!reconstruct(candidate,coeffs,d,m,count,!unbalanced && !attempt,
+                        root,dilation,indices,stats))continue;
         double start=seconds();
         ok=verify(candidate,coeffs,d,bound,state,&stats->verification_extension_degree);
         stats->verification+=seconds()-start;
-        if(ok){nmod_poly_swap(out,candidate);break;}
+        if(ok){
+            nmod_poly_scalar_mul_nmod(candidate,candidate,correction);
+            nmod_poly_swap(out,candidate);break;
+        }
     }
-    nmod_poly_clear(candidate);
+    nmod_poly_clear(candidate);flint_free(indices);
     for(slong i=0;i<rows;i++)nmod_poly_clear(coeffs+i);
     flint_free(coeffs);return ok;
 }
@@ -245,6 +335,7 @@ int unified_mpoly_resultant_bezout_block_try(unified_mpoly_t out,
     if(ctx->nvars!=2 || ctx->field_ctx->field_id!=FIELD_ID_NMOD ||
        a->ctx_ptr!=ctx || b->ctx_ptr!=ctx || out->ctx_ptr!=ctx ||
        var<0 || var>1 || g_field_equation_reduction)return 0;
+    slong da=0,db=0;
     nmod_poly_t result;nmod_poly_init(result,ctx->field_ctx->ctx.nmod_ctx.n);
     flint_rand_t state;flint_rand_init(state);
     dr_bezout_block_stats stats;
@@ -252,14 +343,19 @@ int unified_mpoly_resultant_bezout_block_try(unified_mpoly_t out,
     int ok=dr_nmod_mpoly_resultant_bezout_block_try(result,GET_NMOD_POLY(a),GET_NMOD_POLY(b),
         var,GET_NMOD_CTX(ctx),0,state,&stats);
     if(ok) {
+        da=nmod_mpoly_total_degree_si(GET_NMOD_POLY(a),GET_NMOD_CTX(ctx));
+        db=nmod_mpoly_total_degree_si(GET_NMOD_POLY(b),GET_NMOD_CTX(ctx));
         unified_mpoly_t answer=unified_mpoly_init(ctx);ulong exp[2]={0,0};
         for(slong i=result->length;i-->0;) {
             exp[1-var]=i;
             nmod_mpoly_set_coeff_ui_ui(GET_NMOD_POLY(answer),result->coeffs[i],exp,GET_NMOD_CTX(ctx));
         }
         unified_mpoly_swap(out,answer);unified_mpoly_clear(answer);
-        dixon_info_log("Dixon/Bezout block-Hankel resultant: C shifted interpolation, block %ld, %ld points, %ld attempt(s)\n",
+        dixon_info_log("Dixon/Bezout block-Hankel resultant: %s, block %ld, %ld points, %ld attempt(s)\n",
+            da==db?"C shifted interpolation":"C reduced spaced projection",
             stats.block,stats.points,stats.attempts);
+        if(da!=db)dixon_info_log("  Total degrees %ld/%ld; reduced Bezout order %ld (preparation included in evaluation)\n",
+            da,db,FLINT_MIN(da,db));
         dixon_info_log("  Evaluation %.6fs | inverse %.6fs | interpolation %.6fs | determinant %.6fs | verification %.6fs (field degree %ld)\n",
             stats.evaluation,stats.inverse,stats.interpolation,stats.determinant,stats.verification,stats.verification_extension_degree);
         dixon_info_log("Dixon/Bezout block time: Wall time: %.6f seconds\n",

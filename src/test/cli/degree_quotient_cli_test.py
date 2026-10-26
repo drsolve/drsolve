@@ -18,10 +18,10 @@ def check(name, arguments, grouped, fallback=False):
     results = []
     for enabled in (False, True):
         path = output / f"{name}_{enabled}.dr"
-        # Keep bivariate cases on the quotient/Dixon paths under comparison.
+        # Disable both bivariate shortcuts to compare the quotient/Dixon paths.
         p = subprocess.run(
             [args.binary, *arguments, "--quotient" if enabled else "--no-quotient",
-             "--no-bezout-fast", "--threads", "1", "-v", "1", "-o", str(path)],
+             "--no-bezout-block", "--no-bezout-fast", "--threads", "1", "-v", "1", "-o", str(path)],
             capture_output=True, text=True, env=env, timeout=120, check=True)
         log = p.stdout + p.stderr
         (output / f"{name}_{enabled}.log").write_text(log)

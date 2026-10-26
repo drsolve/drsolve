@@ -29,8 +29,8 @@ def main():
                 stem = f"{name}_{trial}_{int(enabled)}"
                 path = out / (stem + ".dr")
                 # Exercise quotient dispatch even for bivariate systems, whose
-                # default fast resultant otherwise bypasses these checks.
-                cmd = [args.binary, *arguments, "--no-bezout-fast", "--time",
+                # default block and fast resultants otherwise bypass these checks.
+                cmd = [args.binary, *arguments, "--no-bezout-block", "--no-bezout-fast", "--time",
                        "--threads", "4", "-o", str(path)]
                 if enabled:
                     cmd.append("--mq-quotient")
