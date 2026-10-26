@@ -1422,3 +1422,9 @@ test-inverse-block: $(BUILD_DIR)/inverse_block_test
 	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH ./$(BUILD_DIR)/inverse_block_test
 test-inverse-block-cli: $(DIXON_TARGET)
 	python3 $(SRC_DIR)/test/cli/inverse_block_cli_test.py ./$(DIXON_TARGET)
+
+$(BUILD_DIR)/inverse_block_static_test: $(SRC_DIR)/test/matrix/inverse_block_test.c $(DIXON_STATIC_LIB) $(PML_BUILD_PREREQS)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< $(DIXON_STATIC_LIB) $(EXTERNAL_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+.PHONY: test-inverse-block-static
+test-inverse-block-static: $(BUILD_DIR)/inverse_block_static_test
+	OMP_NUM_THREADS=1 ./$(BUILD_DIR)/inverse_block_static_test

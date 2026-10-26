@@ -245,16 +245,12 @@ Example:
 
 #### Step 4 determinant options
 
-For nmod prime fields, Dixon systems with 3 or 4 equations and one remaining
-variable automatically try inverse-block reconstruction directly. By default,
-Schur compression is used when inverse-block is disabled or falls back.
-`--step4-schur` explicitly enables compression before inverse-block;
-`--no-step4-schur` disables compression even on fallback.
-Step 3 selection is controlled separately by `--no-schur-seed`.
-Use `--inverse-block` to enable inverse-block reconstruction for other sizes,
-`--no-inverse-block` to disable,
-or `--inverse-block-auto` to restore the default. `--inverse-block-size N` enables
-it with a specified block size (`0` selects automatically).
+For nmod prime fields, 3- and 4-equation systems with one remaining variable
+try inverse-block by default, using Schur compression when disabled or on fallback.
+`--inverse-block` / `--no-inverse-block` / `--inverse-block-auto` control this mode;
+`--inverse-block-size N` enables it with block size `N` (`0`: automatic).
+`--step4-schur` also enables compression before inverse-block;
+`--no-step4-schur` disables compression, including on fallback.
 
 ```bash
 ./drsolve --fq-det-method hnf <args>

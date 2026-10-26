@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include "inverse_block_det.h"
+#include "dixon_flint.h"
 #include <flint/ulong_extras.h>
 
 /* Exhaustive degree assignment, independent of the Hungarian implementation. */
@@ -21,6 +22,10 @@ int main(void)
 #ifndef HAVE_PML
     puts("inverse-block: PML unavailable; backend disabled");return 0;
 #else
+    /* Pull the logging state from libdrsolve before the static PML archive,
+       whose determinant routines reference it, and keep this test quiet. */
+    g_dixon_verbose_level = 0;
+    g_dixon_debug_mode = 0;
     flint_rand_t rng;flint_rand_init(rng);flint_rand_set_seed(rng,4321,9123);
     ulong primes[]={257,65537,1073741827,
 #if FLINT_BITS == 64
