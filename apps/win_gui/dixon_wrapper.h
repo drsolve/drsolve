@@ -8,8 +8,8 @@ typedef enum {
     DIXON_GUI_MODE_SOLVE = 0,
     DIXON_GUI_MODE_RESULTANT = 1,
     DIXON_GUI_MODE_COMPLEXITY = 2,
-    DIXON_GUI_MODE_IDEAL = 3,
-    DIXON_GUI_MODE_RANDOM = 4
+    DIXON_GUI_MODE_RANDOM = 3,
+    DIXON_GUI_MODE_COMMAND = 4
 } dixon_gui_mode_t;
 
 typedef enum {
@@ -24,9 +24,9 @@ typedef struct {
     const char *polynomials;
     const char *eliminate_vars;
     const char *field;
-    const char *ideal_generators;
     const char *omega;
     const char *random_degrees;
+    const char *command_args;
     int solve_verbose;
     int random_mode;
     int step1_method;

@@ -813,7 +813,7 @@ if(DRSOLVE_WINDOWS AND DRSOLVE_BUILD_GUI)
     apps/win_gui/dixon_gui.c
     apps/win_gui/dixon_wrapper.c
   )
-  target_compile_definitions(drsolve_win_gui PRIVATE _WIN32_WINNT=0x0601)
+  target_compile_definitions(drsolve_win_gui PRIVATE _WIN32_WINNT=0x0601 PROGRAM_VERSION="${DRSOLVE_VERSION}")
   target_link_libraries(drsolve_win_gui PRIVATE comctl32 comdlg32 shlwapi)
   set_target_properties(drsolve_win_gui PROPERTIES
     OUTPUT_NAME              "drsolve_win_gui"
@@ -917,6 +917,15 @@ endif()
 # ============================================================
 
 if(BUILD_TESTING)
+  if(DRSOLVE_WINDOWS AND DRSOLVE_BUILD_GUI)
+    add_executable(win_gui_wrapper_test
+      src/test/cli/win_gui_wrapper_test.c apps/win_gui/dixon_wrapper.c)
+    target_include_directories(win_gui_wrapper_test PRIVATE apps/win_gui)
+    target_compile_definitions(win_gui_wrapper_test PRIVATE _WIN32_WINNT=0x0601)
+    target_compile_options(win_gui_wrapper_test PRIVATE -UNDEBUG)
+    target_link_libraries(win_gui_wrapper_test PRIVATE shlwapi)
+    add_test(NAME drsolve_win_gui_wrapper COMMAND win_gui_wrapper_test)
+  endif()
   add_executable(dixon_scalar_screen_test src/test/dixon/dixon_scalar_screen_test.c)
   drsolve_target_common(dixon_scalar_screen_test)
   target_compile_options(dixon_scalar_screen_test PRIVATE -UNDEBUG)

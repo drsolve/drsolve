@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "../test_env.h"
 #include <flint/nmod_poly_mat.h>
 #include "nmod_poly_mat_multiply.h"
 #ifdef _OPENMP
@@ -43,7 +44,11 @@ int main(void)
 #ifdef _OPENMP
     flint_set_num_threads(omp_get_max_threads());
 #endif
-    setenv("DRSOLVE_PML_MUL","fft",1); /* Exercise even tiny FFT inputs. */
+    /* Exercise even tiny FFT inputs, including with the Windows CRT. */
+    if (dr_test_setenv("DRSOLVE_PML_MUL", "fft", 1) != 0) {
+        perror("DRSOLVE_PML_MUL");
+        return 1;
+    }
     ulong primes[]={2,17,65537,998244353,1000000007,
 #if FLINT_BITS == 64
         UWORD(18446744069414584321),

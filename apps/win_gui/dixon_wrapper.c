@@ -405,6 +405,16 @@ static int validate_request(const dixon_gui_request_t *request,
         return 0;
     }
 
+    if (request->mode == DIXON_GUI_MODE_COMMAND) {
+        const char *args = request->command_args;
+        if (args) while (*args == ' ' || *args == '\t') ++args;
+        if (!args || !*args) {
+            set_error(error_message, error_message_size, "Enter CLI arguments, for example --help.");
+            return 0;
+        }
+        return 1;
+    }
+
     if (!request->field || request->field[0] == '\0') {
         set_error(error_message, error_message_size, "Field is required.");
         return 0;
@@ -436,22 +446,6 @@ static int validate_request(const dixon_gui_request_t *request,
             if (!request->eliminate_vars || request->eliminate_vars[0] == '\0') {
                 set_error(error_message, error_message_size,
                           "Elimination variables are required for this mode.");
-                return 0;
-            }
-            return 1;
-        case DIXON_GUI_MODE_IDEAL:
-            if (!request->polynomials || request->polynomials[0] == '\0') {
-                set_error(error_message, error_message_size, "Polynomials are required.");
-                return 0;
-            }
-            if (!request->eliminate_vars || request->eliminate_vars[0] == '\0') {
-                set_error(error_message, error_message_size,
-                          "Elimination variables are required for ideal reduction.");
-                return 0;
-            }
-            if (!request->ideal_generators || request->ideal_generators[0] == '\0') {
-                set_error(error_message, error_message_size,
-                          "Ideal generators are required for ideal reduction.");
                 return 0;
             }
             return 1;
@@ -600,7 +594,6 @@ int dixon_gui_run_request(const dixon_gui_request_t *request,
     char *field = NULL;
     char *polynomials = NULL;
     char *vars = NULL;
-    char *ideal = NULL;
     char *omega = NULL;
     char *random_degrees = NULL;
     string_builder_t command = {0};
@@ -648,6 +641,17 @@ int dixon_gui_run_request(const dixon_gui_request_t *request,
         goto cleanup;
     }
 
+    if (request->mode == DIXON_GUI_MODE_COMMAND) {
+        /* Preserve Windows argument quoting. Run the selected executable directly,
+           without a shell or form-mode method overrides. */
+        if (!append_arg(&command, path_to_use) || !sb_append(&command, " ") ||
+            !sb_append(&command, request->command_args)) {
+            set_error(error_message, error_message_size, "Out of memory while building the command line.");
+            goto cleanup;
+        }
+        goto launch;
+    }
+
     field = trim_copy(request->field);
     if (!field) {
         set_error(error_message, error_message_size, "Out of memory while copying the field input.");
@@ -664,14 +668,6 @@ int dixon_gui_run_request(const dixon_gui_request_t *request,
         vars = normalize_multiline_csv(request->eliminate_vars);
         if (!vars) {
             set_error(error_message, error_message_size, "Out of memory while normalizing the elimination variables.");
-            goto cleanup;
-        }
-    }
-
-    if (request->ideal_generators) {
-        ideal = normalize_multiline_csv(request->ideal_generators);
-        if (!ideal) {
-            set_error(error_message, error_message_size, "Out of memory while normalizing the ideal generators.");
             goto cleanup;
         }
     }
@@ -772,28 +768,6 @@ int dixon_gui_run_request(const dixon_gui_request_t *request,
                 goto cleanup;
             }
             break;
-        case DIXON_GUI_MODE_IDEAL:
-            if (!append_arg(&command, "--ideal")) {
-                set_error(error_message, error_message_size, "Out of memory while building the ideal command line.");
-                goto cleanup;
-            }
-            if (!append_arg(&command, ideal ? ideal : "")) {
-                set_error(error_message, error_message_size, "Out of memory while appending ideal generators to the command line.");
-                goto cleanup;
-            }
-            if (!append_arg(&command, polynomials)) {
-                set_error(error_message, error_message_size, "Out of memory while appending polynomials to the command line.");
-                goto cleanup;
-            }
-            if (!append_arg(&command, vars ? vars : "")) {
-                set_error(error_message, error_message_size, "Out of memory while appending elimination variables to the command line.");
-                goto cleanup;
-            }
-            if (!append_arg(&command, field)) {
-                set_error(error_message, error_message_size, "Out of memory while appending the field to the command line.");
-                goto cleanup;
-            }
-            break;
         case DIXON_GUI_MODE_RANDOM:
             if (request->random_mode == DIXON_GUI_RANDOM_SOLVE) {
                 if (!append_arg(&command, "-s")) {
@@ -834,6 +808,7 @@ int dixon_gui_run_request(const dixon_gui_request_t *request,
             goto cleanup;
     }
 
+launch:
     if (snprintf(working_dir, sizeof(working_dir), "%s", path_to_use) >= (int) sizeof(working_dir)) {
         set_error(error_message, error_message_size, "The drsolve.exe path is too long.");
         goto cleanup;
@@ -958,7 +933,6 @@ cleanup:
     free(field);
     free(polynomials);
     free(vars);
-    free(ideal);
     free(omega);
     free(random_degrees);
     free(actual_command_line);

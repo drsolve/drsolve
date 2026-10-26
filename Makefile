@@ -1390,8 +1390,26 @@ $(BUILD_DIR)/bezout_prefix_test: $(SRC_DIR)/test/field/bezout_prefix_test.c $(BU
 test-bezout-prefix: $(BUILD_DIR)/bezout_prefix_test
 	./$(BUILD_DIR)/bezout_prefix_test
 
-$(BUILD_DIR)/pml_fft_test: $(SRC_DIR)/test/matrix/pml_fft_test.c $(PML_BUNDLED_LIB) config.mk Makefile
+$(BUILD_DIR)/pml_fft_test: $(SRC_DIR)/test/matrix/pml_fft_test.c $(SRC_DIR)/test/test_env.h $(PML_BUNDLED_LIB) config.mk Makefile
 	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< $(PML_BUNDLED_LIB) $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 .PHONY: test-pml-fft
 test-pml-fft: $(BUILD_DIR)/pml_fft_test
 	OMP_NUM_THREADS=1 ./$(BUILD_DIR)/pml_fft_test
+
+# Standalone Windows frontend; override WIN_GUI_CC for a native MinGW build.
+WIN_GUI_CC ?= x86_64-w64-mingw32-gcc
+.PHONY: windows-gui
+windows-gui: $(BUILD_DIR)/drsolve_win_gui.exe
+
+$(BUILD_DIR)/drsolve_win_gui.exe: apps/win_gui/dixon_gui.c apps/win_gui/dixon_wrapper.c apps/win_gui/dixon_wrapper.h $(VERSION_FILE) Makefile
+	@mkdir -p $(BUILD_DIR)
+	$(WIN_GUI_CC) -O2 -Wall -Wextra -Werror=implicit-function-declaration -D_WIN32_WINNT=0x0601 -DPROGRAM_VERSION=\"$(DRSOLVE_VERSION)\" -mwindows -o $@ apps/win_gui/dixon_gui.c apps/win_gui/dixon_wrapper.c -lcomctl32 -lcomdlg32 -lshlwapi
+
+WIN_GUI_RUNNER ?= wine
+.PHONY: test-windows-gui
+test-windows-gui: windows-gui $(BUILD_DIR)/win_gui_wrapper_test.exe
+	$(WIN_GUI_RUNNER) ./$(BUILD_DIR)/win_gui_wrapper_test.exe
+
+$(BUILD_DIR)/win_gui_wrapper_test.exe: src/test/cli/win_gui_wrapper_test.c apps/win_gui/dixon_wrapper.c apps/win_gui/dixon_wrapper.h src/test/test_env.h Makefile
+	@mkdir -p $(BUILD_DIR)
+	$(WIN_GUI_CC) -O2 -Wall -Wextra -Werror -UNDEBUG -D_WIN32_WINNT=0x0601 -Iapps/win_gui -o $@ src/test/cli/win_gui_wrapper_test.c apps/win_gui/dixon_wrapper.c -lshlwapi

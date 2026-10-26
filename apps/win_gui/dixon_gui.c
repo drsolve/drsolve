@@ -9,7 +9,10 @@
 
 #include "dixon_wrapper.h"
 
-#define APP_TITLE "DRsolve Windows GUI"
+#ifndef PROGRAM_VERSION
+#define PROGRAM_VERSION "development"
+#endif
+#define APP_TITLE "DRSolve " PROGRAM_VERSION " - Windows GUI"
 #define TAB_COUNT 5
 
 #define ID_TAB 100
@@ -36,15 +39,11 @@
 #define ID_COMP_FIELD 402
 #define ID_COMP_OMEGA 403
 
-#define ID_IDEAL_GENS 500
-#define ID_IDEAL_POLYS 501
-#define ID_IDEAL_VARS 502
-#define ID_IDEAL_FIELD 503
-
 #define ID_RAND_DEGREES 600
 #define ID_RAND_FIELD 601
 #define ID_RAND_MODE 602
 #define ID_RAND_OMEGA 603
+#define ID_COMMAND_ARGS 700
 
 #define WM_DIXON_COMPLETE (WM_APP + 1)
 #define ID_TAB_TIMER 1
@@ -409,9 +408,9 @@ static HWND create_combobox(HWND parent, int id, int x, int y, int w, int h)
 
 static void update_random_mode_controls(void)
 {
-    int index = (int) SendMessageA(g_tabs[4].edit3, CB_GETCURSEL, 0, 0);
-    EnableWindow(g_tabs[4].label4, index == DIXON_GUI_RANDOM_COMPLEXITY);
-    EnableWindow(g_tabs[4].edit4, index == DIXON_GUI_RANDOM_COMPLEXITY);
+    int index = (int) SendMessageA(g_tabs[3].edit3, CB_GETCURSEL, 0, 0);
+    EnableWindow(g_tabs[3].label4, index == DIXON_GUI_RANDOM_COMPLEXITY);
+    EnableWindow(g_tabs[3].edit4, index == DIXON_GUI_RANDOM_COMPLEXITY);
 }
 
 static LRESULT CALLBACK tab_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
@@ -445,7 +444,11 @@ static void show_active_tab(void)
         ShowWindow(g_tabs[i].panel, i == current ? SW_SHOW : SW_HIDE);
     }
 
-    if (current == 4) update_random_mode_controls();
+    if (current == 3) update_random_mode_controls();
+    EnableWindow(g_step1_label, current != DIXON_GUI_MODE_COMMAND);
+    EnableWindow(g_step1_combo, current != DIXON_GUI_MODE_COMMAND);
+    EnableWindow(g_step4_label, current != DIXON_GUI_MODE_COMMAND);
+    EnableWindow(g_step4_combo, current != DIXON_GUI_MODE_COMMAND);
 }
 
 static void layout_tab_pages(void)
@@ -509,46 +512,24 @@ static void layout_tab_pages(void)
     }
 
     {
-        int label_y = 12;
-        int usable_h = page_h - 152;
-        int gens_h = usable_h / 2;
-        int polys_h;
-        int row_y;
-
-        if (gens_h < 72) gens_h = 72;
-        polys_h = usable_h - gens_h;
-        if (polys_h < 72) {
-            polys_h = 72;
-            gens_h = max_int(usable_h - polys_h, 72);
-        }
-
-        MoveWindow(g_tabs[3].label1, margin, label_y, 140, 20, TRUE);
-        MoveWindow(g_tabs[3].edit1, margin, 34, page_w - margin * 2, gens_h, TRUE);
-        MoveWindow(g_tabs[3].label2, margin, 46 + gens_h, 120, 20, TRUE);
-        MoveWindow(g_tabs[3].edit2, margin, 68 + gens_h, page_w - margin * 2, polys_h, TRUE);
-
-        row_y = 80 + gens_h + polys_h;
-        MoveWindow(g_tabs[3].label3, margin, row_y, 140, 20, TRUE);
-        MoveWindow(g_tabs[3].edit3, margin, row_y + 22, 220, 26, TRUE);
-        MoveWindow(g_tabs[3].label4, 252, row_y, 80, 20, TRUE);
-        MoveWindow(g_tabs[3].edit4, 252, row_y + 22, 180, 26, TRUE);
-    }
-
-    {
         int label_y = 18;
         int row1_y = 48;
         int row2_y = row1_y + 60;
         int row3_y = row2_y + 60;
 
-        MoveWindow(g_tabs[4].label1, margin, label_y, 120, 20, TRUE);
-        MoveWindow(g_tabs[4].edit1, margin, row1_y, page_w - margin * 2, 28, TRUE);
-        MoveWindow(g_tabs[4].label2, margin, row2_y, 80, 20, TRUE);
-        MoveWindow(g_tabs[4].edit2, margin, row2_y + 22, 220, 26, TRUE);
-        MoveWindow(g_tabs[4].label3, 264, row2_y, 80, 20, TRUE);
-        MoveWindow(g_tabs[4].edit3, 264, row2_y + 22, 220, 220, TRUE);
-        MoveWindow(g_tabs[4].label4, margin, row3_y, 80, 20, TRUE);
-        MoveWindow(g_tabs[4].edit4, margin, row3_y + 22, 140, 26, TRUE);
+        MoveWindow(g_tabs[3].label1, margin, label_y, 120, 20, TRUE);
+        MoveWindow(g_tabs[3].edit1, margin, row1_y, page_w - margin * 2, 28, TRUE);
+        MoveWindow(g_tabs[3].label2, margin, row2_y, 80, 20, TRUE);
+        MoveWindow(g_tabs[3].edit2, margin, row2_y + 22, 220, 26, TRUE);
+        MoveWindow(g_tabs[3].label3, 264, row2_y, 80, 20, TRUE);
+        MoveWindow(g_tabs[3].edit3, 264, row2_y + 22, 220, 220, TRUE);
+        MoveWindow(g_tabs[3].label4, margin, row3_y, 80, 20, TRUE);
+        MoveWindow(g_tabs[3].edit4, margin, row3_y + 22, 140, 26, TRUE);
     }
+
+    MoveWindow(g_tabs[4].label1, margin, 18, page_w - margin * 2, 20, TRUE);
+    MoveWindow(g_tabs[4].edit1, margin, 48, page_w - margin * 2, 28, TRUE);
+    MoveWindow(g_tabs[4].label2, margin, 92, page_w - margin * 2, 100, TRUE);
 }
 
 static void create_tab_pages(void)
@@ -563,9 +544,9 @@ static void create_tab_pages(void)
     TabCtrl_InsertItem(g_tab, 1, &item);
     item.pszText = "Complexity";
     TabCtrl_InsertItem(g_tab, 2, &item);
-    item.pszText = "Ideal";
-    TabCtrl_InsertItem(g_tab, 3, &item);
     item.pszText = "Random";
+    TabCtrl_InsertItem(g_tab, 3, &item);
+    item.pszText = "Command Line";
     TabCtrl_InsertItem(g_tab, 4, &item);
 
     g_tabs[0].panel = CreateWindowExA(0, "STATIC", "", WS_CHILD | WS_VISIBLE,
@@ -612,40 +593,30 @@ static void create_tab_pages(void)
 
     g_tabs[3].panel = CreateWindowExA(0, "STATIC", "", WS_CHILD | WS_VISIBLE,
                                       0, 0, 10, 10, g_tab, NULL, g_instance, NULL);
-    g_tabs[3].label1 = create_label(g_tabs[3].panel, "Ideal Generators", 0, 0, 10, 10);
-    g_tabs[3].edit1 = create_edit(g_tabs[3].panel, ID_IDEAL_GENS,
-                                  ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL,
-                                  0, 0, 10, 10,
-                                  "a2^3=2*a1+1\r\na3^3=a1*a2+3");
-    g_tabs[3].label2 = create_label(g_tabs[3].panel, "Polynomials", 0, 0, 10, 10);
-    g_tabs[3].edit2 = create_edit(g_tabs[3].panel, ID_IDEAL_POLYS,
-                                  ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL,
-                                  0, 0, 10, 10,
-                                  "a1^2+a2^2+a3^2-10\r\na3^3-a1*a2-3");
-    g_tabs[3].label3 = create_label(g_tabs[3].panel, "Eliminate Variables", 0, 0, 10, 10);
-    g_tabs[3].edit3 = create_edit(g_tabs[3].panel, ID_IDEAL_VARS, ES_LEFT | WS_TABSTOP,
-                                  0, 0, 10, 10, "a3");
-    g_tabs[3].label4 = create_label(g_tabs[3].panel, "Field", 0, 0, 10, 10);
-    g_tabs[3].edit4 = create_edit(g_tabs[3].panel, ID_IDEAL_FIELD, ES_LEFT | WS_TABSTOP,
+    g_tabs[3].label1 = create_label(g_tabs[3].panel, "Degree List", 0, 0, 10, 10);
+    g_tabs[3].edit1 = create_edit(g_tabs[3].panel, ID_RAND_DEGREES, ES_LEFT | WS_TABSTOP,
+                                  0, 0, 10, 10, "[3,3,2]");
+    g_tabs[3].label2 = create_label(g_tabs[3].panel, "Field", 0, 0, 10, 10);
+    g_tabs[3].edit2 = create_edit(g_tabs[3].panel, ID_RAND_FIELD, ES_LEFT | WS_TABSTOP,
                                   0, 0, 10, 10, "257");
+    g_tabs[3].label3 = create_label(g_tabs[3].panel, "Mode", 0, 0, 10, 10);
+    g_tabs[3].edit3 = create_combobox(g_tabs[3].panel, ID_RAND_MODE, 0, 0, 10, 120);
+    SendMessageA(g_tabs[3].edit3, CB_ADDSTRING, 0, (LPARAM) "Resultant");
+    SendMessageA(g_tabs[3].edit3, CB_ADDSTRING, 0, (LPARAM) "Solve");
+    SendMessageA(g_tabs[3].edit3, CB_ADDSTRING, 0, (LPARAM) "Complexity");
+    SendMessageA(g_tabs[3].edit3, CB_SETCURSEL, DIXON_GUI_RANDOM_RESULTANT, 0);
+    g_tabs[3].label4 = create_label(g_tabs[3].panel, "Omega", 0, 0, 10, 10);
+    g_tabs[3].edit4 = create_edit(g_tabs[3].panel, ID_RAND_OMEGA, ES_LEFT | WS_TABSTOP,
+                                  0, 0, 10, 10, "2.81");
 
     g_tabs[4].panel = CreateWindowExA(0, "STATIC", "", WS_CHILD | WS_VISIBLE,
                                       0, 0, 10, 10, g_tab, NULL, g_instance, NULL);
-    g_tabs[4].label1 = create_label(g_tabs[4].panel, "Degree List", 0, 0, 10, 10);
-    g_tabs[4].edit1 = create_edit(g_tabs[4].panel, ID_RAND_DEGREES, ES_LEFT | WS_TABSTOP,
-                                  0, 0, 10, 10, "[3,3,2]");
-    g_tabs[4].label2 = create_label(g_tabs[4].panel, "Field", 0, 0, 10, 10);
-    g_tabs[4].edit2 = create_edit(g_tabs[4].panel, ID_RAND_FIELD, ES_LEFT | WS_TABSTOP,
-                                  0, 0, 10, 10, "257");
-    g_tabs[4].label3 = create_label(g_tabs[4].panel, "Mode", 0, 0, 10, 10);
-    g_tabs[4].edit3 = create_combobox(g_tabs[4].panel, ID_RAND_MODE, 0, 0, 10, 120);
-    SendMessageA(g_tabs[4].edit3, CB_ADDSTRING, 0, (LPARAM) "Resultant");
-    SendMessageA(g_tabs[4].edit3, CB_ADDSTRING, 0, (LPARAM) "Solve");
-    SendMessageA(g_tabs[4].edit3, CB_ADDSTRING, 0, (LPARAM) "Complexity");
-    SendMessageA(g_tabs[4].edit3, CB_SETCURSEL, DIXON_GUI_RANDOM_RESULTANT, 0);
-    g_tabs[4].label4 = create_label(g_tabs[4].panel, "Omega", 0, 0, 10, 10);
-    g_tabs[4].edit4 = create_edit(g_tabs[4].panel, ID_RAND_OMEGA, ES_LEFT | WS_TABSTOP,
-                                  0, 0, 10, 10, "2.81");
+    g_tabs[4].label1 = create_label(g_tabs[4].panel, "CLI arguments (without drsolve.exe)", 0, 0, 10, 10);
+    g_tabs[4].edit1 = create_edit(g_tabs[4].panel, ID_COMMAND_ARGS, ES_LEFT | ES_AUTOHSCROLL | WS_TABSTOP,
+                                  0, 0, 10, 10, "--help");
+    g_tabs[4].label2 = create_label(g_tabs[4].panel,
+        "Examples:\r\n-r \"[2]*3\" 65537 --seed 12345\r\n-s \"x^2-1, y-x\" 257\r\n"
+        "Uses the selected CLI. Relative paths are resolved beside that executable.", 0, 0, 10, 10);
 
     layout_tab_pages();
     show_active_tab();
@@ -870,21 +841,18 @@ static void begin_request(void)
             result->request.omega = get_edit_text(g_tabs[2].edit4);
             break;
         case 3:
-            result->request.mode = DIXON_GUI_MODE_IDEAL;
-            result->request.ideal_generators = get_edit_text(g_tabs[3].edit1);
-            result->request.polynomials = get_edit_text(g_tabs[3].edit2);
-            result->request.eliminate_vars = get_edit_text(g_tabs[3].edit3);
-            result->request.field = get_edit_text(g_tabs[3].edit4);
-            break;
-        case 4:
             result->request.mode = DIXON_GUI_MODE_RANDOM;
-            result->request.random_degrees = get_edit_text(g_tabs[4].edit1);
-            result->request.field = get_edit_text(g_tabs[4].edit2);
-            result->request.random_mode = (int) SendMessageA(g_tabs[4].edit3, CB_GETCURSEL, 0, 0);
-            result->request.omega = get_edit_text(g_tabs[4].edit4);
+            result->request.random_degrees = get_edit_text(g_tabs[3].edit1);
+            result->request.field = get_edit_text(g_tabs[3].edit2);
+            result->request.random_mode = (int) SendMessageA(g_tabs[3].edit3, CB_GETCURSEL, 0, 0);
+            result->request.omega = get_edit_text(g_tabs[3].edit4);
             if (result->request.random_mode == CB_ERR) {
                 result->request.random_mode = DIXON_GUI_RANDOM_RESULTANT;
             }
+            break;
+        case 4:
+            result->request.mode = DIXON_GUI_MODE_COMMAND;
+            result->request.command_args = get_edit_text(g_tabs[4].edit1);
             break;
         default:
             free(path);
@@ -899,9 +867,9 @@ static void begin_request(void)
         free((void *) result->request.polynomials);
         free((void *) result->request.eliminate_vars);
         free((void *) result->request.field);
-        free((void *) result->request.ideal_generators);
         free((void *) result->request.omega);
         free((void *) result->request.random_degrees);
+        free((void *) result->request.command_args);
         free(result);
         return;
     }
@@ -941,9 +909,9 @@ static void finish_request(worker_result_t *result)
     free((void *) result->request.polynomials);
     free((void *) result->request.eliminate_vars);
     free((void *) result->request.field);
-    free((void *) result->request.ideal_generators);
     free((void *) result->request.omega);
     free((void *) result->request.random_degrees);
+    free((void *) result->request.command_args);
     dixon_gui_response_clear(&result->response);
     free(result);
 }
