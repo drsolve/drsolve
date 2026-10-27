@@ -3577,7 +3577,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             mq_step1_simplex = 1; mq_step1_pencil = 0;
         } else if (strcmp(argv[i], "--no-mq-step1-simplex") == 0) {
             mq_step1_simplex = 0;
-        } else if (strcmp(argv[i], "--step4-schur") == 0 || strcmp(argv[i], "--mq-step4-schur") == 0) {
+        } else if (strcmp(argv[i], "--step4-schur") == 0) {
             step4_schur = 1;
         } else if (strcmp(argv[i], "--pml-fft") == 0 || strcmp(argv[i], "--no-pml-fft") == 0) {
 #ifdef HAVE_PML
@@ -3620,7 +3620,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             resultant_method_explicit = 1;
         } else if (strcmp(argv[i], "--no-schur-seed") == 0) {
             schur_seed = 0;
-        } else if (strcmp(argv[i], "--no-step4-schur") == 0 || strcmp(argv[i], "--no-mq-step4-schur") == 0) {
+        } else if (strcmp(argv[i], "--no-step4-schur") == 0) {
             step4_schur = 0;
         } else if (strcmp(argv[i], "--no-mq-step1-filter") == 0) {
             mq_step1_filter = 0;

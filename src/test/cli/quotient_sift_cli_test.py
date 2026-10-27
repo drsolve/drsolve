@@ -68,18 +68,19 @@ with tempfile.TemporaryDirectory(prefix='drsolve-sift-') as work:
 
     # Hold construction fixed while comparing Step 4 dispatch; the --method
     # flag also prevents explicit --step4 from changing the construction mode.
+    # Disable inverse-block so the HNF selection under test is not intercepted.
     for field in ['101', '2^3']:
         native_results = []
         for extra in [[], ['--step4', '0'], ['--step4', '1']]:
             proc = subprocess.run([
                 str(binary), 'x^2+y+z,x*y+y*z+1,x+y+z', 'x,y', field,
-                '--method', '5', '--no-sift', '--resultant-only', '-v', '3',
+                '--method', '5', '--no-inverse-block', '--no-sift', '--resultant-only', '-v', '3',
                 '-o', str(output), *extra], text=True, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, env=env, timeout=60)
             assert proc.returncode == 0, proc.stdout
             step4 = proc.stdout.split('Step 4: Compute resultant', 1)[1]
             method = 'fast HNF' if extra == ['--step4', '1'] else 'minor expansion'
-            assert 'Determinant method: ' + method in step4
+            assert 'Determinant method: ' + method in step4, proc.stdout
             native_results.append(re.search(r'\nResultant:\n([^\n]+)', output.read_text())[1])
         assert len(set(native_results)) == 1, (field, native_results)
 

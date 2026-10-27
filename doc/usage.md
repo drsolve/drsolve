@@ -56,13 +56,13 @@ Dixon is the default. `--macaulay` selects Macaulay; `--subres` handles two poly
 
 Finite-field elimination of two variables from three equations in three variables defaults to method 5. `--fq-det-method auto|hnf|iter|interp` selects the univariate polynomial-matrix backend; interp is prime-field only.
 
-Eligible inputs use projected MQ indices, shared indices, coefficient filtering, and checked Schur compression by default. For comparisons, disable them with `--no-mq-step1-rank`, `--no-mq-step1-shared`, `--no-mq-step1-filter`, `--no-mq-step4-schur`, or `--no-schur-seed`. Schur compression supports single-parameter prime/extension-field systems of general degree, not just MQ.
+Eligible inputs use projected MQ indices, shared indices, coefficient filtering, and checked Schur compression by default. For comparisons, disable them with `--no-mq-step1-rank`, `--no-mq-step1-shared`, `--no-mq-step1-filter`, `--no-step4-schur`, or `--no-schur-seed`. Schur compression supports single-parameter prime/extension-field systems of general degree, not just MQ.
 
 `--mq-step1-pencil`, `--mq-step1-simplex`, `--fast-ksy`, and `--rank-pred` are disabled by default and are experimental or require additional conditions. `--step3-verify-second` adds a second verification pass. Consult complete help before changing advanced defaults.
 
 ```bash
 ./drsolve --step1 0 --step4 1 "x+y+z, x*y+y*z+z*x, x*y*z+1" "x,y" 257
-./drsolve --no-quotient --no-mq-step4-schur -r "[2]*3" 257 --seed 1234
+./drsolve --no-quotient --no-step4-schur -r "[2]*3" 257 --seed 1234
 ```
 
 ## Roots and reconstruction

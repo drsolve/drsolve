@@ -368,9 +368,6 @@ static int validate_cli_options(int argc, char *argv[])
         {"no-mq-step1-filter", no_argument, NULL, OPT_FLAG},
         {"step4-schur", no_argument, NULL, OPT_FLAG},
         {"no-step4-schur", no_argument, NULL, OPT_FLAG},
-        /* Compatibility aliases; new help uses the degree-independent names. */
-        {"mq-step4-schur", no_argument, NULL, OPT_FLAG},
-        {"no-mq-step4-schur", no_argument, NULL, OPT_FLAG},
         {"pml-fft", no_argument, NULL, OPT_FLAG},
         {"no-pml-fft", no_argument, NULL, OPT_FLAG},
         {"inverse-block", no_argument, NULL, OPT_FLAG},

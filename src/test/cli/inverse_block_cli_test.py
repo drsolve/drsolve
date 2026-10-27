@@ -28,9 +28,7 @@ with tempfile.TemporaryDirectory() as tmp:
         for flags, enabled in [(['--step4-schur'], True),
                                (['--no-step4-schur'], False),
                                (['--no-step4-schur', '--step4-schur'], True),
-                               (['--step4-schur', '--no-step4-schur'], False),
-                               (['--mq-step4-schur'], True),
-                               (['--no-mq-step4-schur'], False)]:
+                               (['--step4-schur', '--no-step4-schur'], False)]:
             log, got = run(args, flags)
             assert got == ref and compressed(log) == enabled, (flags, log)
         for flags, threads in [(['--inverse-block-size', '8'], 1),
@@ -69,4 +67,4 @@ with tempfile.TemporaryDirectory() as tmp:
         p = subprocess.run([binary, '-r', '[4]*3', '65537', '--inverse-block-size', bad],
                            capture_output=True, text=True)
         assert p.returncode != 0 and 'nonnegative integer' in p.stderr, p.stderr
-print('inverse-block CLI: direct defaults, Schur fallback/overrides/aliases and exact outputs passed')
+print('inverse-block CLI: direct defaults, Schur fallback/overrides and exact outputs passed')
