@@ -462,3 +462,5 @@ static slong UM_NAME(const_eliminate)(UM_E *det, slong *profile, const unified_m
 }
 
 #include "../determinant/unified_hnf_template.h"
+
+#include "unified_inverse_block_template.h"

@@ -57,7 +57,7 @@ int g_dixon_mq_step1_shared = 1;
 int g_dixon_mq_step1_rank = 1;
 int g_dixon_mq_step1_simplex = 0;
 int g_dixon_mq_step1_pencil = 0;
-int g_dixon_mq_step4_schur = -1;
+int g_dixon_mq_step4_schur = 1;
 int g_dixon_bezout_fast = 1;
 int g_dixon_inverse_block = -1;
 slong g_dixon_inverse_block_size = 0;
@@ -5296,7 +5296,7 @@ static int dixon_compute_step1(unified_mpoly_struct *result, unified_mpoly_struc
 /* Metadata belongs to one selected matrix, never to a global monomial order.
  * In particular Step 3 may reorder or repair the candidate independently on
  * the two axes. The explicit permutations below retain its determinant sign. */
-static int dixon_inverse_block_enabled(slong nvars, slong npars)
+int dixon_inverse_block_enabled(slong nvars, slong npars)
 {
     if (!g_dixon_inverse_block || npars!=1 || g_field_equation_reduction) return 0;
     if (g_dixon_inverse_block>0) return 1;
@@ -5327,7 +5327,16 @@ static int dixon_inverse_block_try(nmod_poly_t det, const nmod_poly_mat_t matrix
 static int dixon_inverse_block_fq_try(fq_nmod_poly_t det,
     const fq_nmod_poly_mat_t matrix, const fq_nmod_ctx_t ctx)
 {
-    if (fq_nmod_ctx_degree(ctx)!=1) return 0;
+    if (fq_nmod_ctx_degree(ctx)!=1) {
+        field_ctx_t field;field_ctx_init(&field,ctx);
+        unified_mat_poly_t native;unified_mat_poly_init(native,matrix->r,matrix->c,&field);
+        unified_mat_poly_from_fq(native,matrix,ctx);
+        unified_poly_t candidate;unified_poly_init(candidate,&field);
+        int ok=dr_unified_mat_poly_det_inverse_block_logged(candidate,native);
+        if(ok) unified_to_fq_nmod_poly(det,candidate,ctx,&field);
+        unified_poly_clear(candidate);unified_mat_poly_clear(native);field_ctx_clear(&field);
+        return ok;
+    }
     ulong p=fq_nmod_ctx_prime(ctx);
     nmod_poly_mat_t native;nmod_poly_mat_init(native,matrix->r,matrix->c,p);
     for (slong i=0;i<matrix->r;i++) for (slong j=0;j<matrix->c;j++) {
@@ -5352,7 +5361,23 @@ static int dixon_inverse_block_fq_try(fq_nmod_poly_t det,
 static int dixon_inverse_block_dense_try(unified_mpoly_struct *out,
     unified_mpoly_struct **matrix, slong size, const fq_nmod_ctx_t ctx)
 {
-    if (fq_nmod_ctx_degree(ctx)!=1) return 0;
+    if (fq_nmod_ctx_degree(ctx)!=1) {
+        fq_nmod_poly_mat_t native;fq_nmod_poly_mat_init(native,size,size,ctx);
+        for(slong i=0;i<size;i++) for(slong j=0;j<size;j++)
+            for(slong k=0;k<dr_mpoly_length(&matrix[i][j]);k++) {
+                DR_MPOLY_TERM(term,&matrix[i][j],k);
+                fq_nmod_poly_set_coeff(fq_nmod_poly_mat_entry(native,i,j),
+                    term.par_exp ? term.par_exp[0] : 0,term.coeff,ctx);
+            }
+        fq_nmod_poly_t det;fq_nmod_poly_init(det,ctx);
+        int ok=dixon_inverse_block_fq_try(det,native,ctx);
+        if(ok) {
+            dr_mpoly_init(out,0,1,ctx);
+            for(slong k=0;k<det->length;k++) if(!fq_nmod_is_zero(det->coeffs+k,ctx))
+                dr_mpoly_add_term_fast(out,NULL,&k,det->coeffs+k);
+        }
+        fq_nmod_poly_clear(det,ctx);fq_nmod_poly_mat_clear(native,ctx);return ok;
+    }
     ulong p=fq_nmod_ctx_prime(ctx);
     nmod_poly_mat_t native;nmod_poly_mat_init(native,size,size,p);
     for (slong i=0;i<size;i++) for (slong j=0;j<size;j++)
@@ -5556,7 +5581,8 @@ static int dixon_mq_step4_try(fq_nmod_poly_t det, const fq_nmod_poly_mat_t matri
         if (ok) {
             dixon_print_schur_compression(adaptive ? "adaptive Schur (extension field)" :
                 "Schur (extension field)", size, core->r, get_wall_time()-start);
-            fq_nmod_poly_mat_det_iter(det, core, ctx);
+            if (!p->inverse_block || !dixon_inverse_block_fq_try(det,core,ctx))
+                fq_nmod_poly_mat_det_iter(det, core, ctx);
             fq_nmod_poly_scalar_mul_fq_nmod(det, det, factor, ctx);
         } else
             dixon_info_log("  Step 4 Schur (extension field): certificate failed; using original determinant backend\n");
@@ -6816,8 +6842,7 @@ static void dixon_step4_resultant(unified_mpoly_struct *result,
         matrix=small_matrix;
         univariate=0;
     }
-    int try_inverse=method==DET_METHOD_KRONECKER &&
-        fq_nmod_ctx_degree(polys[0].ctx)==1 && dixon_inverse_block_enabled(nvars,npars);
+    int try_inverse=method==DET_METHOD_KRONECKER && dixon_inverse_block_enabled(nvars,npars);
     dixon_info_log("  Determinant method: %s\n",try_inverse ?
         (g_dixon_verbose_level >= 2 ? "inverse-block (verified; existing backend on failure)" :
          "inverse-block") : dixon_det_method_name(method));
@@ -6855,7 +6880,13 @@ static void dixon_step4_resultant(unified_mpoly_struct *result,
          * Do not deflate that matrix before asking the native backend. */
         int native=recursive && recursive->enabled && method==DET_METHOD_KRONECKER &&
                    dixon_bivariate_native_eligible(polys,nvars,npars);
-        int extension_schur = recursive && recursive->variable_degrees &&
+        int extension_attempted=!native && try_inverse && g_dixon_mq_step4_schur<0 &&
+            fq_nmod_ctx_degree(polys[0].ctx)>1;
+        int extension_done=extension_attempted &&
+            dixon_inverse_block_dense_try(result,matrix,size,polys[0].ctx);
+        if(extension_attempted && !extension_done)
+            dixon_info_log("  Step 4 fallback: try Schur compression before the original determinant backend\n");
+        int extension_schur = !extension_done && recursive && recursive->variable_degrees &&
             g_dixon_mq_step4_schur && !g_field_equation_reduction &&
             method == DET_METHOD_KRONECKER && fq_nmod_ctx_degree(polys[0].ctx) > 1 &&
             dixon_mq_step4_eligible(polys,nvars,npars) &&
@@ -6864,13 +6895,13 @@ static void dixon_step4_resultant(unified_mpoly_struct *result,
             dixon_debug_log("  Using native bivariate Step 4 with checked complement compression...\n");
             dixon_bivariate_native_selected_det(result,matrix,size,recursive->rows,
                                                 recursive->cols,recursive->y_degree,polys);
-        } else if (!extension_schur) {
+        } else if (!extension_done && !extension_schur) {
             slong content=extract_fq_matrix_x_content(matrix,size,npars);
             extracted_power+=content;
             if (content>0) dixon_info_log("  Pre-determinant row/column x-content: x^%ld\n",content);
             slong bound=compute_fq_dixon_resultant_degree_bound(polys,nvars+1,nvars,npars);
             dixon_debug_log("  Degree bound: %ld\n",bound);
-            int reconstructed=method==DET_METHOD_KRONECKER &&
+            int reconstructed=!extension_attempted && method==DET_METHOD_KRONECKER &&
                 dixon_inverse_block_enabled(nvars,npars) &&
                 dixon_inverse_block_dense_try(result,matrix,size,polys[0].ctx);
             if (!reconstructed)

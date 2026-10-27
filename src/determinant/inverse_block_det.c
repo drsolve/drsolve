@@ -30,13 +30,13 @@ slong dr_inverse_block_choose(slong n, slong bound, int threads)
     return FLINT_MAX(1, FLINT_MIN(n, FLINT_MIN(bound, m)));
 }
 
-slong dr_nmod_poly_mat_det_degree_bound(const nmod_poly_mat_t a)
+slong dr_inverse_block_degree_bound(const slong *degrees, slong n)
 {
-    slong n=a->r, maxdeg=0;
-    if (n!=a->c || n<0 || n==WORD_MAX || (size_t)n+1>SIZE_MAX/sizeof(slong)) return -1;
+    if (n<0 || n==WORD_MAX || (size_t)n+1>SIZE_MAX/sizeof(slong)) return -1;
     if (!n) return 0;
-    for (slong i=0;i<n;i++) for (slong j=0;j<n;j++)
-        maxdeg=FLINT_MAX(maxdeg,nmod_poly_degree(nmod_poly_mat_entry(a,i,j)));
+    if (!degrees || n>WORD_MAX/n || (size_t)n>SIZE_MAX/(size_t)n/sizeof(slong)) return -1;
+    slong maxdeg=0;
+    for (slong i=0;i<n*n;i++) maxdeg=FLINT_MAX(maxdeg,degrees[i]);
     if (!maxdeg) return 0;
     if (maxdeg>WORD_MAX/4/n) return -1;
     /* Hungarian shortest augmenting paths for costs -degree. Allowing a
@@ -51,7 +51,7 @@ slong dr_nmod_poly_mat_det_degree_bound(const nmod_poly_mat_t a)
         do {
             used[j0]=1; slong i0=p[j0], delta=WORD_MAX/2, j1=0;
             for (slong j=1;j<=n;j++) if (!used[j]) {
-                slong d=FLINT_MAX(0,nmod_poly_degree(nmod_poly_mat_entry(a,i0-1,j-1)));
+                slong d=FLINT_MAX(0,degrees[(i0-1)*n+j-1]);
                 slong cur=-d-u[i0]-v[j];
                 if (cur<dist[j]) {dist[j]=cur;way[j]=j0;}
                 if (dist[j]<delta) {delta=dist[j];j1=j;}
@@ -66,9 +66,20 @@ slong dr_nmod_poly_mat_det_degree_bound(const nmod_poly_mat_t a)
     }
     slong bound=0;
     for (slong j=1;j<=n;j++)
-        bound+=FLINT_MAX(0,nmod_poly_degree(nmod_poly_mat_entry(a,p[j]-1,j-1)));
+        bound+=FLINT_MAX(0,degrees[(p[j]-1)*n+j-1]);
     flint_free(u);flint_free(v);flint_free(p);flint_free(way);flint_free(dist);flint_free(used);
     return bound;
+}
+
+slong dr_nmod_poly_mat_det_degree_bound(const nmod_poly_mat_t a)
+{
+    slong n=a->r;
+    if(n<0 || n!=a->c || (n && (size_t)n>SIZE_MAX/(size_t)n/sizeof(slong))) return -1;
+    slong *degrees=flint_malloc((size_t)n*n*sizeof(slong));
+    for(slong i=0;i<n;i++) for(slong j=0;j<n;j++)
+        degrees[i*n+j]=nmod_poly_degree(nmod_poly_mat_entry(a,i,j));
+    slong bound=dr_inverse_block_degree_bound(degrees,n);
+    flint_free(degrees);return bound;
 }
 
 #ifdef HAVE_PML

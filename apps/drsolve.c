@@ -147,7 +147,7 @@ void drsolve_cli_print_full_usage(const char *prog_name)
     puts("  --dixon                       Dixon resultant (default).");
     puts("  --pml-fft / --no-pml-fft      Enable supported FFT matrix backend (default) / fall back.");
     puts("  --inverse-block / --no-inverse-block / --inverse-block-auto");
-    puts("                                Dixon inverse projection (nmod); auto for 3/4 equations");
+    puts("                                Dixon inverse projection; auto for 3/4 equations");
     puts("                                with one remaining variable. Failure uses the existing backend.");
     puts("  --inverse-block-size N        Set block size and enable; 0 selects automatically.");
     puts("  --bezout-block / --no-bezout-block");
@@ -282,8 +282,8 @@ void drsolve_cli_print_full_usage(const char *prog_name)
     puts("                                Experimental total-degree interpolation (off).");
     puts("  --step4-schur / --no-step4-schur");
     puts("                                Enable/disable checked Step 4 Schur compression.");
-    puts("                                Default: direct inverse-block first; Schur on fallback");
-    puts("                                or when inverse-block is off. Any degree.");
+    puts("                                Default: Schur compression before inverse-block");
+    puts("                                when enabled, or before the existing backend. Any degree.");
     puts("  --no-schur-seed                Disable complement-first minor selection");
     puts("                                (default on), retaining Step 4 compression.");
     puts("  --fast-ksy / --no-fast-ksy      KSY precondition check for method 5 (default off;");

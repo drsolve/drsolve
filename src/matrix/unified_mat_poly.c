@@ -317,3 +317,5 @@ int unified_mat_poly_det_hnf(unified_poly_t det, const unified_mat_poly_t a)
     unified_mat_poly_clear(result);
     return ok;
 }
+
+#include "unified_inverse_block.h"

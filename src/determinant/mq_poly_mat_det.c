@@ -11,22 +11,15 @@
 #include <omp.h>
 #endif
 
-/* Polynomial products use coarse independent row panels, not a parallel
- * region for every scalar pivot. All views have one writer. */
+/* Share input transforms across the whole product. Without PML, use coarse
+ * independent row panels; all views have one writer. */
 static void mq_block_mul(nmod_poly_mat_t C, const nmod_poly_mat_t A, const nmod_poly_mat_t B)
 {
 #ifdef HAVE_DRSOLVE_PML_NTT
-    /* Transform the shared right operand once, rather than separately for
-     * every row panel. The NTT backend parallelizes its independent points
-     * and rejects unsupported primes/workspaces without changing C. */
-    const char *mode=getenv("DRSOLVE_PML_MUL");
-    if((!mode || (strcmp(mode,"legacy") && strcmp(mode,"flint"))) &&
-       FLINT_MIN(A->r,FLINT_MIN(A->c,B->c))>=2) {
-        slong a=nmod_poly_mat_max_length(A),b=nmod_poly_mat_max_length(B);
-        if(a && b && a<=WORD_MAX-b &&
-           drsolve_nmod_poly_mat_mul_window_ntt(C,A,B,0,a+b-1)) return;
-    }
-#endif
+    /* Includes FFT/CRT for primes without suitable roots of unity, and
+     * honors the common backend controls and FLINT fallback. */
+    drsolve_nmod_poly_mat_mul(C, A, B);
+#else
     slong panels = 1;
 #ifdef _OPENMP
     if (!omp_in_parallel())
@@ -43,6 +36,7 @@ static void mq_block_mul(nmod_poly_mat_t C, const nmod_poly_mat_t A, const nmod_
         nmod_poly_mat_window_clear(c);
         nmod_poly_mat_window_clear(a);
     }
+#endif
 }
 
 static int mq_permutation_odd(const slong *p, slong n, slong offset)
@@ -189,22 +183,48 @@ int nmod_poly_mat_mq_schur(nmod_poly_mat_t core, ulong *factor, const nmod_poly_
                  * them as multiple right-hand sides for blocked field solves. */
                 nmod_mat_t packed, lower, solved;
                 nmod_mat_init(packed, k, h * length, B->modulus);
-                nmod_mat_init(lower, k, h * length, B->modulus);
+                int wide = h * length > 2 * k;
+                nmod_mat_init(lower, k, wide ? k : h * length, B->modulus);
                 nmod_mat_init(solved, k, h * length, B->modulus);
                 for (slong i = 0; i < k; i++)
                     for (slong j = 0; j < h; j++)
                     {
                         const nmod_poly_struct *p = nmod_poly_mat_entry(rhs, g->perm[i], j);
-                        for (slong t = 0; t < p->length; t++)
-                            nmod_mat_entry(packed, i, t * h + j) = p->coeffs[t];
+                        if (p->length)
+                            memcpy(nmod_mat_entry_ptr(packed, i, j * length),
+                                   p->coeffs, (size_t)p->length * sizeof(ulong));
                     }
-                nmod_mat_solve_tril(lower, g->lu, packed, 1);
-                nmod_mat_solve_triu(solved, g->lu, lower, 0);
+                if (wide)
+                {
+                    /* Many coefficient right-hand sides amortize the small
+                     * inverse. Matrix multiplication batches modular dot
+                     * products instead of reducing every triangular update.
+                     * packed already contains the LU row permutation. */
+                    nmod_mat_t inverse, identity;
+                    nmod_mat_init(inverse, k, k, B->modulus);
+                    nmod_mat_init(identity, k, k, B->modulus);
+                    nmod_mat_one(identity);
+                    nmod_mat_solve_tril(lower, g->lu, identity, 1);
+                    nmod_mat_solve_triu(inverse, g->lu, lower, 0);
+                    nmod_mat_mul(solved, inverse, packed);
+                    nmod_mat_clear(identity);
+                    nmod_mat_clear(inverse);
+                }
+                else
+                {
+                    nmod_mat_solve_tril(lower, g->lu, packed, 1);
+                    nmod_mat_solve_triu(solved, g->lu, lower, 0);
+                }
                 for (slong i = 0; i < k; i++)
                     for (slong j = 0; j < h; j++)
-                        for (slong t = 0; t < length; t++)
-                            nmod_poly_set_coeff_ui(nmod_poly_mat_entry(X, start + i, j), t,
-                                                   nmod_mat_entry(solved, i, t * h + j));
+                    {
+                        nmod_poly_struct *p = nmod_poly_mat_entry(X, start + i, j);
+                        nmod_poly_fit_length(p, length);
+                        memcpy(p->coeffs, nmod_mat_entry_ptr(solved, i, j * length),
+                               (size_t)length * sizeof(ulong));
+                        p->length = length;
+                        _nmod_poly_normalise(p);
+                    }
                 nmod_mat_clear(solved);
                 nmod_mat_clear(lower);
                 nmod_mat_clear(packed);

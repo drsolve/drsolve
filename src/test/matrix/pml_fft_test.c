@@ -69,6 +69,14 @@ int main(void)
         }
     trial(998244353,6,6,6,1025,2049,1024,1025,rng);++cases;
     trial(1000000007,6,6,6,1025,2049,1024,1025,rng);++cases;
+    /* Automatic dispatch for short, wide Schur panels, in both orientations.
+     * Compare every coefficient against FLINT with FFT enabled and disabled. */
+    assert(dr_test_setenv("DRSOLVE_PML_MUL", "auto", 1) == 0);
+    for (unsigned pi=0;pi<sizeof(primes)/sizeof(*primes);pi++)
+        for (slong rows=2;rows<=6;rows+=2) {
+            trial(primes[pi],rows,96,192,19,38,13,29,rng);++cases;
+            trial(primes[pi],192,96,rows,38,19,13,29,rng);++cases;
+        }
     printf("PML FFT available=%d: %d cases, full/window/aliases/on-off PASS\n",drsolve_pml_fft_available(),cases);
     flint_rand_clear(rng);flint_cleanup_master();return 0;
 }

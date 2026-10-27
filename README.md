@@ -245,11 +245,11 @@ Example:
 
 #### Step 4 determinant options
 
-For nmod prime fields, 3- and 4-equation systems with one remaining variable
-try inverse-block by default, using Schur compression when disabled or on fallback.
+Over finite fields, 3- and 4-equation systems with one remaining variable
+use Schur compression followed by inverse-block by default.
 `--inverse-block` / `--no-inverse-block` / `--inverse-block-auto` control this mode;
 `--inverse-block-size N` enables it with block size `N` (`0`: automatic).
-`--step4-schur` also enables compression before inverse-block;
+`--step4-schur` enables compression before inverse-block (default);
 `--no-step4-schur` disables compression, including on fallback.
 
 ```bash

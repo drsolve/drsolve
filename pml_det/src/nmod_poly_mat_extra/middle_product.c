@@ -213,9 +213,11 @@ static int drsolve_try_ntt(const nmod_poly_mat_t A, const nmod_poly_mat_t B, int
 static int drsolve_try_fft(const nmod_poly_mat_t A, const nmod_poly_mat_t B, int mode)
 {
     slong dim = FLINT_MIN(A->r,FLINT_MIN(A->c,B->c));
-    /* The 12x12 interpolation bases amortize FFT setup even at length 8.
-     * Keep a conservative crossover for smaller matrices. */
-    slong crossover = dim >= 8 ? 8 : 128;
+    /* Wide Schur panels can amortize transforms even with only 2--6 rows.
+     * Use the full product volume, not just the smallest dimension. The
+     * floating estimate avoids overflow and only controls dispatch. */
+    double volume = (double) A->r * A->c * B->c;
+    slong crossover = dim >= 8 || volume >= 32768.0 ? 8 : 128;
     return drsolve_pml_fft_enabled && mode >= 2 &&
         (mode == 3 || (dim >= 2 &&
             FLINT_MAX(nmod_poly_mat_max_length(A),nmod_poly_mat_max_length(B)) >= crossover));

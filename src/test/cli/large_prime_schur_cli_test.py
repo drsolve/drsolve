@@ -13,7 +13,7 @@ with tempfile.TemporaryDirectory() as tmp:
         results = []
         for flags in (['--no-step4-schur'], [], ['--no-schur-seed'], ['--step4', '2']):
             run = subprocess.run([binary, '-r', degrees, prime, '--seed', '12345',
-                                  '--resultant-only', '-v', '2', '--time', *flags,
+                                  '--resultant-only', '--no-inverse-block', '-v', '2', '--time', *flags,
                                   '-o', str(output)], capture_output=True, text=True,
                                  timeout=120, check=True)
             log = run.stdout + run.stderr

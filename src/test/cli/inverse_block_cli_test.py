@@ -24,7 +24,10 @@ with tempfile.TemporaryDirectory() as tmp:
         log, got = run(args)
         assert got == ref
         assert ('Dixon inverse-block time:' in log) == (degrees != '[3]*5'), log
-        assert compressed(log) == (degrees == '[3]*5'), log
+        assert compressed(log), log
+        if degrees != '[3]*5':
+            compression = re.search(r'(?:Step 4 (?:adaptive )?Schur:|Direct coefficient core:).*->', log)
+            assert compression.start() < log.index('Dixon inverse-block:'), log
         for flags, enabled in [(['--step4-schur'], True),
                                (['--no-step4-schur'], False),
                                (['--no-step4-schur', '--step4-schur'], True),
@@ -41,7 +44,8 @@ with tempfile.TemporaryDirectory() as tmp:
             assert ('Dixon inverse-block time:' in log) == (flags[-1] != '--no-inverse-block'), log
         log, got = run(args, ['--inverse-block-size', '99999'])
         assert got == ref and 'fallback' in log and compressed(log), log
-        assert log.index('Dixon inverse-block:') < log.index('Step 4 fallback:'), log
+        compression = re.search(r'(?:Step 4 (?:adaptive )?Schur:|Direct coefficient core:).*->', log)
+        assert compression.start() < log.index('Dixon inverse-block:'), log
         assert 'Dixon inverse-block time:' not in log, log
         log, got = run(args, ['--inverse-block-size', '99999', '--no-step4-schur'])
         assert got == ref and 'fallback' in log and not compressed(log), log
@@ -57,7 +61,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert got == ref and 'Dixon inverse-block time:' in log
 
     for args in [['-r', '[4]*3', '17', '--seed', '19'],
-                 ['-r', '[4]*3', '2^8', '--seed', '19'],
+                 ['-r', '[10]*3', '2^8', '--seed', '19'],
                  ['-r', '[8]*2', '65537', '--seed', '19']]:
         _, ref = run(args, ['--no-inverse-block'])
         log, got = run(args, ['--inverse-block'])
@@ -67,4 +71,4 @@ with tempfile.TemporaryDirectory() as tmp:
         p = subprocess.run([binary, '-r', '[4]*3', '65537', '--inverse-block-size', bad],
                            capture_output=True, text=True)
         assert p.returncode != 0 and 'nonnegative integer' in p.stderr, p.stderr
-print('inverse-block CLI: direct defaults, Schur fallback/overrides and exact outputs passed')
+print('inverse-block CLI: Schur-first defaults, fallback/overrides and exact outputs passed')

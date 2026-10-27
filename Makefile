@@ -1428,3 +1428,12 @@ $(BUILD_DIR)/inverse_block_static_test: $(SRC_DIR)/test/matrix/inverse_block_tes
 .PHONY: test-inverse-block-static
 test-inverse-block-static: $(BUILD_DIR)/inverse_block_static_test
 	OMP_NUM_THREADS=1 ./$(BUILD_DIR)/inverse_block_static_test
+
+$(BUILD_DIR)/unified_inverse_block_test: $(SRC_DIR)/test/matrix/unified_inverse_block_test.c $(DIXON_SHARED_LIB)
+	$(CC) $(ALL_CFLAGS) -UNDEBUG -o $@ $< -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
+.PHONY: test-unified-inverse-block
+test-unified-inverse-block: $(BUILD_DIR)/unified_inverse_block_test
+	LD_LIBRARY_PATH=.:$$LD_LIBRARY_PATH OMP_NUM_THREADS=2 ./$(BUILD_DIR)/unified_inverse_block_test
+.PHONY: test-unified-inverse-block-cli
+test-unified-inverse-block-cli: $(DIXON_TARGET)
+	python3 $(SRC_DIR)/test/cli/unified_inverse_block_cli_test.py ./$(DIXON_TARGET)

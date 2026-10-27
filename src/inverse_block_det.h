@@ -3,6 +3,7 @@
 #define DRSOLVE_INVERSE_BLOCK_DET_H
 #include <flint/nmod_poly_mat.h>
 #include <flint/nmod_poly.h>
+#include "unified_mat_poly.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -14,6 +15,8 @@ typedef struct {
 /* A priori heuristic; threads is the number of available sampling workers.
  * Returns a block in [1,n] (0 for invalid dimensions). No benchmark is run. */
 slong dr_inverse_block_choose(slong n, slong degree_bound, int threads);
+
+slong dr_inverse_block_degree_bound(const slong *degrees, slong n);
 
 /* Maximum assignment weight of the entry degrees (zeros padded with degree
  * zero). This is a certified upper bound, not an estimate of det's degree.
@@ -35,6 +38,14 @@ slong dr_nmod_poly_mat_det_degree_bound(const nmod_poly_mat_t matrix);
 int dr_nmod_poly_mat_det_inverse_block_try(nmod_poly_t out,
     const nmod_poly_mat_t matrix, slong block, int threads,
     flint_rand_t state, dr_inverse_block_stats *stats);
+/* Same transactional, probabilistically verified contract for all unified
+ * fields. Distinct random points replace the nmod geometric grid. Insufficient
+ * field cardinality returns 0; this routine never extends the field. */
+int dr_unified_mat_poly_det_inverse_block_try(unified_poly_t out,
+    const unified_mat_poly_t matrix, slong block, int threads,
+    flint_rand_t state, dr_inverse_block_stats *stats);
+int dr_unified_mat_poly_det_inverse_block_logged(unified_poly_t out,
+    const unified_mat_poly_t matrix);
 #ifdef __cplusplus
 }
 #endif

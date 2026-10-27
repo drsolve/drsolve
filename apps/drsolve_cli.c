@@ -3276,7 +3276,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int mq_step1_rank = 1;
     int mq_step1_simplex = 0;
     int mq_step1_pencil = 0;
-    int step4_schur = -1; /* automatic: defer Schur until inverse-block fallback */
+    int step4_schur = 1; /* default: Schur compression before inverse-block */
     int bezout_fast = -1;
     int inverse_block = -1;
     slong inverse_block_size = 0;

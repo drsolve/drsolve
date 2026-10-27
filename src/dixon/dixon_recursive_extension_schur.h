@@ -35,6 +35,7 @@ static int dixon_recursive_extension_schur(unified_mpoly_struct *result,
         }
     }
     fq_nmod_poly_t det; fq_nmod_poly_init(det,ctx);
+    profile.inverse_block=g_dixon_mq_step4_schur>0 && dixon_inverse_block_enabled(nvars,1);
     int ok = dixon_mq_step4_try(det,a,&profile,ctx);
     if (ok) {
         dr_mpoly_init(result,0,1,ctx);

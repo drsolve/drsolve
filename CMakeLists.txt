@@ -629,6 +629,8 @@ set(MATH_SOURCES
   src/field/dr_mpoly.c
   src/field/fq_unified_interface.c
   src/matrix/unified_mat_poly.c
+  src/matrix/unified_inverse_block.h
+  src/matrix/unified_inverse_block_template.h
   src/determinant/unified_hnf.c
   src/field/gf2n_field.c
   src/field/gf2n_native.c
@@ -1269,6 +1271,8 @@ if(BUILD_TESTING)
   drsolve_add_test_program(fmpz_unified_test src/test/field/fmpz_unified_test.c)
   drsolve_add_test_program(bezout_prefix_test src/test/field/bezout_prefix_test.c)
   add_test(NAME drsolve_bezout_prefix COMMAND bezout_prefix_test)
+  drsolve_add_test_program(unified_inverse_block_test src/test/matrix/unified_inverse_block_test.c)
+  add_test(NAME drsolve_unified_inverse_block COMMAND unified_inverse_block_test)
   if(TARGET pml)
     drsolve_add_test_program(inverse_block_test src/test/matrix/inverse_block_test.c)
     add_test(NAME drsolve_inverse_block COMMAND inverse_block_test)
@@ -1377,6 +1381,8 @@ if(BUILD_TESTING)
       COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/large_prime_schur_cli_test.py
               $<TARGET_FILE:drsolve_exe>)
     if(TARGET pml)
+      add_test(NAME drsolve_unified_inverse_block_cli
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/src/test/cli/unified_inverse_block_cli_test.py" "$<TARGET_FILE:drsolve_exe>")
       add_test(NAME drsolve_inverse_block_cli
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/src/test/cli/inverse_block_cli_test.py" "$<TARGET_FILE:drsolve_exe>")
       add_test(NAME drsolve_bezout_block_cli

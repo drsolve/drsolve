@@ -97,8 +97,9 @@ extern int g_dixon_mq_step1_shared;
 extern int g_dixon_mq_step1_rank;
 extern int g_dixon_mq_step1_simplex;
 extern int g_dixon_mq_step1_pencil;
-/* Legacy symbol retained: -1 automatic, 0 disabled, 1 explicitly enabled. */
+/* Legacy symbol retained: -1 defer until fallback, 0 disabled, 1 enabled (default). */
 extern int g_dixon_mq_step4_schur;
+int dixon_inverse_block_enabled(slong nvars, slong npars);
 int dixon_step4_schur_enabled(slong nvars, slong npars, int word_prime_field);
 extern int g_dixon_bezout_fast;
 extern int g_dixon_inverse_block; /* -1: auto for 3/4 equations, 0: off, 1: on */

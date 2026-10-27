@@ -3,6 +3,7 @@
 #include "unified_mpoly_resultant.h"
 #include "unified_mpoly_det.h"
 #include "unified_mat_poly.h"
+#include "inverse_block_det.h"
 #include <flint/fmpz_mod_mat.h>
 #include <flint/nmod_mat.h>
 
@@ -402,7 +403,7 @@ slong unified_dixon_schur(unified_mpoly_t **m, slong n, unified_mpoly_t factor, 
 }
 
 /* Use the same HNF implementation as the extension-field path. */
-static int polynomial_minor_det(unified_mpoly_t out, unified_mpoly_t **m, slong n)
+static int polynomial_minor_det(unified_mpoly_t out, unified_mpoly_t **m, slong n, int inverse)
 {
     field_ctx_t *f = out->ctx_ptr->field_ctx;
     unified_poly_mat_t polys;
@@ -430,7 +431,8 @@ static int polynomial_minor_det(unified_mpoly_t out, unified_mpoly_t **m, slong 
     unified_poly_mat_clear(polys);
     unified_poly_t det;
     unified_poly_init(det, f);
-    int ok = unified_mat_poly_det_hnf(det, matrix);
+    int ok = inverse ? dr_unified_mat_poly_det_inverse_block_logged(det,matrix)
+                     : unified_mat_poly_det_hnf(det, matrix);
     if (ok) {
         unified_mpoly_zero(out);
         for (slong i = 0; i < det->length; i++) {
@@ -646,7 +648,16 @@ int unified_dixon_resultant(unified_mpoly_t out, unified_mpoly_t *polys, slong n
         unified_mpoly_t factor = unified_mpoly_init(out->ctx_ptr);
         unified_mpoly_one(factor);
         slong size = rank;
-        if (np == 1 && dixon_step4_schur_enabled(n,np,f->field_id==FIELD_ID_NMOD)) {
+        int method = dixon_global_method_step4;
+        int inverse = (method<0 || method==DET_METHOD_KRONECKER) &&
+                      dixon_inverse_block_enabled(n,np);
+        int done=0,attempted=0;
+        if(inverse && g_dixon_mq_step4_schur<0) {
+            dixon_info_log("  Determinant method: inverse-block\n");
+            done=polynomial_minor_det(out,minor,rank,1);attempted=1;
+            if(!done) dixon_info_log("  Step 4 fallback: try Schur compression before the original determinant backend\n");
+        }
+        if (!done && np == 1 && g_dixon_mq_step4_schur!=0) {
             slong *rdeg = flint_malloc(rank * sizeof(slong)),
                   *cdeg = flint_malloc(rank * sizeof(slong));
             for (slong i = 0; i < rank; i++) {
@@ -659,8 +670,10 @@ int unified_dixon_resultant(unified_mpoly_t out, unified_mpoly_t *polys, slong n
             if (size < rank)
                 dixon_info_log("  Step 4 adaptive Schur: %ld -> %ld\n", rank, size);
         }
-        int method = dixon_global_method_step4;
-        if (!size) {
+        if(!done && !attempted && inverse && size) done=polynomial_minor_det(out,minor,size,1);
+        if (done) {
+            /* Already reconstructed, before or after the requested Schur step. */
+        } else if (!size) {
             unified_mpoly_one(out);
         } else if (method == DET_METHOD_RECURSIVE || method == DET_METHOD_BALANCED_SPLIT) {
             dixon_info_log("  Determinant method: %s\n", dixon_det_method_name(method));
@@ -670,7 +683,7 @@ int unified_dixon_resultant(unified_mpoly_t out, unified_mpoly_t *polys, slong n
             if (np == 1 && (method < 0 || method == DET_METHOD_KRONECKER)) {
                 dixon_info_log("  Determinant method: %s\n",
                                dixon_det_method_name(DET_METHOD_KRONECKER));
-                done = polynomial_minor_det(out, minor, size);
+                done = polynomial_minor_det(out, minor, size, 0);
                 if (!done)
                     dixon_info_log("  HNF unavailable for this matrix; trying interpolation.\n");
             }
