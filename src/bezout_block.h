@@ -6,6 +6,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+/* Process-wide setting: positive = initial point count, 0 = automatic,
+ * negative = consult DRSOLVE_BEZOUT_INITIAL_POINTS (the default).
+ * Configure before starting computations; does not disable verification. */
+void dr_bezout_block_set_initial_points(slong points);
+
 typedef struct {
     slong points, block, attempts, verification_extension_degree;
     double evaluation, inverse, interpolation, determinant, verification;
@@ -14,7 +19,10 @@ typedef struct {
  * Equal total degrees d: constant, nonzero x^d coefficients are required;
  * block=0 selects max(min(6,d),floor(cuberoot(d))). The contiguous projection
  * starts with O(d) points, doubling up to the total-degree reconstruction
- * budget. Every candidate is independently verified before it is accepted.
+ * budget. DRSOLVE_BEZOUT_INITIAL_POINTS optionally overrides the equal-degree
+ * starting count (bounded by that budget); invalid values use the default.
+ * DRSOLVE_PROFILE_BEZOUT=1 reports each attempt to stderr.
+ * Every candidate is independently verified before it is accepted.
  * Unequal total degrees A>B: the smaller polynomial must have nonzero
  * constant x^B coefficient. Reduce the larger modulo its monic normalization
  * and use a spaced projection of the B-by-B Bezout inverse. block=0 selects

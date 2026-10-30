@@ -150,6 +150,8 @@ void drsolve_cli_print_full_usage(const char *prog_name)
     puts("                                Dixon inverse projection; auto for 3/4 equations");
     puts("                                with one remaining variable. Failure uses the existing backend.");
     puts("  --inverse-block-size N        Set block size and enable; 0 selects automatically.");
+    puts("  --bezout-initial-points N     Equal-degree block starting points; 0 = auto.");
+    puts("                               Overrides the environment; verification/retry retained.");
     puts("  --bezout-block / --no-bezout-block");
     puts("                                nmod Dixon/Bezout block-Hankel path (default on).");
     puts("                                Randomized verification; fallback on failure.");
@@ -374,6 +376,7 @@ static int validate_cli_options(int argc, char *argv[])
         {"no-inverse-block", no_argument, NULL, OPT_FLAG},
         {"inverse-block-auto", no_argument, NULL, OPT_FLAG},
         {"inverse-block-size", required_argument, NULL, OPT_FLAG},
+        {"bezout-initial-points", required_argument, NULL, OPT_FLAG},
         {"bezout-block", no_argument, NULL, OPT_FLAG},
         {"no-bezout-block", no_argument, NULL, OPT_FLAG},
         {"bezout-fast", no_argument, NULL, OPT_FLAG},

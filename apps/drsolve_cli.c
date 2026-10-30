@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "drsolve_cli.h"
 #include "quotient_solver.h"
+#include "bezout_block.h"
 #ifdef HAVE_PML
 #include "pml_det.h"
 #endif
@@ -3281,6 +3282,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int inverse_block = -1;
     slong inverse_block_size = 0;
     int bezout_block = 1;
+    slong bezout_initial_points = -1;
     int schur_seed = 1;
     int step3_verify_second = 0;
     fq_nmod_poly_det_method_t fq_det_method = FQ_NMOD_POLY_DET_METHOD_AUTO;
@@ -3605,6 +3607,22 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             }
             inverse_block_size=(slong)value;
             inverse_block=1;
+        } else if (strcmp(argv[i], "--bezout-initial-points") == 0 ||
+                   strncmp(argv[i], "--bezout-initial-points=", 24) == 0) {
+            const char *argument = strchr(argv[i], '=');
+            if(argument) argument++;
+            else if(i+1<argc) argument=argv[++i];
+            if(!argument || !*argument) {
+                fprintf(stderr,"Error: --bezout-initial-points requires a nonnegative integer (0 = automatic).\n");
+                return 1;
+            }
+            char *end;errno=0;
+            unsigned long long value=strtoull(argument,&end,10);
+            if(errno || argument[0]=='-' || end==argument || *end || value>(unsigned long long)WORD_MAX) {
+                fprintf(stderr,"Error: --bezout-initial-points requires a nonnegative integer (0 = automatic).\n");
+                return 1;
+            }
+            bezout_initial_points=(slong)value;
         } else if (strcmp(argv[i], "--bezout-block") == 0) {
             bezout_block = 1;
             bezout_fast = 1;
@@ -4678,6 +4696,7 @@ random_done:
     g_dixon_inverse_block = inverse_block;
     g_dixon_inverse_block_size = inverse_block_size;
     g_dixon_bezout_block = bezout_block;
+    dr_bezout_block_set_initial_points(bezout_initial_points);
     g_dixon_bezout_fast = bezout_fast < 0
         ? !resultant_method_explicit && !determinant_method_explicit : bezout_fast;
     g_dixon_schur_seed = schur_seed;

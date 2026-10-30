@@ -1,9 +1,18 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "bezout_block.h"
+
+static slong initial_points_setting = -1;
+void dr_bezout_block_set_initial_points(slong points)
+{
+    initial_points_setting = points < 0 ? -1 : points;
+}
 #ifdef HAVE_PML
 #include "bezout_prefix.h"
 #include "pml_det.h"
 #include <stdint.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <stdio.h>
 #include <time.h>
 #include <flint/ulong_extras.h>
 #include <flint/nmod.h>
@@ -271,6 +280,20 @@ int dr_nmod_mpoly_resultant_bezout_block_try(nmod_poly_t out,
      * succeed. Only the full bound is trusted by verification; an undersampled
      * reconstruction is never accepted just because its degree looks small. */
     slong count=unbalanced?short_count:FLINT_MIN(short_count,2*d+1);
+    /* Optional starting budget; correctness still requires the same checks.
+     * Full_count is the existing theoretical reconstruction budget. */
+    const char *initial=getenv("DRSOLVE_BEZOUT_INITIAL_POINTS");
+    if(!unbalanced && initial_points_setting < 0 && initial && *initial) {
+        char *end;errno=0;
+        unsigned long value=strtoul(initial,&end,10);
+        if(errno || initial[0]=='-' || end==initial || *end || !value || value>(ulong)WORD_MAX) {
+            fprintf(stderr,"Invalid DRSOLVE_BEZOUT_INITIAL_POINTS: expected a positive slong; using automatic budget.\n");
+        } else count=FLINT_MIN((slong)value,full_count);
+    }
+    if(!unbalanced && initial_points_setting > 0)
+        count=FLINT_MIN(initial_points_setting,full_count);
+    const char *profile_env=getenv("DRSOLVE_PROFILE_BEZOUT");
+    int profile=profile_env && *profile_env && strcmp(profile_env,"0");
     if((ulong)count>(out->mod.n-1)/2)return 0;
     slong rows=2*(d+1);
     if((size_t)rows>SIZE_MAX/sizeof(nmod_poly_struct))return 0;
@@ -306,13 +329,23 @@ int dr_nmod_mpoly_resultant_bezout_block_try(nmod_poly_t out,
         stats->points=count;stats->attempts++;
         ulong dilation=1+n_randint(state,out->mod.n-1);
         nmod_poly_zero(candidate);
-        if(reconstruct(candidate,coeffs,d,m,count,
+        double attempt_start=seconds();
+        dr_bezout_block_stats before=*stats;
+        int reconstructed=reconstruct(candidate,coeffs,d,m,count,
                        !unbalanced && !attempt && count==short_count,
-                       root,dilation,indices,stats)) {
+                       root,dilation,indices,stats);
+        if(reconstructed) {
             double start=seconds();
             ok=verify(candidate,coeffs,d,bound,state,&stats->verification_extension_degree);
             stats->verification+=seconds()-start;
         }
+        if(profile)fprintf(stderr,
+            "Bezout attempt %d: points=%ld status=%s degree=%ld wall=%.6f evaluation=%.6f inverse=%.6f interpolation=%.6f determinant=%.6f verification=%.6f\n",
+            attempt+1,count,ok?"accepted":reconstructed?"verification_failed":"reconstruction_failed",
+            nmod_poly_degree(candidate),seconds()-attempt_start,
+            stats->evaluation-before.evaluation,stats->inverse-before.inverse,
+            stats->interpolation-before.interpolation,stats->determinant-before.determinant,
+            stats->verification-before.verification);
         if(ok){
             nmod_poly_scalar_mul_nmod(candidate,candidate,correction);
             nmod_poly_swap(out,candidate);break;
