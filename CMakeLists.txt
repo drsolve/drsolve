@@ -577,6 +577,7 @@ list(APPEND _drsolve_deps ${_sys_libs})
 # Included implementation fragments; shared by all math targets and kept
 # visible to CMake/IDE source lists without compiling them independently.
 set(MATH_INTERNAL_HEADERS
+  src/solver/native_cache.h
   src/gf2n_inline.h
   src/determinant/gf2n_minor_dp.h
   src/determinant/gf2n_minor_dp_template.h

@@ -92,6 +92,8 @@ typedef struct {
 
 void next_token(parser_state_t *state);
 void parse_expression(parser_state_t *state, unified_mpoly_struct *poly);
+/* Parse an entire expression, with a native prime-field fast path. */
+void parse_polynomial_expression(parser_state_t *state, unified_mpoly_struct *poly);
 void parse_term(parser_state_t *state, unified_mpoly_struct *poly);
 void parse_factor(parser_state_t *state, unified_mpoly_struct *poly);
 void parse_primary(parser_state_t *state, unified_mpoly_struct *poly);

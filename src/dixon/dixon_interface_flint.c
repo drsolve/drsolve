@@ -854,6 +854,102 @@ void parse_term(parser_state_t *state, unified_mpoly_struct *poly)
     dr_mpoly_clear(&result);
 }
 
+/* Expanded sums need only one exponent vector and one final normalization.
+ * Reject anything outside this grammar; FLINT handles general expressions.
+ * Coefficients are reduced digit by digit, so large integers never overflow. */
+static int parse_prime_sum(nmod_mpoly_t out,const char *input,
+    const char **names,const nmod_mpoly_ctx_t ctx)
+{
+    slong n=nmod_mpoly_ctx_nvars(ctx);
+    ulong *exps=flint_calloc(n,sizeof(*exps));
+    nmod_t mod;nmod_init(&mod,nmod_mpoly_ctx_modulus(ctx));
+    const char *p=input;int ok=0;
+    nmod_mpoly_zero(out,ctx);
+    while(*p) {
+        int negative=0;
+        if(*p=='+' || *p=='-'){negative=*p=='-';p++;}
+        memset(exps,0,n*sizeof(*exps));ulong coefficient=1;
+        for(;;) {
+            if(isdigit((unsigned char)*p)) {
+                ulong factor=0;
+                do {
+                    factor=nmod_add(nmod_mul(factor,10%mod.n,mod),(*p-'0')%mod.n,mod);p++;
+                } while(isdigit((unsigned char)*p));
+                coefficient=nmod_mul(coefficient,factor,mod);
+            } else if(isalpha((unsigned char)*p) || *p=='_') {
+                const char *begin=p++;
+                while(isalnum((unsigned char)*p) || *p=='_')p++;
+                slong var=0;
+                while(var<n && (strlen(names[var])!=(size_t)(p-begin) ||
+                    strncmp(begin,names[var],p-begin)))var++;
+                if(var==n)goto done;
+                ulong exponent=1;
+                if(*p=='^') {
+                    p++;exponent=0;
+                    if(!isdigit((unsigned char)*p))goto done;
+                    do {
+                        ulong digit=*p-'0';
+                        if(exponent>(UWORD_MAX-digit)/10)goto done;
+                        exponent=10*exponent+digit;p++;
+                    } while(isdigit((unsigned char)*p));
+                }
+                if(exps[var]>UWORD_MAX-exponent)goto done;
+                exps[var]+=exponent;
+            } else goto done;
+            if(*p!='*')break;
+            p++;
+        }
+        if(*p && *p!='+' && *p!='-')goto done;
+        if(negative)coefficient=nmod_neg(coefficient,mod);
+        if(coefficient)nmod_mpoly_push_term_ui_ui(out,coefficient,exps,ctx);
+    }
+    if(p==input)goto done;
+    nmod_mpoly_sort_terms(out,ctx);nmod_mpoly_combine_like_terms(out,ctx);ok=1;
+done:
+    flint_free(exps);return ok;
+}
+
+/* Complete expressions can use FLINT's native parser. The recursive parser
+ * remains responsible for extension-field coefficients and custom syntax. */
+void parse_polynomial_expression(parser_state_t *state, unified_mpoly_struct *poly)
+{
+    if (!g_field_equation_reduction && fq_nmod_ctx_degree(state->ctx)==1 &&
+        state->nvars+state->npars>0) {
+        unified_mpoly_struct parsed={0};
+        dr_mpoly_init(&parsed,state->nvars,state->npars,state->ctx);
+        if (parsed.field_id==FIELD_ID_NMOD) {
+            slong n=state->nvars+state->npars;
+            const char **names=flint_malloc(n*sizeof(*names));
+            for(slong i=0;i<n;i++)names[i]=i<state->nvars?state->var_names[i]:state->par_names[i-state->nvars];
+            char *input=flint_malloc(state->len+1);size_t used=0;
+            int supported=1,space=0;
+            for(size_t i=0;i<state->len;i++) {
+                unsigned char c=state->input[i];
+                if(isspace(c)){space=1;continue;}
+                if(!(isalnum(c)||c=='_'||strchr("+-*^()",c))){supported=0;break;}
+                if(space && used && (isalnum(c)||c=='_') &&
+                   (isalnum((unsigned char)input[used-1])||input[used-1]=='_')) {supported=0;break;}
+                input[used++]=c;space=0;
+            }
+            input[used]=0;
+            int ok=supported && parse_prime_sum(GET_NMOD_POLY(&parsed),input,names,GET_NMOD_CTX(parsed.ctx_ptr));
+            if(supported && !ok) {
+                nmod_mpoly_zero(GET_NMOD_POLY(&parsed),GET_NMOD_CTX(parsed.ctx_ptr));
+                ok=nmod_mpoly_set_str_pretty(GET_NMOD_POLY(&parsed),input,names,GET_NMOD_CTX(parsed.ctx_ptr))==0;
+            }
+            flint_free(input);flint_free(names);
+            if(ok) {
+                parsed.canonical=1;dr_mpoly_move(poly,&parsed);
+                free(state->current.str);state->current.str=NULL;
+                state->current.type=TOK_EOF;state->pos=state->len;
+                return;
+            }
+        }
+        dr_mpoly_clear(&parsed);
+    }
+    parse_expression(state,poly);
+}
+
 void parse_expression(parser_state_t *state, unified_mpoly_struct *poly)
 {
     int negate = 0;
@@ -1547,7 +1643,7 @@ static char *compute_dixon_internal_with_screen(const char **poly_strings, slong
         }
         next_token(&state);
         
-        parse_expression(&state, &polys[i]);
+        parse_polynomial_expression(&state, &polys[i]);
     }
     int screening = screen && state.npars == 0 &&
                     g_resultant_method != RESULTANT_METHOD_MACAULAY;
@@ -1980,7 +2076,7 @@ static int parse_result_string_fixed_params(const char *result_str, char **par_n
 
     dr_mpoly_init(poly, 0, npars, ctx);
     next_token(&state);
-    parse_expression(&state, poly);
+    parse_polynomial_expression(&state, poly);
 
     int ok = (state.npars == npars && state.current.type == TOK_EOF);
 
@@ -3233,7 +3329,7 @@ static char *bivariate_resultant_internal(const char *poly1_str, const char *pol
         state.current.str = NULL;
     }
      next_token(&state);
-     parse_expression(&state, &poly1);
+     parse_polynomial_expression(&state, &poly1);
      dr_mpoly_reduce_field_equation(&poly1);
 
      state.input = poly2_str;
@@ -3244,7 +3340,7 @@ static char *bivariate_resultant_internal(const char *poly1_str, const char *pol
          state.current.str = NULL;
      }
      next_token(&state);
-     parse_expression(&state, &poly2);
+     parse_polynomial_expression(&state, &poly2);
      dr_mpoly_reduce_field_equation(&poly2);
 
      // Initialize unified field context
@@ -3771,7 +3867,7 @@ void append_roots_to_file_from_result(const char *result_str,
     parse_state.generator_name = gen_name ? strdup(gen_name) : NULL;
     
     next_token(&parse_state);
-    parse_expression(&parse_state, &result_poly);
+    parse_polynomial_expression(&parse_state, &result_poly);
     
     // Find and append roots to file
     find_and_print_roots_of_univariate_resultant_with_file(&result_poly, &state, fp_file, 0);

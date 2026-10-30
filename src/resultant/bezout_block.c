@@ -30,14 +30,15 @@ static int eval(gr_ptr out,const nmod_poly_struct *p,gr_srcptr point,gr_ctx_t ct
     return status;
 }
 /* Recover the base-field scalar at one point; then check eight independent
- * points. Use an extension when base-field checks have a weak degree bound. */
+ * points. Use an extension when base-field checks have a weak degree bound.
+ * 80 bits per candidate leave room for the adaptive-attempt union bound. */
 static int verify(nmod_poly_t candidate,const nmod_poly_struct *coeffs,
     slong d,slong bound,flint_rand_t state,slong *extension_degree)
 {
     if(!candidate->length || nmod_poly_degree(candidate)>bound)return 0;
     ulong p=candidate->mod.n;slong ext=1;
     fmpz_t q,target;fmpz_init_set_ui(q,p);fmpz_init_set_ui(target,(ulong)bound+1);
-    fmpz_mul_2exp(target,target,8);
+    fmpz_mul_2exp(target,target,10);
     while(fmpz_cmp(q,target)<0){fmpz_mul_ui(q,q,p);ext++;}
     fmpz_clear(q);fmpz_clear(target);*extension_degree=ext;
     fq_nmod_ctx_t fq;gr_ctx_t ctx;
@@ -181,7 +182,7 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
 
 /* Integer cube root: the direct matrix FFT uses classical matrix products.
  * This is an asymptotic block-size choice, not a cap on the input size. */
-static slong default_unbalanced_block(slong d)
+static slong default_block(slong d)
 {
     slong lo=1,hi=d;
     while(lo<hi) {
@@ -250,7 +251,8 @@ int dr_nmod_mpoly_resultant_bezout_block_try(nmod_poly_t out,
         if(nmod_mpoly_degree_si(small,var,ctx)!=d)return 0;
     } else if(nmod_mpoly_degree_si(a,var,ctx)!=d ||
               nmod_mpoly_degree_si(b,var,ctx)!=d)return 0;
-    slong m=block?block:(unbalanced?default_unbalanced_block(d):FLINT_MIN(6,d));
+    slong m=block?block:default_block(d);
+    if(!block && !unbalanced)m=FLINT_MAX(m,FLINT_MIN(6,d));
     slong bound=A*d;
     if(m>d || m>WORD_MAX/2 ||
        (size_t)(2*m)>SIZE_MAX/sizeof(nmod_poly_struct)/(size_t)(2*m))return 0;
@@ -264,7 +266,12 @@ int dr_nmod_mpoly_resultant_bezout_block_try(nmod_poly_t out,
         if(half>(WORD_MAX-1-2*d)/2)return 0;
         short_count=1+2*half-2*d+2*m;full_count=1+2*half+2*d;
     }
-    if((ulong)short_count>(out->mod.n-1)/2)return 0;
+    /* The total-degree bound is often very loose for composed systems.
+     * Start with O(d) points, then double until independent resultant checks
+     * succeed. Only the full bound is trusted by verification; an undersampled
+     * reconstruction is never accepted just because its degree looks small. */
+    slong count=unbalanced?short_count:FLINT_MIN(short_count,2*d+1);
+    if((ulong)count>(out->mod.n-1)/2)return 0;
     slong rows=2*(d+1);
     if((size_t)rows>SIZE_MAX/sizeof(nmod_poly_struct))return 0;
     nmod_poly_struct *coeffs=flint_malloc(rows*sizeof(*coeffs));
@@ -294,20 +301,28 @@ int dr_nmod_mpoly_resultant_bezout_block_try(nmod_poly_t out,
     nmod_poly_t candidate;nmod_poly_init(candidate,out->mod.n);
     ulong root=prepared?n_primitive_root_prime(out->mod.n):1;int ok=0;
     stats->block=m;
-    for(int attempt=0;prepared && attempt<2;attempt++) {
-        slong count=attempt?full_count:short_count;
+    for(int attempt=0;prepared;attempt++) {
         if((ulong)count>(out->mod.n-1)/2)break;
         stats->points=count;stats->attempts++;
         ulong dilation=1+n_randint(state,out->mod.n-1);
         nmod_poly_zero(candidate);
-        if(!reconstruct(candidate,coeffs,d,m,count,!unbalanced && !attempt,
-                        root,dilation,indices,stats))continue;
-        double start=seconds();
-        ok=verify(candidate,coeffs,d,bound,state,&stats->verification_extension_degree);
-        stats->verification+=seconds()-start;
+        if(reconstruct(candidate,coeffs,d,m,count,
+                       !unbalanced && !attempt && count==short_count,
+                       root,dilation,indices,stats)) {
+            double start=seconds();
+            ok=verify(candidate,coeffs,d,bound,state,&stats->verification_extension_degree);
+            stats->verification+=seconds()-start;
+        }
         if(ok){
             nmod_poly_scalar_mul_nmod(candidate,candidate,correction);
             nmod_poly_swap(out,candidate);break;
+        }
+        if(unbalanced) {
+            if(attempt)break;
+            count=full_count;
+        } else {
+            if(count==full_count)break;
+            count=count>(full_count-1)/2?full_count:2*count+1;
         }
     }
     nmod_poly_clear(candidate);flint_free(indices);
@@ -352,7 +367,7 @@ int unified_mpoly_resultant_bezout_block_try(unified_mpoly_t out,
         }
         unified_mpoly_swap(out,answer);unified_mpoly_clear(answer);
         dixon_info_log("Dixon/Bezout block-Hankel resultant: %s, block %ld, %ld points, %ld attempt(s)\n",
-            da==db?"C shifted interpolation":"C reduced spaced projection",
+            da==db?"C adaptive interpolation":"C reduced spaced projection",
             stats.block,stats.points,stats.attempts);
         if(da!=db)dixon_info_log("  Total degrees %ld/%ld; reduced Bezout order %ld (preparation included in evaluation)\n",
             da,db,FLINT_MIN(da,db));

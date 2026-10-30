@@ -12,7 +12,9 @@ typedef struct {
 } dr_bezout_block_stats;
 /* Dixon/Bezout inverse-Hankel projection with verified reconstruction.
  * Equal total degrees d: constant, nonzero x^d coefficients are required;
- * block=0 selects min(6,d), using the shifted contiguous projection.
+ * block=0 selects max(min(6,d),floor(cuberoot(d))). The contiguous projection
+ * starts with O(d) points, doubling up to the total-degree reconstruction
+ * budget. Every candidate is independently verified before it is accepted.
  * Unequal total degrees A>B: the smaller polynomial must have nonzero
  * constant x^B coefficient. Reduce the larger modulo its monic normalization
  * and use a spaced projection of the B-by-B Bezout inverse. block=0 selects
@@ -21,9 +23,9 @@ typedef struct {
  * (including input-order sign and leading-coefficient factors).
  * Returns 1 after probabilistic verification, 0 to request fallback; failure
  * leaves out unchanged. Inputs are never modified. Prime nmod fields only.
- * Eight fresh checks use a field of size >= 256*(A*B+1), extending the field
+ * Eight fresh checks use a field of size >= 1024*(A*B+1), extending the field
  * for verification only if needed. For uniform independent samples, the false
- * acceptance bound per candidate is <= 2^-64. This is not a certificate.
+ * acceptance bound per candidate is <= 2^-80. This is not a certificate.
  * state supplies the random samples; stats may be NULL. The evaluation timing
  * includes polynomial degree reduction for unequal total degrees. */
 int dr_nmod_mpoly_resultant_bezout_block_try(nmod_poly_t out,

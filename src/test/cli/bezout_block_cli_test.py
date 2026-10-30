@@ -1,5 +1,6 @@
 """Default nmod Dixon/Bezout inverse-Hankel reconstruction and safe fallback."""
 import re
+from math import comb
 import subprocess
 import sys
 import tempfile
@@ -36,6 +37,20 @@ with tempfile.TemporaryDirectory() as tmp:
             _, got = run(args, ['--no-pml-fft'])
             assert got == ref, args
     assert unequal_successes >= 8, unequal_successes
+    # Parser insertion order and elimination-variable permutation must not
+    # make FLINT read a zero degree from an unnormalized native polynomial.
+    degree = 27
+    for variable in ('x', 'y'):
+        terms = [f'{comb(degree, k)}*x^{k}*y^{degree-k}'
+                 for k in range(degree+1)]
+        for ordered in (terms, list(reversed(terms))):
+            power = '+'.join(ordered)
+            args = [f'{power}+x+1,{power}+y+2', variable, '2130706433']
+            _, ref = run(args, ['--no-bezout-block'])
+            log, got = run(args, [])
+            assert got == ref, (args, log)
+            match = re.search(r'C adaptive interpolation, block \d+, (\d+) points', log)
+            assert match and int(match[1]) <= 2*degree+1, log
     # New backend can be explicitly disabled, then re-enabled (last flag wins).
     for prime in [998244353, 1000000007]:
         args = ['-r', '[32]*2', str(prime), '--seed', '19']

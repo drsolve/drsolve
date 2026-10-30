@@ -48,6 +48,7 @@ typedef struct polynomial_solutions {
     int *candidate_solution_pass;    // Verification result for each candidate
     slong num_candidate_solution_lines; // Number of candidate solution lines
     slong candidate_solution_lines_cap; // Capacity of candidate solution lines
+    struct solver_native_cache *native_cache; /* Owned parsed prime-field inputs. */
     const fq_nmod_ctx_struct *ctx;  // Finite field context
 } polynomial_solutions_t;
 

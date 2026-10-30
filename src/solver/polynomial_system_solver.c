@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "polynomial_system_solver.h"
 #include "quotient_solver.h"
+#include "native_cache.h"
 
 static int solver_realtime_progress_enabled = 0;
 static int solver_internal_trace_enabled = 0;
@@ -907,6 +908,7 @@ void free_equation_combinations(equation_combination_t *combinations, slong num_
 // Initialize the enhanced solution structure
 void polynomial_solutions_init(polynomial_solutions_t *sols, slong num_vars, 
                                const fq_nmod_ctx_t ctx) {
+    sols->native_cache = NULL;
     sols->num_variables = num_vars;
     sols->ctx = ctx;
     sols->is_valid = 0;
@@ -1002,6 +1004,7 @@ void polynomial_solutions_clear(polynomial_solutions_t *sols) {
         free(sols->candidate_solution_pass);
     }
     
+    solver_native_cache_clear(sols->native_cache);
     memset(sols, 0, sizeof(polynomial_solutions_t));
 }
 
@@ -1196,7 +1199,7 @@ fq_nmod_t* solve_univariate_equation_all_roots(const char *poly_str, const char 
     state.len = strlen(poly_str);
     next_token(&state);
     
-    parse_expression(&state, &poly);
+    parse_polynomial_expression(&state, &poly);
     
     // Convert to univariate polynomial
     fq_nmod_poly_t univ_poly;
@@ -1374,7 +1377,7 @@ char* substitute_variable_in_polynomial(const char *poly_str, const char *var_na
     state.len = strlen(poly_str);
     next_token(&state);
     
-    parse_expression(&state, &poly);
+    parse_polynomial_expression(&state, &poly);
     
     // Create result polynomial by substituting variable value
     unified_mpoly_struct result_poly = {0};
@@ -1463,11 +1466,13 @@ static char *solver_pair_resultant(const char *a, const char *b, const char *var
 
 static int solver_pair_resultant_poly(const char *a, const char *b, const char *var,
                                        const fq_nmod_ctx_t ctx,
-                                       unified_mpoly_struct *result)
+                                       unified_mpoly_struct *result,
+                                       polynomial_solutions_t *sols, variable_info_t *sorted_vars)
 {
     int use_dixon = solver_method == POLYNOMIAL_SOLVER_DIXON || dixon_prefer_bivariate(ctx);
     solver_progress("Pair elimination: %s", use_dixon ? "Dixon" : "subresultant");
     if (use_dixon) {
+        if(solver_native_pair(result,sols,sorted_vars,a,b,var))return 1;
         const char *polys[] = {a, b}, *vars[] = {var};
         return dixon_compute_result_poly_array(polys, 2, vars, 1, ctx, result);
     }
@@ -1599,7 +1604,7 @@ static int evaluate_original_polynomial_at_solution(fq_nmod_t result,
         state.current.str = NULL;
     }
     next_token(&state);
-    parse_expression(&state, &poly);
+    parse_polynomial_expression(&state, &poly);
 
     fq_nmod_zero(result, ctx);
 
@@ -1664,7 +1669,8 @@ static int evaluate_original_polynomial_at_solution(fq_nmod_t result,
 }
 
 // Verify a single solution by substituting into original equations
-int verify_solution_set(char **original_polys, slong num_polys,
+static int verify_solution_set_cached(polynomial_solutions_t *sols,
+                       char **original_polys, slong num_polys,
                        variable_info_t *sorted_vars, slong num_vars,
                        fq_nmod_t **solution_values, const fq_nmod_ctx_t ctx) {
     
@@ -1682,7 +1688,9 @@ int verify_solution_set(char **original_polys, slong num_polys,
     for (slong poly_idx = 0; poly_idx < num_polys; poly_idx++) {
         fq_nmod_t result_value;
         fq_nmod_init(result_value, ctx);
-        int ok = evaluate_original_polynomial_at_solution(result_value,
+        int ok = solver_native_evaluate(result_value,sols,sorted_vars,num_vars,
+            original_polys[poly_idx],solution_values);
+        if(!ok)ok = evaluate_original_polynomial_at_solution(result_value,
                                                           original_polys[poly_idx],
                                                           sorted_vars,
                                                           num_vars,
@@ -1700,6 +1708,16 @@ int verify_solution_set(char **original_polys, slong num_polys,
     
     solver_trace_stdout("    Verification PASSED\n");
     return 1;
+}
+
+int verify_solution_set(char **original_polys, slong num_polys,
+    variable_info_t *sorted_vars, slong num_vars, fq_nmod_t **solution_values,
+    const fq_nmod_ctx_t ctx)
+{
+    polynomial_solutions_t scratch={0};scratch.ctx=ctx;
+    int ok=verify_solution_set_cached(&scratch,original_polys,num_polys,
+        sorted_vars,num_vars,solution_values,ctx);
+    solver_native_cache_clear(scratch.native_cache);return ok;
 }
 
 // Filter solution sets by verification
@@ -1744,7 +1762,7 @@ void filter_solutions_by_verification(polynomial_solutions_t *sols,
         }
         
         // Verify this solution
-        if (verify_solution_set(original_polys, num_polys, sorted_vars, sols->num_variables,
+        if (verify_solution_set_cached(sols, original_polys, num_polys, sorted_vars, sols->num_variables,
                                sols->solution_sets[set], sols->ctx)) {
             valid_sets[set] = 1;
             verified_count++;
@@ -1870,7 +1888,9 @@ int solve_by_back_substitution_recursive_enhanced(char **original_polys, slong n
         int inconsistent_branch = 0;
         
         for (slong poly_idx = 0; poly_idx < num_polys; poly_idx++) {
-            char *substituted = substitute_variable_in_polynomial(original_polys[poly_idx],
+            char *substituted = solver_native_substitute(sols,sorted_vars,num_vars,
+                original_polys[poly_idx],base_solutions[base_idx]);
+            if(!substituted)substituted = substitute_variable_in_polynomial(original_polys[poly_idx],
                                                                   sorted_vars[0].name,
                                                                   base_solutions[base_idx],
                                                                   sols->ctx);
@@ -2306,7 +2326,7 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
                                elim_var);
             unified_mpoly_struct resultant = {0};
             int computed = solver_pair_resultant_poly(poly_strings[0], poly_strings[1],
-                                                       elim_var, sols->ctx, &resultant);
+                                                       elim_var, sols->ctx, &resultant, sols, sorted_vars);
             if (computed && dr_mpoly_length(&resultant) != 0) {
                 dr_mpoly_move(&working_resultant, &resultant);
                 successful_combinations = 1;
@@ -2341,7 +2361,7 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
                 int computed = solver_pair_resultant_poly(
                     poly_strings[combinations[comb_idx].equation_indices[0]],
                     poly_strings[combinations[comb_idx].equation_indices[1]],
-                    elim_var, sols->ctx, &test_resultant);
+                    elim_var, sols->ctx, &test_resultant, sols, sorted_vars);
                 
                 if (computed && dr_mpoly_length(&test_resultant) != 0) {
                     solver_trace_stdout("  ✓ Combination %ld succeeded!\n", comb_idx + 1);

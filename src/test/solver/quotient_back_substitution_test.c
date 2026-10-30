@@ -68,6 +68,33 @@ static void check(polynomial_solver_method_t method, slong limit,
     for (slong i = 0; i < 3; i++) fq_nmod_clear(roots[i], ctx);
 }
 
+static void check_cached_verification(void)
+{
+    /* A caller may reuse its string buffers. Cache keys must own the original
+     * text, not use pointer identity or retain a buffer owned by a recursive call. */
+    fq_nmod_ctx_t ctx;fq_nmod_ctx_init_ui(ctx,101,1,"t");
+    char first[]="x+y",second[]="x^2-1";char *polys[]={first,second};
+    polynomial_solver_set_method(POLYNOMIAL_SOLVER_DIXON);
+    polynomial_solutions_t *sols=solve_polynomial_system_array(polys,2,ctx);
+    assert(sols->is_valid && sols->num_solution_sets==2);
+    variable_info_t vars[2];
+    for(int i=0;i<2;i++)vars[i]=(variable_info_t){sols->variable_names[i],2,i};
+    /* Repeat verification in a different variable order, with values moved
+     * accordingly; the cache must rebuild its exponent layout. */
+    char *name=sols->variable_names[0];sols->variable_names[0]=sols->variable_names[1];sols->variable_names[1]=name;
+    for(slong i=0;i<sols->num_solution_sets;i++) {
+        fq_nmod_t *value=sols->solution_sets[i][0];
+        sols->solution_sets[i][0]=sols->solution_sets[i][1];sols->solution_sets[i][1]=value;
+    }
+    for(int i=0;i<2;i++)vars[i].name=sols->variable_names[i];
+    filter_solutions_by_verification(sols,polys,2,vars);
+    assert(sols->num_solution_sets==2);
+    second[strlen(second)-1]='2';
+    filter_solutions_by_verification(sols,polys,2,vars);
+    assert(sols->has_no_solutions==1 && sols->num_solution_sets==0);
+    polynomial_solutions_clear(sols);free(sols);fq_nmod_ctx_clear(ctx);
+}
+
 int main(void)
 {
     const ulong primes[]={101,2,3,5};
@@ -81,6 +108,7 @@ int main(void)
         }
         fq_nmod_ctx_clear(ctx);
     }
+    check_cached_verification();
     polynomial_solver_set_method(POLYNOMIAL_SOLVER_AUTO);
     polynomial_solver_set_quotient_limits(0,0);
     puts("Quotient back-substitution tests passed");

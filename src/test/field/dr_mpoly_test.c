@@ -302,6 +302,42 @@ static void check_zech(void)
     fq_nmod_ctx_clear(fq);
 }
 
+static void check_complete_parser(void)
+{
+    const char *cases[]={
+        "0", "-7", "x10^3+2*x1*x10-x1*x10+x1*x1-5+5",
+        " - 12345678901234567890123456789012345678901234567890*x1^2 + 3*x10 ",
+        "2*x1*3*x1^2-x1^3*6+x10^0", "x1^2402*x10^3+7*z^2",
+        "(x1+x10)^5-(x10+x1)^5+3^4", "x1\n+\t x10+z", "x1+new_parameter"
+    };
+    const ulong primes[]={2,7,65537,2130706433,UWORD(18446744073709551557)};
+    for(size_t p=0;p<sizeof(primes)/sizeof(*primes);p++) {
+        fq_nmod_ctx_t field;fq_nmod_ctx_init_ui(field,primes[p],1,"t");
+        for(size_t k=0;k<sizeof(cases)/sizeof(*cases);k++) {
+            unified_mpoly_struct parsed[2]={{0},{0}};
+            for(int native=0;native<2;native++) {
+                char *variables[]={"x10","x1"};
+                parser_state_t state={0};
+                state.input=cases[k];state.len=strlen(cases[k]);
+                state.var_names=variables;state.nvars=2;
+                state.par_names=malloc(16*sizeof(char *));state.par_names[0]=strdup("z");
+                state.npars=1;state.max_pars=16;state.ctx=field;state.generator_name="t";
+                fq_nmod_init(state.current.value,field);dr_mpoly_init(parsed+native,2,1,field);
+                next_token(&state);
+                if(native)parse_polynomial_expression(&state,parsed+native);
+                else parse_expression(&state,parsed+native);
+                assert(state.current.type==TOK_EOF);dr_mpoly_normalize(parsed+native);
+                for(slong i=0;i<state.npars;i++)free(state.par_names[i]);
+                free(state.par_names);free(state.current.str);fq_nmod_clear(state.current.value,field);
+            }
+            assert(parsed[0].npars==parsed[1].npars);
+            assert(nmod_mpoly_equal(GET_NMOD_POLY(parsed),GET_NMOD_POLY(parsed+1),GET_NMOD_CTX(parsed[0].ctx_ptr)));
+            dr_mpoly_clear(parsed);dr_mpoly_clear(parsed+1);
+        }
+        fq_nmod_ctx_clear(field);
+    }
+}
+
 int main(void)
 {
     check_field(2, 1);
@@ -316,6 +352,7 @@ int main(void)
     check_field(2, 64);
     check_field(2, 128);
     check_zech();
+    check_complete_parser();
     puts("Native polynomial storage: arithmetic, aliasing, ownership, division and reduction PASS");
     flint_cleanup_master();
     return 0;

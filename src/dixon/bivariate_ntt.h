@@ -141,6 +141,10 @@ static int dixon_try_bezout_fast(unified_mpoly_struct *result,
     unified_mpoly_struct *polys, slong nvars, slong npars)
 {
     if((!g_dixon_bezout_fast && !g_dixon_bezout_block) || nvars!=1 || npars!=1 || g_field_equation_reduction) return 0;
+    /* Parsing and variable permutation can leave native terms unsorted.
+     * FLINT degree queries (and the Bezout kernels) require canonical input. */
+    dr_mpoly_normalize(polys);
+    dr_mpoly_normalize(polys+1);
     unified_mpoly_t temp=unified_mpoly_init(polys[0].ctx_ptr);
     int ok=g_dixon_bezout_block && unified_mpoly_resultant_bezout_block_try(temp,polys,polys+1,0,polys[0].ctx_ptr);
     if(!ok) {

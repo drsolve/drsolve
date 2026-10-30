@@ -5,6 +5,51 @@
 #include "unified_mpoly_resultant.h"
 #include "dixon_flint.h"
 
+/* A composed pair with degree d but resultant degree d, not d^2:
+ * Res_x((x+y)^d+x+1, (x+y)^d+y+2) = (2*y+1)^d+y+2.
+ * Check the exact scalar, not only the root set. */
+static void check_composed(flint_rand_t rng)
+{
+    const ulong prime=2130706433;
+    nmod_mpoly_ctx_t ctx;nmod_mpoly_ctx_init(ctx,2,ORD_LEX,prime);
+    nmod_mpoly_t a,b,s,x,y;
+    nmod_mpoly_init(a,ctx);nmod_mpoly_init(b,ctx);nmod_mpoly_init(s,ctx);
+    nmod_mpoly_init(x,ctx);nmod_mpoly_init(y,ctx);
+    nmod_mpoly_gen(x,0,ctx);nmod_mpoly_gen(y,1,ctx);
+    nmod_poly_t expected,actual,linear,sentinel;
+    nmod_poly_init(expected,prime);nmod_poly_init(actual,prime);
+    nmod_poly_init(linear,prime);nmod_poly_init(sentinel,prime);
+    nmod_poly_set_coeff_ui(linear,0,1);nmod_poly_set_coeff_ui(linear,1,2);
+    nmod_poly_set_coeff_ui(sentinel,1,7);
+    const slong degrees[]={27,81};
+    for(size_t k=0;k<sizeof(degrees)/sizeof(*degrees);k++) {
+        slong d=degrees[k];
+        nmod_mpoly_add(s,x,y,ctx);assert(nmod_mpoly_pow_ui(s,s,d,ctx));
+        nmod_mpoly_add(a,s,x,ctx);nmod_mpoly_add_ui(a,a,1,ctx);
+        nmod_mpoly_add(b,s,y,ctx);nmod_mpoly_add_ui(b,b,2,ctx);
+        nmod_poly_pow(expected,linear,d);
+        nmod_poly_set_coeff_ui(expected,1,nmod_add(nmod_poly_get_coeff_ui(expected,1),1,expected->mod));
+        nmod_poly_set_coeff_ui(expected,0,nmod_add(nmod_poly_get_coeff_ui(expected,0),2,expected->mod));
+        dr_bezout_block_stats stats;
+        assert(dr_nmod_mpoly_resultant_bezout_block_try(actual,a,b,0,ctx,0,rng,&stats));
+        assert(nmod_poly_equal(actual,expected));assert(stats.points<=2*d+1);
+
+        /* Repeated invariant factors can be invisible to a small projection.
+         * A lower-degree candidate must be rejected, even if its roots agree. */
+        assert(nmod_mpoly_pow_ui(a,x,d,ctx));nmod_mpoly_add_ui(a,a,1,ctx);
+        nmod_mpoly_add(b,a,y,ctx);nmod_mpoly_add_ui(b,b,1,ctx);
+        nmod_poly_set_coeff_ui(linear,1,1);nmod_poly_pow(expected,linear,d);
+        nmod_poly_set(actual,sentinel);
+        int accepted=dr_nmod_mpoly_resultant_bezout_block_try(actual,a,b,0,ctx,0,rng,NULL);
+        if(accepted)assert(nmod_poly_equal(actual,expected));
+        else assert(nmod_poly_equal(actual,sentinel));
+        nmod_poly_set_coeff_ui(linear,1,2);
+    }
+    nmod_poly_clear(expected);nmod_poly_clear(actual);nmod_poly_clear(linear);nmod_poly_clear(sentinel);
+    nmod_mpoly_clear(a,ctx);nmod_mpoly_clear(b,ctx);nmod_mpoly_clear(s,ctx);
+    nmod_mpoly_clear(x,ctx);nmod_mpoly_clear(y,ctx);nmod_mpoly_ctx_clear(ctx);
+}
+
 int main(void)
 {
     g_dixon_verbose_level=0;g_dixon_bezout_block=0;
@@ -93,6 +138,7 @@ int main(void)
         unified_mpoly_ctx_clear(ctx);field_ctx_clear(&field);fmpz_clear(prime);
     }
     assert(passed>=40 && unbalanced>=150 && extended>0);
+    check_composed(rng);
     flint_rand_clear(rng);flint_cleanup();
     printf("Bezout block: %ld successful exact coefficient comparisons (%ld unequal degrees), %ld safe fallbacks, %ld extension checks; aliases and dispatch PASS\n",passed,unbalanced,fallbacks,extended);
     return 0;
