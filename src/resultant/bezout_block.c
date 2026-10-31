@@ -13,6 +13,7 @@ void dr_bezout_block_set_initial_points(slong points)
 #include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <time.h>
 #include <flint/ulong_extras.h>
 #include <flint/nmod.h>
