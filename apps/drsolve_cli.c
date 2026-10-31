@@ -2,6 +2,7 @@
 #include "drsolve_cli.h"
 #include "quotient_solver.h"
 #include "bezout_block.h"
+#include "dr_profile.h"
 #ifdef HAVE_PML
 #include "pml_det.h"
 #endif
@@ -4125,10 +4126,14 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         }
     }
 
+    dr_profile_end("cli.input_and_options",wall_start_time * !!dr_profile_enabled());
+    double options_profile=dr_profile_start();
     /* File-local computation options are defaults; explicit CLI options win. */
     if (input_filename && !read_dr_file_options(input_filename, &file_options)) {
         goto cleanup_fail;
     }
+    dr_profile_end("cli.read_file_options",options_profile);
+    double config_profile=dr_profile_start();
     if (input_filename) {
         if (file_options.method_seen && !determinant_method_explicit &&
             !resultant_method_explicit) {
@@ -4921,6 +4926,8 @@ random_done:
                 redirect_fd_to_devnull(STDERR_FILENO, &orig_stderr);
             }
 
+            dr_profile_end("cli.configure_and_prepare",config_profile);
+            double solve_profile=dr_profile_start();
             if (rand_generated && allvars_str && !specialize_vars_arg) {
                 /* Keep declared random variables even if sparsity removes
                  * them from every polynomial. Otherwise a positive-dimensional
@@ -4937,6 +4944,7 @@ random_done:
             } else {
                 solutions = solve_polynomial_system_string(effective_polys_str, ctx);
             }
+            dr_profile_end("cli.solve",solve_profile);
             execution_failed = !solutions || !solutions->is_valid;
 
             if (suppress_solver_stdout) {
@@ -5134,13 +5142,17 @@ random_done:
                 }
 
                 if (output_filename) {
+                    double output_profile=dr_profile_start();
                     save_solver_result_to_file(output_filename, effective_polys_str,
                                                p_fmpz, power, solutions,
                                                cpu_time, wall_time, total_threads);
+                    dr_profile_end("cli.write_solution",output_profile);
                     if (!silent_mode)
                         printf("Result saved to: %s\n", output_filename);
                 }
+                double clear_profile=dr_profile_start();
                 polynomial_solutions_clear(solutions);
+                dr_profile_end("cli.clear_solutions",clear_profile);
                 free(solutions);
             } else {
                 if (!silent_mode)
@@ -5272,6 +5284,7 @@ cleanup_success:
     dixon_set_suppress_root_reporting(0);
     dixon_set_approximate_root_mode(0, 128);
     flint_cleanup_master();
+    dr_profile_end("cli.total",wall_start_time * !!dr_profile_enabled());
     return execution_failed;
 
 cleanup_fail:

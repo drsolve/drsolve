@@ -8,6 +8,7 @@ extern "C" {
 /* Word-size prime fields; no NTL/PML dependency. */
 typedef struct {
     slong euclidean_steps, hgcd_blocks, full_inverse_fallbacks;
+    double setup, hgcd, division, update, fallback, cleanup, series;
 } dr_bezout_prefix_stats;
 /* Return 1 on success, 0 if noninvertible, -1 for invalid arguments.
  * Output is reverse(g^{-1} mod f, deg(f)-1) mod x^precision.
@@ -19,6 +20,9 @@ int dr_bezout_inverse_prefix(nmod_poly_t out, const nmod_poly_t f,
 /* Coefficients h[i+j] give entries of the monomial Bezout inverse. */
 int dr_bezout_left_moments(nmod_poly_t out, const nmod_poly_t f,
     const nmod_poly_t g, slong precision, slong cutoff, dr_bezout_prefix_stats *stats);
+/* Internal sampled profiling: timed enables per-operation clocks. */
+int dr_bezout_left_moments_profile(nmod_poly_t out,const nmod_poly_t f,
+    const nmod_poly_t g,slong precision,slong cutoff,dr_bezout_prefix_stats *stats,int timed);
 #ifdef __cplusplus
 }
 #endif

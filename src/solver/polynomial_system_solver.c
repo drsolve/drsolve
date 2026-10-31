@@ -1106,7 +1106,10 @@ int extract_and_sort_variables(char **poly_strings, slong num_polys,
     solver_trace_stdout("=== Analyzing polynomial variables (improved) ===\n");
     
     // Use improved variable extraction
+    double vars_phase=dr_profile_start();
     char **all_vars = extract_variables_improved(poly_strings, num_polys, num_vars_out, ctx);
+    dr_profile_end("variables.discover",vars_phase);
+    vars_phase=dr_profile_start();
     
     if (*num_vars_out == 0) {
         *sorted_vars_out = NULL;
@@ -1135,6 +1138,8 @@ int extract_and_sort_variables(char **poly_strings, slong num_polys,
     }
     solver_trace_stdout("\n");
     
+    dr_profile_end("variables.trace_degree_scan",vars_phase);
+    vars_phase=dr_profile_start();
     // Create variable info array
     variable_info_t *var_info = (variable_info_t*) malloc(*num_vars_out * sizeof(variable_info_t));
     
@@ -1165,6 +1170,7 @@ int extract_and_sort_variables(char **poly_strings, slong num_polys,
         solver_trace_stdout("  %s: max degree %ld\n", var_info[i].name, var_info[i].max_degree);
     }
     
+    dr_profile_end("variables.order_degree_scan",vars_phase);
     *sorted_vars_out = var_info;
     return 1;
 }
@@ -2504,8 +2510,10 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
     
     // Solve univariate resultant
     slong num_base_solutions;
+    double roots_start=dr_profile_start();
     fq_nmod_t *base_solutions = solve_resultant_poly_all_roots(&working_resultant,
                                                                    &num_base_solutions, sols->ctx);
+    dr_profile_end("solver.resultant_roots",roots_start);
     sols->num_base_solutions = num_base_solutions;
     
     if (num_base_solutions == 0) {
@@ -2527,6 +2535,7 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
     dr_mpoly_clear(&working_resultant);
     
     // Do back substitution
+    double back_start=dr_profile_start();
     int backtrack_success = solve_by_back_substitution_recursive_enhanced(poly_strings, num_polys, 
                                                                          sorted_vars, num_vars, 
                                                                          base_solutions, num_base_solutions, sols);
@@ -2537,6 +2546,7 @@ int solve_by_elimination_enhanced(char **poly_strings, slong num_polys,
     }
     free(base_solutions);
     
+    dr_profile_end("solver.back_substitution",back_start);
     return backtrack_success;
 }
 
@@ -2658,6 +2668,7 @@ polynomial_solutions_t* solve_polynomial_system_array(char **poly_strings, slong
                                                       const fq_nmod_ctx_t ctx) {
     solver_trace_stdout("\n=== Enhanced Polynomial System Solver ===\n");
     
+    double variables_start=dr_profile_start();
     // Extract variables (existing code)
     variable_info_t *sorted_vars = NULL;
     slong num_vars = 0;
@@ -2669,6 +2680,7 @@ polynomial_solutions_t* solve_polynomial_system_array(char **poly_strings, slong
         return sols;
     }
     
+    dr_profile_end("solver.extract_variables",variables_start);
     polynomial_solutions_t *sols = (polynomial_solutions_t*) malloc(sizeof(polynomial_solutions_t));
     polynomial_solutions_init(sols, num_vars, ctx);
     sols->num_equations = num_polys;
@@ -2720,7 +2732,9 @@ polynomial_solutions_t* solve_polynomial_system_array(char **poly_strings, slong
         } else {
             solver_trace_stdout("FINAL STATUS: found finite solutions\n");
             if (sols->has_no_solutions == 0) {
+                double check_start=dr_profile_start();
                 filter_solutions_by_verification(sols, poly_strings, num_polys, sorted_vars);
+                dr_profile_end("solver.verify_solutions",check_start);
             }
         }
     } else {
@@ -2750,7 +2764,9 @@ polynomial_solutions_t* solve_polynomial_system_string(const char *poly_string,
     
     // Split string
     slong num_polys;
+    double split_start=dr_profile_start();
     char **poly_array = split_string(poly_string, &num_polys);
+    dr_profile_end("solver.split_equations",split_start);
     
     if (!poly_array || num_polys == 0) {
         polynomial_solutions_t *sols = (polynomial_solutions_t*) malloc(sizeof(polynomial_solutions_t));

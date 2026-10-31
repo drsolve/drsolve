@@ -15,6 +15,7 @@ void dr_bezout_block_set_initial_points(slong points)
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include "dr_profile.h"
 #include <flint/ulong_extras.h>
 #include <flint/nmod.h>
 #include <flint/fmpz.h>
@@ -39,18 +40,101 @@ static int eval(gr_ptr out,const nmod_poly_struct *p,gr_srcptr point,gr_ctx_t ct
     }
     return status;
 }
-/* Recover the base-field scalar at one point; then check eight independent
- * points. Use an extension when base-field checks have a weak degree bound.
- * 80 bits per candidate leave room for the adaptive-attempt union bound. */
+/* Exact check budget: (bound+1)^checks / p^checks <= 2^-80.
+ * Keep the base field when each check contributes at least one bit; otherwise
+ * use the existing large-extension strategy. No floating-point logarithms. */
+static slong prime_check_count(ulong p,slong bound)
+{
+    ulong b=(ulong)bound+1;
+    if(b>p/2)return 0;
+    fmpz_t lhs,rhs;fmpz_init_set_ui(lhs,1);fmpz_init_set_ui(rhs,1);
+    fmpz_mul_2exp(lhs,lhs,80);
+    slong checks=0;
+    do {fmpz_mul_ui(lhs,lhs,b);fmpz_mul_ui(rhs,rhs,p);checks++;}
+    while(fmpz_cmp(lhs,rhs)>0);
+    fmpz_clear(lhs);fmpz_clear(rhs);return checks;
+}
+
+static ulong specialized_resultant(const nmod_poly_struct *coeffs,slong d,
+    ulong point,nmod_poly_t f,nmod_poly_t g)
+{
+    nmod_poly_fit_length(f,d+1);nmod_poly_fit_length(g,d+1);
+    for(slong i=0;i<=d;i++) {
+        f->coeffs[i]=nmod_poly_evaluate_nmod(coeffs+i,point);
+        g->coeffs[i]=nmod_poly_evaluate_nmod(coeffs+d+1+i,point);
+    }
+    f->length=g->length=d+1;
+    _nmod_poly_normalise(f);_nmod_poly_normalise(g);
+    return nmod_poly_resultant(f,g);
+}
+
+static int verify_prime(nmod_poly_t candidate,const nmod_poly_struct *coeffs,
+    slong d,slong checks,flint_rand_t state)
+{
+    double verify_phase=dr_profile_start();
+    ulong p=candidate->mod.n,scalar=0;int ok=0;
+    nmod_poly_t f,g;nmod_poly_init(f,p);nmod_poly_init(g,p);
+    /* This point establishes a scalar; it is NOT counted as a check. */
+    for(int tries=0;tries<32;tries++) {
+        ulong point=n_randint(state,p);
+        ulong expected=specialized_resultant(coeffs,d,point,f,g);
+        if(!expected)continue;
+        ulong actual=nmod_poly_evaluate_nmod(candidate,point);
+        if(!actual)goto done;
+        scalar=nmod_div(expected,actual,candidate->mod);break;
+    }
+    dr_profile_end("verify.scalar_recovery",verify_phase);
+    verify_phase=dr_profile_start();
+    if(!scalar)goto done;
+    /* Reject wrong adaptive reconstructions cheaply before the parallel batch. */
+    ulong point=n_randint(state,p);
+    int first_failed=specialized_resultant(coeffs,d,point,f,g)!=
+       nmod_mul(nmod_poly_evaluate_nmod(candidate,point),scalar,candidate->mod);
+    dr_profile_end("verify.first_check",verify_phase);
+    if(first_failed)goto done;
+    verify_phase=dr_profile_start();
+    ulong *points=flint_malloc((checks-1)*sizeof(*points));
+    for(slong i=0;i<checks-1;i++)points[i]=n_randint(state,p);
+    int failed=0;
+#ifdef _OPENMP
+    #pragma omp parallel reduction(|:failed) if(!omp_in_parallel() && checks>2 && d>=32)
+#endif
+    {
+        nmod_poly_t sf,sg;nmod_poly_init(sf,p);nmod_poly_init(sg,p);
+#ifdef _OPENMP
+        #pragma omp for schedule(static)
+#endif
+        for(slong i=0;i<checks-1;i++) {
+            ulong expected=specialized_resultant(coeffs,d,points[i],sf,sg);
+            ulong actual=nmod_poly_evaluate_nmod(candidate,points[i]);
+            failed|=expected!=nmod_mul(actual,scalar,candidate->mod);
+        }
+        nmod_poly_clear(sf);nmod_poly_clear(sg);
+    }
+    dr_profile_end("verify.parallel_checks",verify_phase);
+    flint_free(points);
+    if(!failed){nmod_poly_scalar_mul_nmod(candidate,candidate,scalar);ok=1;}
+done:
+    nmod_poly_clear(f);nmod_poly_clear(g);return ok;
+}
+
+/* Fresh samples are independent of reconstruction and of the scalar point.
+ * Repeated points are allowed: independent uniform sampling is with replacement.
+ * The bound is on the full resultant, never the candidate's observed degree. */
 static int verify(nmod_poly_t candidate,const nmod_poly_struct *coeffs,
-    slong d,slong bound,flint_rand_t state,slong *extension_degree)
+    slong d,slong bound,flint_rand_t state,slong *extension_degree,slong *check_count)
 {
     if(!candidate->length || nmod_poly_degree(candidate)>bound)return 0;
     ulong p=candidate->mod.n;slong ext=1;
+    slong required=prime_check_count(p,bound);
+    if(required) {
+        *extension_degree=1;*check_count=required;
+        return verify_prime(candidate,coeffs,d,required,state);
+    }
     fmpz_t q,target;fmpz_init_set_ui(q,p);fmpz_init_set_ui(target,(ulong)bound+1);
     fmpz_mul_2exp(target,target,10);
     while(fmpz_cmp(q,target)<0){fmpz_mul_ui(q,q,p);ext++;}
-    fmpz_clear(q);fmpz_clear(target);*extension_degree=ext;
+    fmpz_clear(q);fmpz_clear(target);*extension_degree=ext;*check_count=8;
     fq_nmod_ctx_t fq;gr_ctx_t ctx;
     int status=GR_SUCCESS;
     if(ext==1){status=gr_ctx_init_nmod(ctx,p);status|=gr_ctx_set_is_field(ctx,T_TRUE);}
@@ -121,9 +205,11 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
     nmod_geometric_progression_clear(geo);
     stats->evaluation+=seconds()-start;start=seconds();
     nmod_mat_struct *blocks=flint_malloc(count*sizeof(*blocks));
-    int failed=0;
+    int failed=0,detail=dr_profile_enabled();
+    slong euclid=0,hgcd_count=0,fallback_count=0,sampled=0;
+    double gather=0,assemble=0,setup=0,hgcd=0,division=0,update=0,fallback=0,cleanup=0,series=0,sample_total=0;
 #ifdef _OPENMP
-    #pragma omp parallel reduction(|:failed) if(!omp_in_parallel() && count>=32)
+    #pragma omp parallel reduction(|:failed) reduction(+:euclid,hgcd_count,fallback_count,sampled,gather,assemble,setup,hgcd,division,update,fallback,cleanup,series,sample_total) if(!omp_in_parallel() && count>=32)
 #endif
     {
         nmod_poly_t f,g,h;nmod_poly_init(f,p);nmod_poly_init(g,p);nmod_poly_init(h,p);
@@ -132,6 +218,8 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
         #pragma omp for schedule(static)
 #endif
         for(slong k=0;k<count;k++) {
+            int timed=detail && k%64==0;
+            double sample_start=timed?dr_profile_now():0,phase=sample_start;
             nmod_mat_init(blocks+k,2*m,m,p);
             for(slong i=0;i<=d;i++) {
                 f->coeffs[i]=values[(size_t)i*count+k];
@@ -145,16 +233,25 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
             for(slong i=0;i<=d;i++)g->coeffs[i]=nmod_sub(g->coeffs[i],nmod_mul(scale,f->coeffs[i],result->mod),result->mod);
             _nmod_poly_normalise(g);
             slong precision=2*(indices?indices[m-1]:m-1)+1;
-            if(dr_bezout_left_moments(h,f,g,precision,1024,NULL)!=1){failed=1;continue;}
+            if(timed)gather+=dr_profile_now()-phase;
+            dr_bezout_prefix_stats ps;
+            int success=dr_bezout_left_moments_profile(h,f,g,precision,1024,&ps,timed);
+            if(detail){euclid+=ps.euclidean_steps;hgcd_count+=ps.hgcd_blocks;fallback_count+=ps.full_inverse_fallbacks;}
+            if(timed){sampled++;setup+=ps.setup;hgcd+=ps.hgcd;division+=ps.division;
+                update+=ps.update;fallback+=ps.fallback;cleanup+=ps.cleanup;series+=ps.series;phase=dr_profile_now();}
+            if(success!=1){failed=1;if(timed)sample_total+=dr_profile_now()-sample_start;continue;}
             for(slong i=0;i<m;i++) {
                 for(slong j=0;j<m;j++)nmod_mat_entry(blocks+k,i,j)=
                     nmod_poly_get_coeff_ui(h,indices?indices[i]+indices[j]:i+j);
                 nmod_mat_entry(blocks+k,m+i,i)=1;
             }
+            if(timed){assemble+=dr_profile_now()-phase;sample_total+=dr_profile_now()-sample_start;}
         }
         nmod_poly_clear(f);nmod_poly_clear(g);nmod_poly_clear(h);
     }
     flint_free(values);stats->inverse+=seconds()-start;
+    if(detail)fprintf(stderr,"Profile inverse points=%ld samples=%ld euclid=%ld hgcd_calls=%ld fallbacks=%ld sample_total=%.9f gather=%.9f setup=%.9f hgcd=%.9f division=%.9f update=%.9f fallback=%.9f cleanup=%.9f series=%.9f assemble=%.9f\n",
+        count,sampled,euclid,hgcd_count,fallback_count,sample_total,gather,setup,hgcd,division,update,fallback,cleanup,series,assemble);
     int ok=0;
     if(!failed) {
         slong *shift=flint_calloc(2*m,sizeof(slong)),*weights=flint_calloc(2*m,sizeof(slong));
@@ -163,7 +260,10 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
         for(slong i=0;i<2*m;i++){shift[i]=weights[i];order[i]=i;}
         nmod_poly_mat_t basis,den;nmod_poly_mat_init(basis,2*m,2*m,p);nmod_poly_mat_init(den,m,m,p);
         start=seconds();
+        double detail_start=dr_profile_start();
         nmod_poly_mat_pmintbasis_geometric(basis,shift,NULL,blocks,root,count);
+        dr_profile_end("block.pmintbasis",detail_start);
+        detail_start=dr_profile_start();
         /* Ordered weak Popov is pivot ordered. Select the m lowest shifted
          * row degrees, retaining row order on ties as in the research probe. */
         for(slong i=1;i<2*m;i++) {
@@ -173,10 +273,13 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
         }
         for(slong i=0;i<m;i++)for(slong j=0;j<m;j++)
             nmod_poly_set(nmod_poly_mat_entry(den,i,j),nmod_poly_mat_entry(basis,order[i],j));
+        dr_profile_end("block.select_denominator",detail_start);
         stats->interpolation+=seconds()-start;start=seconds();
         ok=nmod_poly_mat_det_hnf(result,den);
         stats->determinant+=seconds()-start;
+        double clear_start=dr_profile_start();
         nmod_poly_mat_clear(basis);nmod_poly_mat_clear(den);
+        dr_profile_end("block.clear_basis",clear_start);
         flint_free(shift);flint_free(weights);flint_free(order);
         if(ok) {
             ulong inv=nmod_inv(dilation,result->mod),power=1;
@@ -186,7 +289,9 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
             }
         }
     }
+    double clear_start=dr_profile_start();
     for(slong k=0;k<count;k++)nmod_mat_clear(blocks+k);
+    dr_profile_end("block.clear_samples",clear_start);
     flint_free(blocks);return ok;
 }
 
@@ -247,6 +352,7 @@ int dr_nmod_mpoly_resultant_bezout_block_try(nmod_poly_t out,
     const nmod_mpoly_t a,const nmod_mpoly_t b,slong var,
     const nmod_mpoly_ctx_t ctx,slong block,flint_rand_t state,dr_bezout_block_stats *stats)
 {
+    double guard_start=dr_profile_start();
     dr_bezout_block_stats local={0};if(!stats)stats=&local;*stats=local;
     if(nmod_mpoly_ctx_nvars(ctx)!=2 || var<0 || var>1 || block<0 ||
        out->mod.n!=nmod_mpoly_ctx_modulus(ctx) || !n_is_prime(out->mod.n) ||
@@ -300,6 +406,7 @@ int dr_nmod_mpoly_resultant_bezout_block_try(nmod_poly_t out,
     if((size_t)rows>SIZE_MAX/sizeof(nmod_poly_struct))return 0;
     nmod_poly_struct *coeffs=flint_malloc(rows*sizeof(*coeffs));
     for(slong i=0;i<rows;i++)nmod_poly_init(coeffs+i,out->mod.n);
+    dr_profile_end("block.bounds_and_allocate",guard_start);
     ulong correction=1;int prepared=1;
     double prep_start=seconds();
     if(unbalanced)prepared=prepare_unbalanced(coeffs,&correction,a,b,var,ctx,A,d,da>db);
@@ -311,6 +418,7 @@ int dr_nmod_mpoly_resultant_bezout_block_try(nmod_poly_t out,
                 nmod_mpoly_get_term_coeff_ui(inputs[k],i,ctx));
         }
     }
+    if(dr_profile_enabled())dr_profile_end("block.prepare_coefficients",prep_start);
     if(unbalanced)stats->evaluation+=seconds()-prep_start;
     slong *indices=NULL;
     if(unbalanced) {
@@ -337,7 +445,7 @@ int dr_nmod_mpoly_resultant_bezout_block_try(nmod_poly_t out,
                        root,dilation,indices,stats);
         if(reconstructed) {
             double start=seconds();
-            ok=verify(candidate,coeffs,d,bound,state,&stats->verification_extension_degree);
+            ok=verify(candidate,coeffs,d,bound,state,&stats->verification_extension_degree,&stats->verification_checks);
             stats->verification+=seconds()-start;
         }
         if(profile)fprintf(stderr,
@@ -359,9 +467,12 @@ int dr_nmod_mpoly_resultant_bezout_block_try(nmod_poly_t out,
             count=count>(full_count-1)/2?full_count:2*count+1;
         }
     }
+    double clear_coeffs_start=dr_profile_start();
     nmod_poly_clear(candidate);flint_free(indices);
     for(slong i=0;i<rows;i++)nmod_poly_clear(coeffs+i);
-    flint_free(coeffs);return ok;
+    flint_free(coeffs);
+    dr_profile_end("block.clear_coefficients",clear_coeffs_start);
+    return ok;
 }
 
 #else
@@ -391,22 +502,27 @@ int unified_mpoly_resultant_bezout_block_try(unified_mpoly_t out,
     double start=get_wall_time();
     int ok=dr_nmod_mpoly_resultant_bezout_block_try(result,GET_NMOD_POLY(a),GET_NMOD_POLY(b),
         var,GET_NMOD_CTX(ctx),0,state,&stats);
+    dr_profile_end("block.kernel_total",dr_profile_enabled()?start:0);
     if(ok) {
+        double publish_start=dr_profile_start();
         da=nmod_mpoly_total_degree_si(GET_NMOD_POLY(a),GET_NMOD_CTX(ctx));
         db=nmod_mpoly_total_degree_si(GET_NMOD_POLY(b),GET_NMOD_CTX(ctx));
+        dr_profile_end("block.reporting_degree_scan",publish_start);
+        publish_start=dr_profile_start();
         unified_mpoly_t answer=unified_mpoly_init(ctx);ulong exp[2]={0,0};
         for(slong i=result->length;i-->0;) {
             exp[1-var]=i;
             nmod_mpoly_set_coeff_ui_ui(GET_NMOD_POLY(answer),result->coeffs[i],exp,GET_NMOD_CTX(ctx));
         }
         unified_mpoly_swap(out,answer);unified_mpoly_clear(answer);
+        dr_profile_end("block.publish_result",publish_start);
         dixon_info_log("Dixon/Bezout block-Hankel resultant: %s, block %ld, %ld points, %ld attempt(s)\n",
             da==db?"C adaptive interpolation":"C reduced spaced projection",
             stats.block,stats.points,stats.attempts);
         if(da!=db)dixon_info_log("  Total degrees %ld/%ld; reduced Bezout order %ld (preparation included in evaluation)\n",
             da,db,FLINT_MIN(da,db));
-        dixon_info_log("  Evaluation %.6fs | inverse %.6fs | interpolation %.6fs | determinant %.6fs | verification %.6fs (field degree %ld)\n",
-            stats.evaluation,stats.inverse,stats.interpolation,stats.determinant,stats.verification,stats.verification_extension_degree);
+        dixon_info_log("  Evaluation %.6fs | inverse %.6fs | interpolation %.6fs | determinant %.6fs | verification %.6fs (field degree %ld, %ld checks)\n",
+            stats.evaluation,stats.inverse,stats.interpolation,stats.determinant,stats.verification,stats.verification_extension_degree,stats.verification_checks);
         dixon_info_log("Dixon/Bezout block time: Wall time: %.6f seconds\n",
             get_wall_time()-start);
     }

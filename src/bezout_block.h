@@ -12,7 +12,7 @@ extern "C" {
 void dr_bezout_block_set_initial_points(slong points);
 
 typedef struct {
-    slong points, block, attempts, verification_extension_degree;
+    slong points, block, attempts, verification_extension_degree, verification_checks;
     double evaluation, inverse, interpolation, determinant, verification;
 } dr_bezout_block_stats;
 /* Dixon/Bezout inverse-Hankel projection with verified reconstruction.
@@ -31,9 +31,12 @@ typedef struct {
  * (including input-order sign and leading-coefficient factors).
  * Returns 1 after probabilistic verification, 0 to request fallback; failure
  * leaves out unchanged. Inputs are never modified. Prime nmod fields only.
- * Eight fresh checks use a field of size >= 1024*(A*B+1), extending the field
- * for verification only if needed. For uniform independent samples, the false
- * acceptance bound per candidate is <= 2^-80. This is not a certificate.
+ * For p >= 2*(A*B+1), use native prime-field checks with the least k such
+ * that ((A*B+1)/p)^k <= 2^-80. Otherwise use eight fresh checks in an extension
+ * of size >= 1024*(A*B+1). The scalar-recovery sample is not counted.
+ * For uniform independent samples, the false acceptance bound per candidate
+ * is <= 2^-80. This is not a certificate. Parallel checks use thread-local
+ * scratch and samples drawn before entering the parallel region.
  * state supplies the random samples; stats may be NULL. The evaluation timing
  * includes polynomial degree reduction for unequal total degrees. */
 int dr_nmod_mpoly_resultant_bezout_block_try(nmod_poly_t out,

@@ -3,6 +3,7 @@
  * permutations and different fields cannot reuse one another's inputs. */
 #ifndef DRSOLVE_SOLVER_NATIVE_CACHE_H
 #define DRSOLVE_SOLVER_NATIVE_CACHE_H
+#include "dr_profile.h"
 
 typedef struct {
     char *expression;
@@ -45,9 +46,12 @@ static nmod_mpoly_struct *solver_native_get(polynomial_solutions_t *sols,
         for(slong i=0;i<n;i++)cache->names[i]=strdup(vars[i].name);
         nmod_mpoly_ctx_init(cache->ctx,n,ORD_LEX,fq_nmod_ctx_prime(sols->ctx));
     }
+    double lookup_start=dr_profile_start();
     for(slong i=0;i<cache->count;i++)
         if(strcmp(cache->entries[i]->expression,expression)==0)
-            return cache->entries[i]->usable?cache->entries[i]->poly:NULL;
+            {dr_profile_end("native.cache_lookup",lookup_start);return cache->entries[i]->usable?cache->entries[i]->poly:NULL;}
+    dr_profile_end("native.cache_lookup",lookup_start);
+    double parse_start=dr_profile_start();
 
     if(cache->count==cache->capacity) {
         cache->capacity=cache->capacity?2*cache->capacity:4;
@@ -64,18 +68,23 @@ static nmod_mpoly_struct *solver_native_get(polynomial_solutions_t *sols,
     state.input=expression;state.len=strlen(expression);
     fq_nmod_init(state.current.value,sols->ctx);
     unified_mpoly_struct parsed={0};dr_mpoly_init(&parsed,n,0,sols->ctx);
+    double parser_start=dr_profile_start();
     next_token(&state);parse_polynomial_expression(&state,&parsed);
+    dr_profile_end("native.parser",parser_start);
+    parser_start=dr_profile_start();
     if(parsed.field_id==FIELD_ID_NMOD && parsed.nvars==n && !parsed.npars &&
        !state.npars && state.current.type==TOK_EOF) {
         dr_mpoly_normalize(&parsed);
         nmod_mpoly_set(entry->poly,GET_NMOD_POLY(&parsed),cache->ctx);
         entry->usable=1;
     }
+    dr_profile_end("native.normalize_copy",parser_start);
     dr_mpoly_clear(&parsed);
     for(slong i=0;i<n;i++)free(state.var_names[i]);
     for(slong i=0;i<state.npars;i++)free(state.par_names[i]);
     flint_free(state.var_names);free(state.par_names);free(state.generator_name);
     free(state.current.str);fq_nmod_clear(state.current.value,sols->ctx);
+    dr_profile_end("native.parse_and_cache",parse_start);
     return entry->usable?entry->poly:NULL;
 }
 
@@ -115,6 +124,7 @@ static int solver_native_pair(unified_mpoly_struct *result,
     nmod_mpoly_struct *pa=solver_native_get(sols,vars,2,a);
     nmod_mpoly_struct *pb=solver_native_get(sols,vars,2,b);
     if(!pa || !pb)return 0;
+    double pair_start=dr_profile_start();
     unified_mpoly_struct pair[2]={{0},{0}};
     slong permutation[2]={v,1-v};
     for(int i=0;i<2;i++) {
@@ -123,6 +133,8 @@ static int solver_native_pair(unified_mpoly_struct *result,
             permutation,sols->native_cache->ctx,GET_NMOD_CTX(pair[i].ctx_ptr));
         pair[i].canonical=1;
     }
+    dr_profile_end("native.reorder_pair",pair_start);
+    pair_start=dr_profile_start();
     char *vn[]={vars[v].name},*pn[]={vars[1-v].name};
     char *generator=get_generator_name_for_solver(sols->ctx);
     if(g_resultant_method==RESULTANT_METHOD_MACAULAY)
@@ -130,6 +142,7 @@ static int solver_native_pair(unified_mpoly_struct *result,
     else if(g_resultant_method==RESULTANT_METHOD_DIXON_RECURSIVE)
         fq_dixon_fast_resultant_with_names(result,pair,1,1,vn,pn,generator);
     else fq_dixon_resultant_with_names(result,pair,1,1,vn,pn,generator);
+    dr_profile_end("native.resultant_dispatch",pair_start);
     free(generator);dr_mpoly_clear(pair);dr_mpoly_clear(pair+1);
     return result->ctx_ptr!=NULL;
 }

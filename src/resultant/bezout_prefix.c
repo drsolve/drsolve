@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "bezout_prefix.h"
+#include "dr_profile.h"
 #include <flint/nmod.h>
 
 /* Leading coefficients only, in reverse order. */
@@ -39,13 +40,14 @@ static int combine(nmod_poly_t out, slong *degree,
     return *degree<0 || (out->length && out->coeffs[0]);
 }
 
-int dr_bezout_inverse_prefix(nmod_poly_t out, const nmod_poly_t f,
-    const nmod_poly_t g, slong precision, slong cutoff, dr_bezout_prefix_stats *stats)
+static int inverse_prefix_profile(nmod_poly_t out, const nmod_poly_t f,
+    const nmod_poly_t g, slong precision, slong cutoff, dr_bezout_prefix_stats *stats, int timed)
 {
-    dr_bezout_prefix_stats local={0,0,0};if(!stats)stats=&local;*stats=local;
+    dr_bezout_prefix_stats local={0};if(!stats)stats=&local;*stats=local;
     slong n=nmod_poly_degree(f);
     if(n<1 || nmod_poly_degree(g)>=n || precision<1 || cutoff<0 ||
        out->mod.n!=f->mod.n || g->mod.n!=f->mod.n)return -1;
+    double phase=timed?dr_profile_now():0;
     nmod_poly_t u,v,q,r,t0,t1,new0,new1,rev,prod,answer;
     nmod_poly_t m11,m12,m21,m22,A,B,one;
     nmod_poly_struct *all[]={u,v,q,r,t0,t1,new0,new1,rev,prod,answer,
@@ -53,12 +55,15 @@ int dr_bezout_inverse_prefix(nmod_poly_t out, const nmod_poly_t f,
     for(size_t i=0;i<sizeof(all)/sizeof(*all);i++)nmod_poly_init_mod(all[i],f->mod);
     nmod_poly_set(u,f);nmod_poly_set(v,g);nmod_poly_one(t1);nmod_poly_one(one);
     slong d0=-1,d1=0;int ok=0;
+    if(timed)stats->setup+=dr_profile_now()-phase;
     while(v->length>1) {
+        if(timed)phase=dr_profile_now();
         if(cutoff && u->length>=cutoff && nmod_poly_degree(v)>=((nmod_poly_degree(u)+1)/2)) {
             /* FLINT returns [u;v]=M*[A;B], det(M)=sign.
              * Propagate just the leading prefixes via M^{-1}. The internal
              * HGCD matrix is full; the cumulative cofactors remain truncated. */
             slong sign=nmod_poly_hgcd(m11,m12,m21,m22,A,B,u,v);
+            if(timed){stats->hgcd+=dr_profile_now()-phase;phase=dr_profile_now();}
             slong nd0,nd1;stats->hgcd_blocks++;
             if(!combine(new0,&nd0,m22,t0,d0,m12,t1,d1,precision,rev,prod) ||
                !combine(new1,&nd1,m21,t0,d0,m11,t1,d1,precision,rev,prod))goto fallback;
@@ -72,12 +77,14 @@ int dr_bezout_inverse_prefix(nmod_poly_t out, const nmod_poly_t f,
             }
         } else {
             nmod_poly_divrem(q,r,u,v);stats->euclidean_steps++;
+            if(timed){stats->division+=dr_profile_now()-phase;phase=dr_profile_now();}
             if(!r->length)goto done;
             slong next;
             if(!combine(new1,&next,one,t0,d0,q,t1,d1,precision,rev,prod))goto fallback;
             nmod_poly_swap(t0,t1);nmod_poly_swap(t1,new1);d0=d1;d1=next;
             nmod_poly_swap(u,v);nmod_poly_swap(v,r);
         }
+        if(timed)stats->update+=dr_profile_now()-phase;
     }
     if(!v->length || d1<0 || d1>n-1)goto done;
     if(n-1-d1<precision) {
@@ -88,27 +95,42 @@ int dr_bezout_inverse_prefix(nmod_poly_t out, const nmod_poly_t f,
     ok=1;goto publish;
 fallback:
     stats->full_inverse_fallbacks++;
+    if(timed){stats->update+=dr_profile_now()-phase;phase=dr_profile_now();}
     ok=nmod_poly_invmod(answer,g,f);
     if(ok){nmod_poly_reverse(answer,answer,n);nmod_poly_truncate(answer,precision);}
+    if(timed)stats->fallback+=dr_profile_now()-phase;
 publish:
     if(ok)nmod_poly_swap(out,answer);
 done:
+    if(timed)phase=dr_profile_now();
     for(size_t i=0;i<sizeof(all)/sizeof(*all);i++)nmod_poly_clear(all[i]);
+    if(timed)stats->cleanup+=dr_profile_now()-phase;
     return ok;
 }
 
-int dr_bezout_left_moments(nmod_poly_t out, const nmod_poly_t f,
-    const nmod_poly_t g, slong precision, slong cutoff, dr_bezout_prefix_stats *stats)
+int dr_bezout_left_moments_profile(nmod_poly_t out, const nmod_poly_t f,
+    const nmod_poly_t g, slong precision, slong cutoff, dr_bezout_prefix_stats *stats, int timed)
 {
+    dr_bezout_prefix_stats local;
+    if(!stats)stats=&local;
     nmod_poly_t prefix,rev,result;
     nmod_poly_init_mod(prefix,f->mod);nmod_poly_init_mod(rev,f->mod);nmod_poly_init_mod(result,f->mod);
-    int ok=dr_bezout_inverse_prefix(prefix,f,g,precision,cutoff,stats);
+    int ok=inverse_prefix_profile(prefix,f,g,precision,cutoff,stats,timed);
+    double phase=timed?dr_profile_now():0;
     if(out->mod.n!=f->mod.n)ok=-1;
     if(ok==1) {
         reverse_high(rev,f,precision);
         nmod_poly_div_series(result,prefix,rev,precision);
         nmod_poly_swap(out,result);
     }
+    if(timed)stats->series+=dr_profile_now()-phase;
     nmod_poly_clear(prefix);nmod_poly_clear(rev);nmod_poly_clear(result);
     return ok;
 }
+
+int dr_bezout_inverse_prefix(nmod_poly_t out,const nmod_poly_t f,const nmod_poly_t g,
+    slong precision,slong cutoff,dr_bezout_prefix_stats *stats)
+{ return inverse_prefix_profile(out,f,g,precision,cutoff,stats,0); }
+int dr_bezout_left_moments(nmod_poly_t out,const nmod_poly_t f,const nmod_poly_t g,
+    slong precision,slong cutoff,dr_bezout_prefix_stats *stats)
+{ return dr_bezout_left_moments_profile(out,f,g,precision,cutoff,stats,0); }

@@ -37,6 +37,7 @@ int main(void)
                     if(dr_bezout_inverse_prefix(alias,f,alias,limit,cutoff,NULL)!=1 || !nmod_poly_equal(alias,out))goto fail;
                     nmod_poly_reverse(rev,f,n+1);nmod_poly_div_series(expected,out,rev,limit);
                     if(dr_bezout_left_moments(moments,f,g,limit,cutoff,NULL)!=1 || !nmod_poly_equal(moments,expected))goto fail;
+                    if(dr_bezout_left_moments_profile(moments,f,g,limit,cutoff,&stats,1)!=1 || !nmod_poly_equal(moments,expected))goto fail;
                     nmod_poly_set(alias,f);
                     if(dr_bezout_left_moments(alias,alias,g,limit,cutoff,NULL)!=1 || !nmod_poly_equal(alias,expected))goto fail;
                     nmod_poly_set(alias,g);

@@ -5,6 +5,27 @@
 #include "unified_mpoly_resultant.h"
 #include "dixon_flint.h"
 
+/* Check the probability budget with exact arithmetic, including the boundary
+ * between base-field and extension-field verification. */
+static void check_verification_budget(const dr_bezout_block_stats *stats,
+    ulong p,slong bound)
+{
+    assert(stats->verification_checks>0 && stats->verification_extension_degree>0);
+    fmpz_t lhs,rhs,q;fmpz_init_set_ui(lhs,(ulong)bound+1);
+    fmpz_init_set_ui(q,p);fmpz_pow_ui(q,q,stats->verification_extension_degree);
+    fmpz_init(rhs);fmpz_pow_ui(rhs,q,stats->verification_checks);
+    fmpz_pow_ui(lhs,lhs,stats->verification_checks);fmpz_mul_2exp(lhs,lhs,80);
+    assert(fmpz_cmp(lhs,rhs)<=0);
+    if((ulong)bound+1<=p/2) {
+        assert(stats->verification_extension_degree==1);
+        fmpz_set_ui(lhs,(ulong)bound+1);
+        fmpz_pow_ui(lhs,lhs,stats->verification_checks-1);fmpz_mul_2exp(lhs,lhs,80);
+        fmpz_pow_ui(rhs,q,stats->verification_checks-1);
+        assert(fmpz_cmp(lhs,rhs)>0); /* k really is the least sufficient count. */
+    } else assert(stats->verification_extension_degree>1);
+    fmpz_clear(lhs);fmpz_clear(rhs);fmpz_clear(q);
+}
+
 /* A composed pair with degree d but resultant degree d, not d^2:
  * Res_x((x+y)^d+x+1, (x+y)^d+y+2) = (2*y+1)^d+y+2.
  * Check the exact scalar, not only the root set. */
@@ -33,6 +54,7 @@ static void check_composed(flint_rand_t rng)
         dr_bezout_block_stats stats;
         assert(dr_nmod_mpoly_resultant_bezout_block_try(actual,a,b,0,ctx,0,rng,&stats));
         assert(nmod_poly_equal(actual,expected));assert(stats.points<=2*d+1);
+        check_verification_budget(&stats,prime,d*d);
 
         /* Repeated invariant factors can be invisible to a small projection.
          * A lower-degree candidate must be rejected, even if its roots agree. */
@@ -89,7 +111,8 @@ int main(void)
             assert(nmod_mpoly_get_nmod_poly(expected,GET_NMOD_POLY(ref),1-var,GET_NMOD_CTX(ctx)));
             nmod_poly_set(actual,sentinel);dr_bezout_block_stats stats;
             int ok=dr_nmod_mpoly_resultant_bezout_block_try(actual,GET_NMOD_POLY(a),GET_NMOD_POLY(b),var,GET_NMOD_CTX(ctx),0,rng,&stats);
-            if(ok){assert(nmod_poly_equal(actual,expected));passed++;unbalanced+=shape!=0;extended+=stats.verification_extension_degree>1;}
+            if(ok){assert(nmod_poly_equal(actual,expected));
+                check_verification_budget(&stats,primes[pi],d*(shape?2*d+1:d));passed++;unbalanced+=shape!=0;extended+=stats.verification_extension_degree>1;}
             else {assert(nmod_poly_equal(actual,sentinel));fallbacks++;}
             if(pi>0 && trial==3 && var==0) {
                 slong blocks[]={1,d,d-1,d+1,-1};
@@ -130,8 +153,11 @@ int main(void)
             e[0]=256;e[1]=0;
             nmod_mpoly_set_coeff_ui_ui(GET_NMOD_POLY(b),1,e,GET_NMOD_CTX(ctx));
             nmod_poly_zero(expected);nmod_poly_set_coeff_ui(expected,65792,1);
-            assert(dr_nmod_mpoly_resultant_bezout_block_try(actual,GET_NMOD_POLY(a),GET_NMOD_POLY(b),0,GET_NMOD_CTX(ctx),0,rng,NULL));
+            dr_bezout_block_stats ext_stats;
+            assert(dr_nmod_mpoly_resultant_bezout_block_try(actual,GET_NMOD_POLY(a),GET_NMOD_POLY(b),0,GET_NMOD_CTX(ctx),0,rng,&ext_stats));
             assert(nmod_poly_equal(actual,expected));
+            check_verification_budget(&ext_stats,primes[pi],257*256);
+            extended+=ext_stats.verification_extension_degree>1;
         }
         nmod_poly_clear(expected);nmod_poly_clear(actual);nmod_poly_clear(sentinel);
         unified_mpoly_clear(a);unified_mpoly_clear(b);unified_mpoly_clear(ref);unified_mpoly_clear(got);unified_mpoly_clear(saved);
