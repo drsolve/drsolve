@@ -6,6 +6,8 @@
 #include <flint/nmod.h>
 #include <flint/ulong_extras.h>
 #include <limits.h>
+#include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #ifdef _OPENMP
@@ -214,12 +216,36 @@ static void assign_slots(dr_circuit *c)
     }
     flint_free(last);flint_free(free_slots);
 }
+/* Standard C replacement for POSIX getline, which MinGW does not provide.
+ * Return 1 for a line (including an unterminated last line), 0 for EOF,
+ * and -1 for a read/allocation error. */
+static int circuit_read_line(char **line,size_t *capacity,FILE *input)
+{
+    size_t length=0;
+    int ch;
+    while((ch=fgetc(input))!=EOF) {
+        if(*capacity-length<2) {
+            if(length>SIZE_MAX-2)return -1;
+            size_t next=*capacity?(*capacity>SIZE_MAX/2?SIZE_MAX:2*(*capacity)):256;
+            char *grown=realloc(*line,next);
+            if(!grown)return -1;
+            *line=grown;*capacity=next;
+        }
+        (*line)[length++]=(char)ch;
+        if(ch=='\n')break;
+    }
+    if(ferror(input))return -1;
+    if(!length)return 0;
+    (*line)[length]='\0';
+    return 1;
+}
 dr_circuit *dr_circuit_read(FILE *input,char *error,size_t error_size)
 {
     dr_circuit *c=flint_calloc(1,sizeof(*c));c->eliminate=1;
     char *line=NULL;size_t cap=0;slong lineno=0;int header=0,prime=0,outputs=0;
     const char *why="invalid circuit syntax";
-    while(getline(&line,&cap,input)>=0) {
+    int read_status;
+    while((read_status=circuit_read_line(&line,&cap,input))>0) {
         lineno++;char *comment=strchr(line,'#');if(comment)*comment=0;
         char *save=NULL,*op=strtok_r(line," \t\r\n",&save);if(!op)continue;
         if(outputs){why="unexpected data after outputs";goto fail;}
@@ -256,7 +282,7 @@ dr_circuit *dr_circuit_read(FILE *input,char *error,size_t error_size)
         }
         flint_free(tokens);if(!ok)goto fail;
     }
-    if(ferror(input)){why="input read failed";goto fail;}
+    if(read_status<0){why="input read or line allocation failed";goto fail;}
     if(!outputs){why="missing outputs";goto fail;}
     for(slong i=0;i<c->count;i++) {
         if(!analyze_node(c,c->nodes+i)){why="circuit degree exceeds slong representation";goto fail;}

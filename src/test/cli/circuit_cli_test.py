@@ -60,6 +60,13 @@ with tempfile.TemporaryDirectory() as d:
    assert proc.returncode==0,proc.stderr+proc.stdout
    circuit=monic(out.read_text().split('Resultant:\n')[1],p)
    extension|=bool(re.search(r'field degree ([2-9]|\d\d)',proc.stdout))
+   if p==17 and eliminate=='x':
+    # Exercise buffer growth, CRLF, blank lines and EOF without a newline.
+    padded=lines.copy();padded[1]+=' '*10000+'# long line'
+    path.write_bytes(('\r\n\r\n'+'\r\n'.join(padded)).encode())
+    portable=run(['--circuit',str(path),'--threads','2','--resultant-only','-o',str(out)])
+    assert portable.returncode==0,portable.stderr+portable.stdout
+    assert circuit==monic(out.read_text().split('Resultant:\n')[1],p)
    equations=','.join(pretty(polys[i]) for i in outputs)
    ref=run([equations,eliminate,str(p),'--threads','1','--resultant-only','--no-bezout-block','-o',str(out)])
    assert ref.returncode==0,ref.stderr
