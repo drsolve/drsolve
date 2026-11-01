@@ -3,6 +3,7 @@
 #define DRSOLVE_BEZOUT_BLOCK_H
 #include <flint/nmod_mpoly.h>
 #include <flint/nmod_poly.h>
+#include <flint/gr_poly.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -16,6 +17,21 @@ typedef struct {
     slong degree_a, degree_b;
     double evaluation, inverse, interpolation, determinant, verification;
 } dr_bezout_block_stats;
+/* Specialization oracle for two equal-total-degree polynomials in K[x,y].
+ * The caller must certify degree d and constant nonzero leading x^d terms.
+ * eval specializes y=point and returns polynomials in x. Each worker owns
+ * a workspace; data must be immutable. eval_gr does the same over gr_ctx.
+ * No bivariate expansion is required, including independent verification. */
+typedef struct {
+    const void *data;
+    void *(*init)(const void *data);
+    void (*clear)(void *workspace,const void *data);
+    void (*eval)(nmod_poly_t f,nmod_poly_t g,ulong point,void *workspace,const void *data);
+    int (*eval_gr)(gr_poly_t f,gr_poly_t g,gr_srcptr point,gr_ctx_t ctx,const void *data);
+} dr_bezout_source;
+int dr_nmod_resultant_bezout_source_try(nmod_poly_t out,slong degree,
+    const dr_bezout_source *source,flint_rand_t state,dr_bezout_block_stats *stats);
+
 /* Dixon/Bezout inverse-Hankel projection with verified reconstruction.
  * Equal total degrees d: constant, nonzero x^d coefficients are required;
  * block=0 selects max(min(6,d),floor(cuberoot(d))). The contiguous projection

@@ -200,6 +200,7 @@ MATH_SOURCES = $(SRC_DIR)/dixon/dixon_complexity.c \
                $(SRC_DIR)/resultant/resultant_with_ideal_reduction.c \
                $(SRC_DIR)/resultant/bezout_prefix.c \
                $(SRC_DIR)/resultant/bezout_block.c \
+               $(SRC_DIR)/solver/arithmetic_circuit.c \
                $(SRC_DIR)/resultant/unified_mpoly_resultant.c \
                $(SRC_DIR)/solver/complex_solver.c \
                $(SRC_DIR)/solver/fmpq_acb_roots.c \
@@ -1441,3 +1442,7 @@ test-unified-inverse-block-cli: $(DIXON_TARGET)
 .PHONY: test-input-pipeline
 test-input-pipeline: $(DIXON_TARGET)
 	python3 src/test/cli/input_pipeline_test.py ./$(DIXON_TARGET)
+
+.PHONY: test-circuit-cli
+test-circuit-cli: $(DIXON_TARGET)
+	python3 $(SRC_DIR)/test/cli/circuit_cli_test.py ./$(DIXON_TARGET)

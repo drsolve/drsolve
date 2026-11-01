@@ -7,6 +7,7 @@
 #include <flint/flint.h>
 
 #include "drsolve_cli.h"
+#include "arithmetic_circuit.h"
 
 #ifndef PROGRAM_VERSION
 #define PROGRAM_VERSION "unknown"
@@ -36,6 +37,7 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("  %s \"polynomials\" \"eliminate_vars\" field_size\n", prog_name);
     printf("  %s \"polynomials\" field_size\n", prog_name);
     printf("  %s input_file -o output_file\n", prog_name);
+    printf("  %s --circuit input.drc [--threads N] [-o output] (experimental)\n",prog_name);
     printf("FILE FORMAT:\n");
     printf("  Dixon resultant elimination:\n");
     printf("    Line 1 : variables TO ELIMINATE (comma-separated)\n");
@@ -93,6 +95,13 @@ void drsolve_cli_print_full_usage(const char *prog_name)
            "  %s [-f] FILE [-o OUTPUT] [options]\n"
            "  %s -r \"degree_spec\" FIELD [options]\n\n",
            prog_name, prog_name, prog_name, prog_name);
+    printf("  %s --circuit input.drc [--threads N] [-o output] (experimental)\n",prog_name);
+    puts("CIRCUIT INPUT: DRCIRCUIT 1; prime P; eliminate x|y (default y).");
+    puts("  One instruction per line; implicit nodes 0=x, 1=y. Append nodes with");
+    puts("  const C, add A B, sub A B, mul A B, pow A E, lin C c0 id0 c1 id1 ...");
+    puts("  End with outputs A B. Backward references only; # starts a comment.");
+    puts("  Requires equal positive total degrees and certified constant leading terms.");
+    puts("  Supports --resultant-only, --bezout-initial-points N, --time, -v 0|1|2.");
     puts("INPUT AND OUTPUT:");
     puts("  Polynomials are comma-separated; quote polynomial and variable lists.");
     puts("  FIELD: 0 for Q, a prime p for F_p, or p^k for an extension field.");
@@ -450,6 +459,9 @@ int main(int argc, char *argv[])
             drsolve_cli_print_usage(prog_name);
         return 0;
     }
+
+    for(int i=1;i<argc;i++)if(!strcmp(argv[i],"--circuit"))
+        return dr_circuit_cli_main(argc,argv);
 
     if (!validate_cli_options(argc, argv)) {
         return 1;

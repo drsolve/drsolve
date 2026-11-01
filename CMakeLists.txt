@@ -642,6 +642,7 @@ set(MATH_SOURCES
   src/resultant/resultant_with_ideal_reduction.c
   src/resultant/bezout_prefix.c
   src/resultant/bezout_block.c
+  src/solver/arithmetic_circuit.c
   src/resultant/unified_mpoly_resultant.c
   src/solver/complex_solver.c
   src/solver/fmpq_acb_roots.c
@@ -1385,6 +1386,8 @@ if(BUILD_TESTING)
       COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/large_prime_schur_cli_test.py
               $<TARGET_FILE:drsolve_exe>)
     if(TARGET pml)
+      add_test(NAME drsolve_circuit_cli
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/src/test/cli/circuit_cli_test.py" "$<TARGET_FILE:drsolve_exe>")
       add_test(NAME drsolve_unified_inverse_block_cli
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/src/test/cli/unified_inverse_block_cli_test.py" "$<TARGET_FILE:drsolve_exe>")
       add_test(NAME drsolve_inverse_block_cli
