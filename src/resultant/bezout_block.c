@@ -205,7 +205,17 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
     nmod_geometric_progression_clear(geo);
     stats->evaluation+=seconds()-start;start=seconds();
     nmod_mat_struct *blocks=flint_malloc(count*sizeof(*blocks));
+    /* Internal tuning override; zero selects classical Euclid. */
+    slong hgcd_cutoff=1024;
+    const char *cutoff_env=getenv("DRSOLVE_BEZOUT_HGCD_CUTOFF");
+    if(cutoff_env && *cutoff_env) {
+        char *end;errno=0;long value=strtol(cutoff_env,&end,10);
+        if(errno || end==cutoff_env || *end || value<0 || (ulong)value>(ulong)WORD_MAX)
+            fprintf(stderr,"Invalid DRSOLVE_BEZOUT_HGCD_CUTOFF; using default.\n");
+        else hgcd_cutoff=(slong)value;
+    }
     int failed=0,detail=dr_profile_enabled();
+    if(detail)fprintf(stderr,"Profile inverse_setting cutoff=%ld\n",hgcd_cutoff);
     slong euclid=0,hgcd_count=0,fallback_count=0,sampled=0;
     double gather=0,assemble=0,setup=0,hgcd=0,division=0,update=0,fallback=0,cleanup=0,series=0,sample_total=0;
 #ifdef _OPENMP
@@ -235,7 +245,7 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
             slong precision=2*(indices?indices[m-1]:m-1)+1;
             if(timed)gather+=dr_profile_now()-phase;
             dr_bezout_prefix_stats ps;
-            int success=dr_bezout_left_moments_profile(h,f,g,precision,1024,&ps,timed);
+            int success=dr_bezout_left_moments_profile(h,f,g,precision,hgcd_cutoff,&ps,timed);
             if(detail){euclid+=ps.euclidean_steps;hgcd_count+=ps.hgcd_blocks;fallback_count+=ps.full_inverse_fallbacks;}
             if(timed){sampled++;setup+=ps.setup;hgcd+=ps.hgcd;division+=ps.division;
                 update+=ps.update;fallback+=ps.fallback;cleanup+=ps.cleanup;series+=ps.series;phase=dr_profile_now();}
@@ -356,9 +366,15 @@ int dr_nmod_mpoly_resultant_bezout_block_try(nmod_poly_t out,
     dr_bezout_block_stats local={0};if(!stats)stats=&local;*stats=local;
     if(nmod_mpoly_ctx_nvars(ctx)!=2 || var<0 || var>1 || block<0 ||
        out->mod.n!=nmod_mpoly_ctx_modulus(ctx) || !n_is_prime(out->mod.n) ||
-       !nmod_mpoly_degrees_fit_si(a,ctx) || !nmod_mpoly_degrees_fit_si(b,ctx) ||
-       !nmod_mpoly_total_degree_fits_si(a,ctx) || !nmod_mpoly_total_degree_fits_si(b,ctx))return 0;
-    slong da=nmod_mpoly_total_degree_si(a,ctx),db=nmod_mpoly_total_degree_si(b,ctx);
+       !nmod_mpoly_degrees_fit_si(a,ctx) || !nmod_mpoly_degrees_fit_si(b,ctx))return 0;
+    fmpz_t degree;fmpz_init(degree);
+    nmod_mpoly_total_degree_fmpz(degree,a,ctx);
+    if(!fmpz_fits_si(degree)){fmpz_clear(degree);return 0;}
+    slong da=fmpz_get_si(degree);
+    nmod_mpoly_total_degree_fmpz(degree,b,ctx);
+    if(!fmpz_fits_si(degree)){fmpz_clear(degree);return 0;}
+    slong db=fmpz_get_si(degree);fmpz_clear(degree);
+    stats->degree_a=da;stats->degree_b=db;
     slong A=FLINT_MAX(da,db),d=FLINT_MIN(da,db);
     int unbalanced=da!=db;
     if(d<1 || A>(WORD_MAX-2)/2 || A>(WORD_MAX-1)/d)return 0;
@@ -505,8 +521,7 @@ int unified_mpoly_resultant_bezout_block_try(unified_mpoly_t out,
     dr_profile_end("block.kernel_total",dr_profile_enabled()?start:0);
     if(ok) {
         double publish_start=dr_profile_start();
-        da=nmod_mpoly_total_degree_si(GET_NMOD_POLY(a),GET_NMOD_CTX(ctx));
-        db=nmod_mpoly_total_degree_si(GET_NMOD_POLY(b),GET_NMOD_CTX(ctx));
+        da=stats.degree_a;db=stats.degree_b;
         dr_profile_end("block.reporting_degree_scan",publish_start);
         publish_start=dr_profile_start();
         unified_mpoly_t answer=unified_mpoly_init(ctx);ulong exp[2]={0,0};

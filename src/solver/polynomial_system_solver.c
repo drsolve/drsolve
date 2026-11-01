@@ -707,98 +707,53 @@ int contains_identifier_improved(const char *poly_str, const char *identifier, c
     return 0;
 }
 
-// Improved variable extraction function
-char** extract_variables_improved(char **poly_strings, slong num_polys, slong *num_vars_out, const fq_nmod_ctx_t ctx) {
-    // Temporary storage for discovered variables
-    char **temp_vars = (char**) malloc(100 * sizeof(char*));  // Maximum 100 variables
-    slong temp_count = 0;
-    
-    // Get extension generator name
-    char *gen_name = get_generator_name_for_solver(ctx);
-    
-    solver_trace_stdout("=== Improved Variable Extraction ===\n");
-    if (gen_name) {
-        solver_trace_stdout("Extension field generator: %s\n", gen_name);
-    } else {
-        solver_trace_stdout("Prime field - no generator\n");
-    }
-    
-    // Iterate through all polynomial strings
-    for (slong poly_idx = 0; poly_idx < num_polys; poly_idx++) {
-        const char *poly = poly_strings[poly_idx];
-        size_t len = strlen(poly);
-        
-        for (size_t i = 0; i < len; i++) {
-            if (isalpha(poly[i]) || poly[i] == '_') {
-                // Extract complete identifier
-                size_t start = i;
-                while (i < len && (isalnum(poly[i]) || poly[i] == '_')) {
-                    i++;
-                }
-                
-                // Create identifier string
-                size_t id_len = i - start;
-                char *identifier = (char*) malloc(id_len + 1);
-                strncpy(identifier, poly + start, id_len);
-                identifier[id_len] = '\0';
-                
-                // Skip numbers (not variables)
-                if (isdigit(identifier[0])) {
-                    free(identifier);
-                    continue;
-                }
-                
-                // Check if this is extension generator
-                int is_generator = 0;
-                if (gen_name && strcmp(identifier, gen_name) == 0) {
-                    is_generator = 1;
-                    //printf("Found generator in polynomial %ld: %s\n", poly_idx, identifier);
-                }
-                
-                // Check if already in list (but extension generator doesn't count as variable)
-                int already_exists = 0;
-                if (!is_generator) {
-                    for (slong j = 0; j < temp_count; j++) {
-                        if (strcmp(temp_vars[j], identifier) == 0) {
-                            already_exists = 1;
-                            break;
-                        }
-                    }
-                    
-                    // If it's a new variable, add to list
-                    if (!already_exists) {
-                        temp_vars[temp_count] = strdup(identifier);
-                        temp_count++;
-                        solver_trace_stdout("Found variable: %s\n", identifier);
+/* Scan identifiers once; allocate only newly discovered names. Literal
+ * powers retain the existing degree heuristic for general expressions. */
+static variable_info_t *scan_solver_variables(char **polys,slong np,slong *count,
+    const fq_nmod_ctx_t ctx,int degrees)
+{
+    slong capacity=4,n=0;
+    variable_info_t *vars=malloc(capacity*sizeof(*vars));
+    char *generator=get_generator_name_for_solver(ctx);
+    size_t glen=generator?strlen(generator):0;
+    for(slong k=0;k<np;k++) {
+        const unsigned char *p=(const unsigned char *)polys[k];
+        while(*p) {
+            if(!isalpha(*p) && *p!='_'){p++;continue;}
+            const unsigned char *begin=p++;
+            while(isalnum(*p) || *p=='_')p++;
+            size_t len=p-begin;
+            if(generator && len==glen && !memcmp(begin,generator,len))continue;
+            slong j=0;
+            while(j<n && (strlen(vars[j].name)!=len || memcmp(begin,vars[j].name,len)))j++;
+            if(j==n) {
+                if(n==capacity){capacity*=2;vars=realloc(vars,capacity*sizeof(*vars));}
+                vars[n].name=malloc(len+1);memcpy(vars[n].name,begin,len);vars[n].name[len]=0;
+                vars[n].index=n;vars[n].max_degree=0;n++;
+            }
+            if(degrees) {
+                const unsigned char *q=p;while(isspace(*q))q++;
+                slong d=1;
+                if(*q=='^') {
+                    q++;while(isspace(*q))q++;
+                    if(isdigit(*q)) {
+                        d=0;
+                        do {slong digit=*q-'0';d=d>(WORD_MAX-digit)/10?WORD_MAX:10*d+digit;q++;}while(isdigit(*q));
                     }
                 }
-                
-                free(identifier);
-                i--; // Because for loop will i++ again
+                if(d>vars[j].max_degree)vars[j].max_degree=d;
             }
         }
     }
-    
-    if (gen_name) free(gen_name);
-    
-    // Create final variable array
-    char **final_vars = NULL;
-    if (temp_count > 0) {
-        final_vars = (char**) malloc(temp_count * sizeof(char*));
-        for (slong i = 0; i < temp_count; i++) {
-            final_vars[i] = temp_vars[i];
-        }
-    }
-    
-    free(temp_vars);
-    *num_vars_out = temp_count;
-    
-    solver_trace_stdout("Total variables found: %ld\n", temp_count);
-    for (slong i = 0; i < temp_count; i++) {
-        solver_trace_stdout("  Variable %ld: %s\n", i, final_vars[i]);
-    }
-    
-    return final_vars;
+    free(generator);*count=n;return vars;
+}
+
+char** extract_variables_improved(char **polys,slong np,slong *count,const fq_nmod_ctx_t ctx)
+{
+    variable_info_t *vars=scan_solver_variables(polys,np,count,ctx,0);
+    char **names=*count?malloc(*count*sizeof(*names)):NULL;
+    for(slong i=0;i<*count;i++)names[i]=vars[i].name;
+    free(vars);return names;
 }
 
 // Improved variable degree calculation function
@@ -1099,80 +1054,15 @@ void print_polynomial_solutions(const polynomial_solutions_t *sols) {
 // ============= VARIABLE ANALYSIS FUNCTIONS =============
 
 // Extract variables and sort by degree
-int extract_and_sort_variables(char **poly_strings, slong num_polys,
-                                       variable_info_t **sorted_vars_out, slong *num_vars_out,
-                                       const fq_nmod_ctx_t ctx) {
-    
-    solver_trace_stdout("=== Analyzing polynomial variables (improved) ===\n");
-    
-    // Use improved variable extraction
-    double vars_phase=dr_profile_start();
-    char **all_vars = extract_variables_improved(poly_strings, num_polys, num_vars_out, ctx);
-    dr_profile_end("variables.discover",vars_phase);
-    vars_phase=dr_profile_start();
-    
-    if (*num_vars_out == 0) {
-        *sorted_vars_out = NULL;
-        return 1;  // No variables is also successful
-    }
-    
-    // Analyze degree of each polynomial
-    for (slong i = 0; i < num_polys; i++) {
-        slong total_degree = 0;
-        
-        // Calculate total degree of this polynomial
-        for (slong j = 0; j < *num_vars_out; j++) {
-            slong var_degree = get_variable_max_degree_in_polynomial(poly_strings[i], all_vars[j], ctx);
-            if (var_degree > total_degree) {
-                total_degree = var_degree;  // Simplified: use highest variable degree
-            }
-        }
-        
-        solver_trace_stdout("Polynomial %ld: estimated degree = %ld\n", i + 1, total_degree);
-    }
-    
-    solver_trace_stdout("Discovered variables (%ld): ", *num_vars_out);
-    for (slong i = 0; i < *num_vars_out; i++) {
-        if (i > 0) solver_trace_stdout(", ");
-        solver_trace_stdout("%s", all_vars[i]);
-    }
-    solver_trace_stdout("\n");
-    
-    dr_profile_end("variables.trace_degree_scan",vars_phase);
-    vars_phase=dr_profile_start();
-    // Create variable info array
-    variable_info_t *var_info = (variable_info_t*) malloc(*num_vars_out * sizeof(variable_info_t));
-    
-    // Calculate maximum degree of each variable across all polynomials
-    for (slong i = 0; i < *num_vars_out; i++) {
-        var_info[i].name = strdup(all_vars[i]);
-        var_info[i].index = i;
-        var_info[i].max_degree = 0;
-        
-        // Find maximum degree of this variable across all polynomials
-        for (slong j = 0; j < num_polys; j++) {
-            slong degree = get_variable_max_degree_in_polynomial(poly_strings[j], all_vars[i], ctx);
-            if (degree > var_info[i].max_degree) {
-                var_info[i].max_degree = degree;
-            }
-        }
-        
-        free(all_vars[i]);  // Free temporary string
-    }
-    
-    free(all_vars);  // Free temporary array
-    
-    // Sort by degree
-    qsort(var_info, *num_vars_out, sizeof(variable_info_t), compare_variables_by_degree);
-    
-    solver_trace_stdout("\nVariables sorted by maximum degree:\n");
-    for (slong i = 0; i < *num_vars_out; i++) {
-        solver_trace_stdout("  %s: max degree %ld\n", var_info[i].name, var_info[i].max_degree);
-    }
-    
-    dr_profile_end("variables.order_degree_scan",vars_phase);
-    *sorted_vars_out = var_info;
-    return 1;
+int extract_and_sort_variables(char **polys,slong np,variable_info_t **out,
+    slong *count,const fq_nmod_ctx_t ctx)
+{
+    double start=dr_profile_start();
+    variable_info_t *vars=scan_solver_variables(polys,np,count,ctx,1);
+    qsort(vars,*count,sizeof(*vars),compare_variables_by_degree);
+    for(slong i=0;i<*count;i++)
+        solver_trace_stdout("  %s: max degree %ld\n",vars[i].name,vars[i].max_degree);
+    *out=vars;dr_profile_end("variables.scan",start);return 1;
 }
 
 // ============= POLYNOMIAL MANIPULATION FUNCTIONS =============

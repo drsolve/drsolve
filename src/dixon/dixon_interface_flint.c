@@ -873,9 +873,12 @@ static int parse_prime_sum(nmod_mpoly_t out,const char *input,
             if(isdigit((unsigned char)*p)) {
                 ulong factor=0;
                 do {
-                    factor=nmod_add(nmod_mul(factor,10%mod.n,mod),(*p-'0')%mod.n,mod);p++;
+                    ulong digit=*p-'0';
+                    if(factor<=(UWORD_MAX-digit)/10)factor=10*factor+digit;
+                    else factor=nmod_add(nmod_mul(factor%mod.n,10%mod.n,mod),digit%mod.n,mod);
+                    p++;
                 } while(isdigit((unsigned char)*p));
-                coefficient=nmod_mul(coefficient,factor,mod);
+                coefficient=nmod_mul(coefficient,factor%mod.n,mod);
             } else if(isalpha((unsigned char)*p) || *p=='_') {
                 const char *begin=p++;
                 while(isalnum((unsigned char)*p) || *p=='_')p++;
@@ -921,6 +924,11 @@ void parse_polynomial_expression(parser_state_t *state, unified_mpoly_struct *po
             slong n=state->nvars+state->npars;
             const char **names=flint_malloc(n*sizeof(*names));
             for(slong i=0;i<n;i++)names[i]=i<state->nvars?state->var_names[i]:state->par_names[i-state->nvars];
+            if(parse_prime_sum(GET_NMOD_POLY(&parsed),state->input,names,GET_NMOD_CTX(parsed.ctx_ptr))) {
+                flint_free(names);parsed.canonical=1;dr_mpoly_move(poly,&parsed);
+                free(state->current.str);state->current.str=NULL;
+                state->current.type=TOK_EOF;state->pos=state->len;return;
+            }
             char *input=flint_malloc(state->len+1);size_t used=0;
             int supported=1,space=0;
             for(size_t i=0;i<state->len;i++) {
@@ -1774,67 +1782,38 @@ static char* trim_whitespace(char *str) {
 }
 
 // Helper function: split string (by comma)
-char** split_string(const char *input, slong *count) {
-    if (!input || strlen(input) == 0) {
-        *count = 0;
-        return NULL;
+char** split_string(const char *input, slong *count)
+{
+    *count=0;
+    if(!input || !*input)return NULL;
+    size_t capacity=4;char **result=malloc(capacity*sizeof(*result));
+    if(!result)return NULL;
+    const char *start=input,*p=input;slong depth=0;
+    for(;;) {
+        p+=strcspn(p,"(),");
+        if(!*p || (*p==',' && depth==0)) {
+            if(p>start) {
+                const char *a=start,*b=p;
+                while(a<b && isspace((unsigned char)*a))a++;
+                while(b>a && isspace((unsigned char)b[-1]))b--;
+                if((size_t)*count==capacity) {
+                    capacity*=2;char **next=realloc(result,capacity*sizeof(*result));
+                    if(!next)goto fail;result=next;
+                }
+                size_t n=b-a;char *part=malloc(n+1);
+                if(!part)goto fail;
+                memcpy(part,a,n);part[n]=0;result[(*count)++]=part;
+            }
+            if(!*p)break;
+            start=p+1;
+        } else if(*p=='(')depth++;
+        else if(*p==')')depth--;
+        p++;
     }
-    
-    size_t input_len = strlen(input);
-    
-    char *work_str = (char*) malloc(input_len + 1);
-    if (!work_str) {
-        *count = 0;
-        return NULL;
-    }
-    memcpy(work_str, input, input_len + 1);
-    
-    slong num_elements = 1;
-    int in_parentheses = 0;
-    for (size_t i = 0; i < input_len; i++) {
-        if (input[i] == '(') in_parentheses++;
-        else if (input[i] == ')') in_parentheses--;
-        else if (input[i] == ',' && in_parentheses == 0) {
-            num_elements++;
-        }
-    }
-    
-    char **result = (char**) malloc(num_elements * sizeof(char*));
-    if (!result) {
-        free(work_str);
-        *count = 0;
-        return NULL;
-    }
-    
-    slong idx = 0;
-    size_t start = 0;
-    in_parentheses = 0;
-    
-    for (size_t i = 0; i <= input_len; i++) {
-        if (i < input_len) {
-            if (input[i] == '(') in_parentheses++;
-            else if (input[i] == ')') in_parentheses--;
-        }
-        
-        if ((i == input_len || (input[i] == ',' && in_parentheses == 0)) && i > start) {
-            size_t poly_len = i - start;
-            char *poly = (char*) malloc(poly_len + 1);
-            memcpy(poly, input + start, poly_len);
-            poly[poly_len] = '\0';
-            
-            char *trimmed = trim_whitespace(poly);
-            result[idx++] = strdup(trimmed);
-
-            free(poly);
-            
-            start = i + 1;
-        }
-    }
-    
-    *count = idx;
-    free(work_str);
-    
     return result;
+fail:
+    for(slong i=0;i<*count;i++)free(result[i]);
+    free(result);*count=0;return NULL;
 }
 
 // Free split string array

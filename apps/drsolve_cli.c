@@ -1860,28 +1860,55 @@ static int plant_random_system_solution(char **polys_str, const char *vars_str,
 /* =========================================================================
  * File reading helpers
  * ========================================================================= */
-static char *read_entire_line(FILE *fp)
+/* Buffered line reader, including lone CR and CRLF. Option scans retain
+ * only comment lines, so polynomial bodies need no allocation or copying. */
+typedef struct {
+    FILE *fp;
+    unsigned char data[65536];
+    size_t pos, len;
+    int skip_lf;
+} dr_line_reader;
+
+static char *read_entire_line(dr_line_reader *r, int comments_only)
 {
-    if (!fp) return NULL;
-    size_t capacity = 4096, length = 0;
-    char  *line = malloc(capacity);
-    if (!line) return NULL;
-    int c;
-    while ((c = fgetc(fp)) != EOF && c != '\n' && c != '\r') {
-        if (length + 1 >= capacity) {
-            capacity *= 2;
-            char *nl = realloc(line, capacity);
-            if (!nl) { free(line); return NULL; }
-            line = nl;
+    size_t capacity=0,length=0;
+    char *line=NULL;
+    int keep=comments_only?-1:1,seen=0;
+    for(;;) {
+        if(r->pos==r->len) {
+            r->len=fread(r->data,1,sizeof(r->data),r->fp);r->pos=0;
+            if(!r->len)break;
         }
-        line[length++] = (char)c;
+        if(r->skip_lf) {
+            r->skip_lf=0;
+            if(r->data[r->pos]=='\n'){r->pos++;continue;}
+        }
+        unsigned char *begin=r->data+r->pos;
+        size_t avail=r->len-r->pos;
+        unsigned char *nl=memchr(begin,'\n',avail);
+        unsigned char *cr=memchr(begin,'\r',nl?(size_t)(nl-begin):avail);
+        unsigned char *end=!nl?cr:!cr?nl:nl<cr?nl:cr;
+        size_t n=end?(size_t)(end-begin):avail;
+        seen=1;
+        if(keep<0)for(size_t i=0;i<n;i++) {
+            if(!isspace(begin[i])){keep=begin[i]=='#';break;}
+        }
+        if(keep>0 && n) {
+            if(n>SIZE_MAX-length-1){free(line);return NULL;}
+            if(length+n+1>capacity) {
+                size_t need=length+n+1;
+                capacity=need>SIZE_MAX/2?need:2*need;
+                char *next=realloc(line,capacity);
+                if(!next){free(line);return NULL;}line=next;
+            }
+            memcpy(line+length,begin,n);length+=n;
+        }
+        r->pos+=n;
+        if(end){r->skip_lf=*end=='\r';r->pos++;break;}
     }
-    if (c == '\r') {
-        int next = fgetc(fp);
-        if (next != '\n' && next != EOF) ungetc(next, fp);
-    }
-    if (length == 0 && c == EOF) { free(line); return NULL; }
-    line[length] = '\0';
+    if(!seen){free(line);return NULL;}
+    if(!line)line=malloc(1);
+    if(line)line[length]=0;
     return line;
 }
 
@@ -1915,7 +1942,8 @@ static int read_dr_file_options(const char *filename, dr_file_options_t *out)
     fp = fopen(filename, "r");
     if (!fp) return 0;
 
-    while ((line = read_entire_line(fp)) != NULL) {
+    dr_line_reader reader={.fp=fp};
+    while ((line = read_entire_line(&reader,1)) != NULL) {
         char *p = trim(line);
         if (strncmp(p, "# options:", 10) == 0) {
             char *saveptr = NULL;
@@ -1980,9 +2008,10 @@ static int collect_input_lines(FILE *fp, char ***lines_out, int *line_count_out)
     if (!lines) return 0;
 
     char *line;
-    while ((line = read_entire_line(fp)) != NULL) {
+    dr_line_reader reader={.fp=fp};
+    while ((line = read_entire_line(&reader,0)) != NULL) {
         char *trimmed = trim(line);
-        if (strlen(trimmed) == 0 || trimmed[0] == '#') {
+        if (*trimmed == 0 || trimmed[0] == '#') {
             free(line);
             continue;
         }
@@ -1996,8 +2025,8 @@ static int collect_input_lines(FILE *fp, char ***lines_out, int *line_count_out)
             }
             lines = nl;
         }
-        lines[line_count++] = strdup(trimmed);
-        free(line);
+        if(trimmed!=line)memmove(line,trimmed,strlen(trimmed)+1);
+        lines[line_count++] = line;
     }
 
     *lines_out = lines;
@@ -2014,20 +2043,16 @@ static char *join_polynomial_lines(char **lines, int start, int end)
     char *poly_buffer = malloc(total_len + 1);
     if (!poly_buffer) return NULL;
 
-    poly_buffer[0] = '\0';
-    for (int i = start; i < end; i++) {
-        if (i > start) {
-            size_t prev_len = strlen(poly_buffer);
-            int prev_comma = (prev_len > 0 &&
-                (poly_buffer[prev_len - 1] == ',' ||
-                 (prev_len > 1 && poly_buffer[prev_len - 2] == ',' &&
-                  poly_buffer[prev_len - 1] == ' ')));
-            int curr_comma = (lines[i][0] == ',');
-            if (!prev_comma && !curr_comma)      strcat(poly_buffer, ", ");
-            else if (!prev_comma && curr_comma)  strcat(poly_buffer, " ");
+    size_t used=0;
+    for(int i=start;i<end;i++) {
+        if(i>start) {
+            int prev_comma=used && (poly_buffer[used-1]==',' ||
+                (used>1 && poly_buffer[used-2]==',' && poly_buffer[used-1]==' '));
+            if(!prev_comma){if(lines[i][0]!=',')poly_buffer[used++]=',';poly_buffer[used++]=' ';}
         }
-        strcat(poly_buffer, lines[i]);
+        size_t n=strlen(lines[i]);memcpy(poly_buffer+used,lines[i],n);used+=n;
     }
+    poly_buffer[used]=0;
 
     return poly_buffer;
 }
@@ -2790,10 +2815,9 @@ static void insert_random_seed_before_polynomials(const char *filename, ulong se
 
 static int count_comma_separated_items(const char *str)
 {
-    if (!str || strlen(str) == 0) return 0;
+    if (!str || !*str) return 0;
     int count = 1;
-    for (const char *p = str; *p; p++)
-        if (*p == ',') count++;
+    for(const char *p=str;(p=strchr(p,','));p++)count++;
     return count;
 }
 

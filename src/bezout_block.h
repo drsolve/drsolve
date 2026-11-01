@@ -13,6 +13,7 @@ void dr_bezout_block_set_initial_points(slong points);
 
 typedef struct {
     slong points, block, attempts, verification_extension_degree, verification_checks;
+    slong degree_a, degree_b;
     double evaluation, inverse, interpolation, determinant, verification;
 } dr_bezout_block_stats;
 /* Dixon/Bezout inverse-Hankel projection with verified reconstruction.
@@ -22,6 +23,8 @@ typedef struct {
  * budget. DRSOLVE_BEZOUT_INITIAL_POINTS optionally overrides the equal-degree
  * starting count (bounded by that budget); invalid values use the default.
  * DRSOLVE_PROFILE_BEZOUT=1 reports each attempt to stderr.
+ * DRSOLVE_BEZOUT_HGCD_CUTOFF optionally tunes the inverse-prefix HGCD
+ * threshold (nonnegative; zero selects classical Euclid).
  * Every candidate is independently verified before it is accepted.
  * Unequal total degrees A>B: the smaller polynomial must have nonzero
  * constant x^B coefficient. Reduce the larger modulo its monic normalization

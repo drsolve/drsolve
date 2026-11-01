@@ -75,7 +75,7 @@ static nmod_mpoly_struct *solver_native_get(polynomial_solutions_t *sols,
     if(parsed.field_id==FIELD_ID_NMOD && parsed.nvars==n && !parsed.npars &&
        !state.npars && state.current.type==TOK_EOF) {
         dr_mpoly_normalize(&parsed);
-        nmod_mpoly_set(entry->poly,GET_NMOD_POLY(&parsed),cache->ctx);
+        nmod_mpoly_swap(entry->poly,GET_NMOD_POLY(&parsed),cache->ctx);
         entry->usable=1;
     }
     dr_profile_end("native.normalize_copy",parser_start);
@@ -112,6 +112,38 @@ static int solver_native_evaluate(fq_nmod_t result,polynomial_solutions_t *sols,
     flint_free(point);return 1;
 }
 
+/* Stable counting permutation for densely occupied bivariate exponents.
+ * The source is canonical lex: after bucketing on old y, old x is already
+ * descending inside each bucket. Use it only when bucket storage is O(terms);
+ * sparse/large exponents retain FLINT's general permutation path. */
+static int solver_native_swap_dense(nmod_mpoly_t dst,const nmod_mpoly_t src,
+    const nmod_mpoly_ctx_t ctx)
+{
+    if(ctx->minfo->ord!=ORD_LEX || ctx->minfo->nvars!=2 || !src->length ||
+       src->bits>=FLINT_BITS || mpoly_words_per_exp(src->bits,ctx->minfo)!=1)return 0;
+    slong ox,sx,oy,sy;
+    mpoly_gen_offset_shift_sp(&ox,&sx,0,src->bits,ctx->minfo);
+    mpoly_gen_offset_shift_sp(&oy,&sy,1,src->bits,ctx->minfo);
+    if(ox || oy)return 0;
+    ulong mask=UWORD_MAX>>(FLINT_BITS-src->bits),maximum=0;
+    for(slong i=0;i<src->length;i++) {
+        ulong y=(src->exps[i]>>sy)&mask;
+        maximum=FLINT_MAX(maximum,y);
+    }
+    if(maximum>=(ulong)src->length)return 0;
+    slong *next=flint_calloc(maximum+1,sizeof(*next));
+    for(slong i=0;i<src->length;i++)next[(src->exps[i]>>sy)&mask]++;
+    slong offset=0;
+    for(slong y=(slong)maximum;y>=0;y--){slong count=next[y];next[y]=offset;offset+=count;}
+    nmod_mpoly_fit_length_reset_bits(dst,src->length,src->bits,ctx);
+    for(slong i=0;i<src->length;i++) {
+        ulong x=(src->exps[i]>>sx)&mask,y=(src->exps[i]>>sy)&mask;
+        slong j=next[y]++;
+        dst->coeffs[j]=src->coeffs[i];dst->exps[j]=(y<<sx)|(x<<sy);
+    }
+    dst->length=src->length;flint_free(next);return 1;
+}
+
 /* Reorder the cached pair to [elimination variable, parameter] without a
  * polynomial -> string -> polynomial round trip. Respect CLI method choice. */
 static int solver_native_pair(unified_mpoly_struct *result,
@@ -129,8 +161,22 @@ static int solver_native_pair(unified_mpoly_struct *result,
     slong permutation[2]={v,1-v};
     for(int i=0;i<2;i++) {
         dr_mpoly_init(pair+i,1,1,sols->ctx);
-        nmod_mpoly_compose_nmod_mpoly_gen(GET_NMOD_POLY(pair+i),i?pb:pa,
-            permutation,sols->native_cache->ctx,GET_NMOD_CTX(pair[i].ctx_ptr));
+        nmod_mpoly_struct *src=i?pb:pa,*dst=GET_NMOD_POLY(pair+i);
+        if(v==0)nmod_mpoly_set(dst,src,GET_NMOD_CTX(pair[i].ctx_ptr));
+        else if(solver_native_swap_dense(dst,src,GET_NMOD_CTX(pair[i].ctx_ptr))) { /* already canonical */ }
+        else if(!nmod_mpoly_degrees_fit_si(src,sols->native_cache->ctx))
+            nmod_mpoly_compose_nmod_mpoly_gen(dst,src,permutation,sols->native_cache->ctx,GET_NMOD_CTX(pair[i].ctx_ptr));
+        else {
+            /* A permutation only relabels exponents; general composition
+             * needlessly constructs and multiplies monomials. */
+            ulong e[2],swapped[2];
+            for(slong j=0;j<src->length;j++) {
+                nmod_mpoly_get_term_exp_ui(e,src,j,sols->native_cache->ctx);
+                swapped[0]=e[1];swapped[1]=e[0];
+                nmod_mpoly_push_term_ui_ui(dst,src->coeffs[j],swapped,GET_NMOD_CTX(pair[i].ctx_ptr));
+            }
+            nmod_mpoly_sort_terms(dst,GET_NMOD_CTX(pair[i].ctx_ptr));
+        }
         pair[i].canonical=1;
     }
     dr_profile_end("native.reorder_pair",pair_start);

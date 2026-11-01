@@ -943,6 +943,9 @@ if(BUILD_TESTING)
   add_test(NAME drsolve_scalar_screen COMMAND dixon_scalar_screen_test)
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
+    add_test(NAME drsolve_input_pipeline
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/input_pipeline_test.py
+              $<TARGET_FILE:drsolve_exe>)
     add_test(NAME drsolve_scalar_screen_cli
       COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/test/cli/dixon_scalar_screen_cli_test.py
               $<TARGET_FILE:drsolve_exe>)

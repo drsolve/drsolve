@@ -1437,3 +1437,7 @@ test-unified-inverse-block: $(BUILD_DIR)/unified_inverse_block_test
 .PHONY: test-unified-inverse-block-cli
 test-unified-inverse-block-cli: $(DIXON_TARGET)
 	python3 $(SRC_DIR)/test/cli/unified_inverse_block_cli_test.py ./$(DIXON_TARGET)
+
+.PHONY: test-input-pipeline
+test-input-pipeline: $(DIXON_TARGET)
+	python3 src/test/cli/input_pipeline_test.py ./$(DIXON_TARGET)
