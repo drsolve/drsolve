@@ -17,5 +17,5 @@ void dr_circuit_clear(dr_circuit *circuit);
 void dr_circuit_source(dr_bezout_source *source,const dr_circuit *circuit);
 ulong dr_circuit_prime(const dr_circuit *circuit);
 slong dr_circuit_degree(const dr_circuit *circuit);
-int dr_circuit_cli_main(int argc,char **argv);
+int dr_circuit_cli_main(int argc,char **argv,void (*print_banner)(void));
 #endif

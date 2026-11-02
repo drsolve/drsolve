@@ -461,7 +461,7 @@ int main(int argc, char *argv[])
     }
 
     for(int i=1;i<argc;i++)if(!strcmp(argv[i],"--circuit"))
-        return dr_circuit_cli_main(argc,argv);
+        return dr_circuit_cli_main(argc,argv,drsolve_cli_print_version);
 
     if (!validate_cli_options(argc, argv)) {
         return 1;

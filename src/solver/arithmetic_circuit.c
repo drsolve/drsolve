@@ -2,6 +2,7 @@
 #include "arithmetic_circuit.h"
 #include "fq_nmod_roots.h"
 #include "dr_profile.h"
+#include "drsolve_memory.h"
 #include <errno.h>
 #include <flint/nmod.h>
 #include <flint/ulong_extras.h>
@@ -10,6 +11,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>
+#endif
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -377,9 +382,30 @@ static int scalar_check(const dr_circuit *c,ulong x,ulong y)
     int ok=!w[c->nodes[c->outputs[0]].slot] && !w[c->nodes[c->outputs[1]].slot];flint_free(w);return ok;
 }
 
-int dr_circuit_cli_main(int argc,char **argv)
+static char *circuit_output_filename(const char *input,int only)
 {
-    double start=dr_profile_now();const char *input=NULL,*output=NULL;int only=0,threads=1,verbose=1;
+    const char *base=input;
+    for(const char *p=input;*p;p++)if(*p=='/' || *p=='\\')base=p+1;
+    const char *dot=strrchr(base,'.');
+    size_t length=dot && dot!=base?(size_t)(dot-base):strlen(base);
+    const char *suffix=only?"_resultant.dr":"_solution.dr";
+#ifdef _WIN32
+    int status=_mkdir("out");
+#else
+    int status=mkdir("out",0777);
+#endif
+    if(status && errno!=EEXIST){perror("out");return NULL;}
+    char *path=flint_malloc(4+length+strlen(suffix)+1);
+    memcpy(path,"out/",4);
+    memcpy(path+4,base,length);
+    strcpy(path+4+length,suffix);
+    return path;
+}
+
+int dr_circuit_cli_main(int argc,char **argv,void (*print_banner)(void))
+{
+    double start=dr_profile_now();const char *input=NULL,*output=NULL;int only=0,threads=1,verbose=1,time_mode=0;
+    clock_t cpu_start=clock();
 #ifdef _OPENMP
     threads=(omp_get_max_threads()+1)/2;
 #endif
@@ -387,16 +413,21 @@ int dr_circuit_cli_main(int argc,char **argv)
         if(!strcmp(argv[i],"--circuit") && i+1<argc && !input)input=argv[++i];
         else if(!strcmp(argv[i],"-o") && i+1<argc && !output)output=argv[++i];
         else if(!strcmp(argv[i],"--resultant-only"))only=1;
-        else if(!strcmp(argv[i],"--time")){} /* timings always reported here */
-        else if((!strcmp(argv[i],"--threads") || !strcmp(argv[i],"--bezout-initial-points") || !strcmp(argv[i],"-v")) && i+1<argc) {
+        else if(!strcmp(argv[i],"--time"))time_mode=1;
+        else if((!strcmp(argv[i],"--threads") || !strcmp(argv[i],"--bezout-initial-points") || !strcmp(argv[i],"-v") || !strcmp(argv[i],"--verbose")) && i+1<argc) {
             const char *key=argv[i];ulong v;
             if(!natural(argv[++i],&v) || v>(ulong)WORD_MAX)goto usage;
             if(!strcmp(key,"--threads")){if(!v || v>INT_MAX)goto usage;threads=(int)v;}
-            else if(!strcmp(key,"-v")){if(v>2)goto usage;verbose=(int)v;}
+            else if(!strcmp(key,"-v") || !strcmp(key,"--verbose")){if(v>INT_MAX)goto usage;verbose=(int)v;}
             else dr_bezout_block_set_initial_points((slong)v);
         } else goto usage;
     }
     if(!input || (output && !strcmp(input,output)))goto usage;
+    int show_timing=verbose && (time_mode || verbose>=2);
+    if(verbose) {
+        if(print_banner)print_banner();
+        printf("Reading from file: %s\nDetected file mode: circuit\n",input);
+    }
     FILE *in=fopen(input,"r");if(!in){perror(input);return 1;}
     char error[512];dr_circuit *c=dr_circuit_read(in,error,sizeof(error));fclose(in);
     if(!c){fprintf(stderr,"Circuit error: %s\n",error);return 1;}
@@ -404,6 +435,10 @@ int dr_circuit_cli_main(int argc,char **argv)
     omp_set_num_threads(threads);
 #endif
     flint_set_num_threads(threads);
+    if(verbose) {
+        printf("Mode: %s  |  Field: F_%lu\n",only?"Circuit resultant":"Circuit polynomial system solver",c->mod.n);
+        printf("System: 2 equations, 2 variables (x, y)\nEliminate: %c  |  Remaining variable: %c\n",c->eliminate?'y':'x',c->eliminate?'x':'y');
+    }
     if(verbose)printf("Circuit: prime=%lu nodes=%ld workspace_slots=%ld degree=%ld eliminate=%c threads=%d\n",c->mod.n,c->count,c->slots,c->degree,c->eliminate?'y':'x',threads);
     double parsed=dr_profile_now();
     dr_bezout_source source;dr_circuit_source(&source,c);
@@ -415,12 +450,24 @@ int dr_circuit_cli_main(int argc,char **argv)
         fprintf(stderr,"Circuit resultant could not be reconstructed and verified (including field-point availability). No solution claim is made.\n");
         nmod_poly_clear(resultant);dr_circuit_clear(c);flint_cleanup_master();return 1;
     }
+    char *default_output=NULL;
+    if(!output)output=default_output=circuit_output_filename(input,only);
     FILE *out=output?fopen(output,"w"):NULL;
-    if(output && !out){perror(output);nmod_poly_clear(resultant);dr_circuit_clear(c);flint_cleanup_master();return 1;}
-    if(verbose)printf("Circuit resultant: degree=%ld block=%ld points=%ld attempts=%ld\nSampling+inverse %.6fs | interpolation %.6fs | determinant %.6fs | verification %.6fs (field degree %ld, %ld checks)\n",
-        nmod_poly_degree(resultant),stats.block,stats.points,stats.attempts,stats.inverse,stats.interpolation,stats.determinant,stats.verification,stats.verification_extension_degree,stats.verification_checks);
+    if(!out){
+        if(output)perror(output);
+        flint_free(default_output);nmod_poly_clear(resultant);dr_circuit_clear(c);flint_cleanup_master();return 1;
+    }
+    fprintf(out,"Circuit %s\nInput: %s\nField: F_%lu\nSystem: 2 equations, 2 variables (x, y)\n",
+        only?"resultant":"solutions",input,c->mod.n);
+    fprintf(out,"Original equation total degrees: [%ld, %ld]\nResultant degree: %ld\n\n",
+        c->nodes[c->outputs[0]].degree,c->nodes[c->outputs[1]].degree,nmod_poly_degree(resultant));
+    if(verbose)printf("Circuit resultant: degree=%ld block=%ld points=%ld attempts=%ld\nVerification: field degree %ld, %ld checks\n",
+        nmod_poly_degree(resultant),stats.block,stats.points,stats.attempts,stats.verification_extension_degree,stats.verification_checks);
+    if(show_timing)printf("Sampling+inverse %.6fs | interpolation %.6fs | determinant %.6fs | verification %.6fs\n",
+        stats.inverse,stats.interpolation,stats.determinant,stats.verification);
     slong solutions=0;double roots_time=0,back_time=0;
     if(only) {
+        fprintf(out,"Solve time (wall): %.3f seconds\n\n",eliminated-start);
         FILE *dest=out?out:stdout;fprintf(dest,"Resultant:\n");nmod_poly_fprint_pretty(dest,resultant,c->eliminate?"x":"y");fputc('\n',dest);
     } else {
         nmod_roots_t roots;nmod_roots_init(roots);double t=dr_profile_now();
@@ -441,12 +488,25 @@ int dr_circuit_cli_main(int argc,char **argv)
         }
         nmod_poly_clear(f);nmod_poly_clear(g);nmod_poly_clear(h);workspace_clear(w,c);nmod_roots_clear(roots);
         back_time=dr_profile_now()-t;
+        if(verbose && solutions)printf("Found %ld solution set(s).\n",solutions);
+        if(solutions)fprintf(out,"Found %ld solution set(s).\n",solutions);
         if(!solutions && ok){if(verbose)puts("No solutions over the finite field.");if(out)fputs("No solutions over the finite field.\n",out);}
     }
-    if(out){int failed=ferror(out);if(fclose(out))failed=1;if(failed)ok=0;}
+    if(!only)fprintf(out,"Solve time (wall): %.3f seconds\n",dr_profile_now()-start);
+    if(out){int failed=ferror(out);if(fclose(out))failed=1;if(failed){fprintf(stderr,"Error: could not write result to %s\n",output);ok=0;}}
     nmod_poly_clear(resultant);dr_circuit_clear(c);flint_cleanup_master();
-    if(verbose)printf("Circuit timing: parse=%.6f resultant=%.6f roots=%.6f back_substitution=%.6f total=%.6f\n",parsed-start,eliminated-parsed,roots_time,back_time,dr_profile_now()-start);
+    if(verbose && output && ok)printf("Result saved to: %s\n",output);
+    if(show_timing)printf("Circuit timing: parse=%.6f resultant=%.6f roots=%.6f back_substitution=%.6f total=%.6f\n",parsed-start,eliminated-parsed,roots_time,back_time,dr_profile_now()-start);
+    if(verbose) {
+        double peak_memory=drsolve_peak_memory_mib();
+        if(peak_memory>=0.0)printf("Memory: %.3f MiB\n",peak_memory);
+        else puts("Memory: unavailable");
+        if(show_timing)printf("Total - CPU time: %.3f seconds | Wall time: %.3f seconds | Threads: %d\n",
+            (double)(clock()-cpu_start)/CLOCKS_PER_SEC,dr_profile_now()-start,threads);
+        else printf("Time: %.3f seconds\n",dr_profile_now()-start);
+    }
+    flint_free(default_output);
     return !ok;
 usage:
-    fprintf(stderr,"Usage: %s --circuit input.drc [--threads N] [--bezout-initial-points N] [--resultant-only] [--time] [-v 0|1|2] [-o output]\n",argv[0]);return 1;
+    fprintf(stderr,"Usage: %s --circuit input.drc [--threads N] [--bezout-initial-points N] [--resultant-only] [--time] [-v N (0:silent, 1:default, 2+:detailed)] [-o output]\n",argv[0]);return 1;
 }
