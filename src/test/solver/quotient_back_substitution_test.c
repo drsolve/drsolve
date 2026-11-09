@@ -95,6 +95,29 @@ static void check_cached_verification(void)
     polynomial_solutions_clear(sols);free(sols);fq_nmod_ctx_clear(ctx);
 }
 
+static void check_three_variable_auto(void)
+{
+    fq_nmod_ctx_t ctx;
+    fq_nmod_ctx_init_ui(ctx,101,1,"t");
+    /* z=0 has two lifts; the other two fibers each have one. */
+    char *polys[]={"x^2-1","y^2-1","z-x-y"};
+    polynomial_solver_set_method(POLYNOMIAL_SOLVER_AUTO);
+    polynomial_solver_set_quotient_limits(0,0);
+    polynomial_solutions_t *sols=solve_polynomial_system_array(polys,3,ctx);
+    assert(sols->is_valid && sols->num_solution_sets==4);
+    assert(sols->verified_solution_sets==4);
+    for(slong i=0;i<sols->num_resultant_steps;i++)
+        assert(!strstr(sols->resultant_steps[i],"quotient algebra"));
+    polynomial_solutions_clear(sols);free(sols);
+    char *empty[]={"x^2-2","y-x","z-y"}; /* 2 is a nonsquare mod 101. */
+    sols=solve_polynomial_system_array(empty,3,ctx);
+    assert(sols->is_valid && sols->has_no_solutions==1 && sols->num_solution_sets==0);
+    polynomial_solutions_clear(sols);free(sols);
+    /* The temporary Dixon choice must not leak into the next AUTO call. */
+    check(POLYNOMIAL_SOLVER_AUTO,0,0,ctx);
+    fq_nmod_ctx_clear(ctx);
+}
+
 int main(void)
 {
     const ulong primes[]={101,2,3,5};
@@ -109,6 +132,7 @@ int main(void)
         fq_nmod_ctx_clear(ctx);
     }
     check_cached_verification();
+    check_three_variable_auto();
     polynomial_solver_set_method(POLYNOMIAL_SOLVER_AUTO);
     polynomial_solver_set_quotient_limits(0,0);
     puts("Quotient back-substitution tests passed");

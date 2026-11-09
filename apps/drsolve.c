@@ -37,7 +37,6 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("  %s \"polynomials\" \"eliminate_vars\" field_size\n", prog_name);
     printf("  %s \"polynomials\" field_size\n", prog_name);
     printf("  %s input_file -o output_file\n", prog_name);
-    printf("  %s --circuit input.drc [--threads N] [-o output] (experimental)\n",prog_name);
     printf("FILE FORMAT:\n");
     printf("  Dixon resultant elimination:\n");
     printf("    Line 1 : variables TO ELIMINATE (comma-separated)\n");
@@ -75,6 +74,7 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("  --dixon           Use Dixon resultant (default)\n");
     printf("  --macaulay        Use Macaulay resultant\n");
     printf("  --subres          Use Subresultant (2 polys)\n");
+    printf("  --circuit FILE    Read circuit input (experimental); supports --threads N and -o output\n");
     printf("  --field-equation  After each multiplication, reduces x^q -> x for every variable\n");
     printf("  --ideal <args>    After each multiplication, reduces using the given substitution\n");
     printf("  --complex         Output complex solutions (2x2 solver or complex roots over Q)\n");
@@ -95,13 +95,6 @@ void drsolve_cli_print_full_usage(const char *prog_name)
            "  %s [-f] FILE [-o OUTPUT] [options]\n"
            "  %s -r \"degree_spec\" FIELD [options]\n\n",
            prog_name, prog_name, prog_name, prog_name);
-    printf("  %s --circuit input.drc [--threads N] [-o output] (experimental)\n",prog_name);
-    puts("CIRCUIT INPUT: DRCIRCUIT 1; prime P; eliminate x|y (default y).");
-    puts("  One instruction per line; implicit nodes 0=x, 1=y. Append nodes with");
-    puts("  const C, add A B, sub A B, mul A B, pow A E, lin C c0 id0 c1 id1 ...");
-    puts("  End with outputs A B. Backward references only; # starts a comment.");
-    puts("  Requires equal positive total degrees and certified constant leading terms.");
-    puts("  Supports --resultant-only, --bezout-initial-points N, --time, -v 0|1|2.");
     puts("INPUT AND OUTPUT:");
     puts("  Polynomials are comma-separated; quote polynomial and variable lists.");
     puts("  FIELD: 0 for Q, a prime p for F_p, or p^k for an extension field.");
@@ -153,6 +146,14 @@ void drsolve_cli_print_full_usage(const char *prog_name)
     printf("    %s -s --specialize-vars \"z=0,w=1\" \"x+z, y+w\" 257\n", prog_name);
     puts("");
     puts("RESULTANTS AND DETERMINANTS:");
+    puts("  --circuit FILE                Read circuit input (experimental).");
+    puts("    DRCIRCUIT 1; prime P; eliminate x|y (default y).");
+    puts("    One instruction per line; implicit nodes 0=x, 1=y. Append nodes with");
+    puts("    const C, add A B, sub A B, mul A B, pow A E, lin C c0 id0 c1 id1 ...");
+    puts("    End with outputs A B. Backward references only; # starts a comment.");
+    puts("    Requires equal positive total degrees and certified constant leading terms.");
+    puts("    Supports --threads N, -o FILE, --resultant-only,");
+    puts("    --bezout-initial-points N, --time, -v 0|1|2.");
     puts("  --dixon                       Dixon resultant (default).");
     puts("  --pml-fft / --no-pml-fft      Enable supported FFT matrix backend (default) / fall back.");
     puts("  --inverse-block / --no-inverse-block / --inverse-block-auto");

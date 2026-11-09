@@ -2473,25 +2473,29 @@ static int quotient_square_mq(char **polys, slong count,
 static int solve_selected(char **polys, slong count, variable_info_t *vars,
                           slong n, polynomial_solutions_t *sols)
 {
-    /* A 2x2 AUTO solve uses Dixon throughout, including back substitution. */
-    if (solver_method == POLYNOMIAL_SOLVER_AUTO && count == 2 && n == 2) {
-        solver_method = POLYNOMIAL_SOLVER_DIXON;
-        solver_progress("Solver: Dixon elimination (%ld equations, %ld variables)", count, n);
-        int ok = solve_by_elimination_enhanced(polys, count, vars, n, sols);
-        solver_method = POLYNOMIAL_SOLVER_AUTO;
-        return ok;
-    }
     int use_quotient = solver_method == POLYNOMIAL_SOLVER_QUOTIENT ||
         (solver_method == POLYNOMIAL_SOLVER_AUTO && count > n);
     if (solver_method != POLYNOMIAL_SOLVER_DIXON && quotient_square_mq(polys,count,vars,n,sols->ctx)) {
         int saved_mq=g_dixon_mq_quotient;
         polynomial_solver_method_t saved_method=solver_method;
         g_dixon_mq_quotient=1;
-        /* Reuse root extraction and overdetermined quotient back substitution. */
-        solver_method=POLYNOMIAL_SOLVER_AUTO;
+        /* Keep the MQ matrix construction, but use ordinary bivariate
+         * back substitution for three-variable systems. */
+        solver_method=n==3 ? POLYNOMIAL_SOLVER_DIXON : POLYNOMIAL_SOLVER_AUTO;
         solver_progress("Solver: Dixon quotient / Bezoutian (%ld equations, %ld variables)",count,n);
         int ok=solve_by_elimination_enhanced(polys,count,vars,n,sols);
         solver_method=saved_method;g_dixon_mq_quotient=saved_mq;
+        return ok;
+    }
+    /* Small square systems use Dixon throughout, including residual fibers.
+     * In a 3x3 solve, substitution leaves a bivariate system with an extra
+     * equation; AUTO quotient closure can be much costlier than pair selection
+     * and verification against all residual equations. */
+    if (solver_method == POLYNOMIAL_SOLVER_AUTO && count == n && (n == 2 || n == 3)) {
+        solver_method = POLYNOMIAL_SOLVER_DIXON;
+        solver_progress("Solver: Dixon elimination (%ld equations, %ld variables)", count, n);
+        int ok = solve_by_elimination_enhanced(polys, count, vars, n, sols);
+        solver_method = POLYNOMIAL_SOLVER_AUTO;
         return ok;
     }
     if (use_quotient) {
