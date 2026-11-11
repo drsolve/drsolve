@@ -82,7 +82,6 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("  --test <n>        Run built-in tests (1: Dixon matrix size, 2: Bezout bound, 3: solver correctness, 4: performance)\n");
     printf("  --time            Print per-step timing information\n");
     printf("  -v, --verbose <n> Verbosity level (0:silent, 1:default, 2:detailed, 3:debug, 4:matrix)\n");
-    printf("                    Complexity: 1 summary, 2 normal, 3 detailed, 4 debug\n");
     printf("  -h, --help        Show this help\n");
     printf("  --help-full       Show all options, defaults, file format and examples\n");
     printf("  -V, --version     Print version and build information\n");

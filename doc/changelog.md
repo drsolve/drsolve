@@ -4,12 +4,20 @@
 
 ## Contents
 
+- [0.6.1](#v061)
 - [0.6.0](#v060)
 - [0.5.x](#v05)
 - [0.4.x](#v04)
 - [0.3.x](#v03)
 - [0.2.x](#v02)
 - [0.1.x and 0.0.x](#early)
+
+<a id="v061"></a>
+## 0.6.1
+
+- Optimize complexity estimation and refine its output.
+- Add `--circuit` to support arithmetic-circuit (AO algorithm) input.
+- Further optimize bivariate resultant computation.
 
 <a id="v060"></a>
 ## 0.6.0

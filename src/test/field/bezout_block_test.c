@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include "bezout_block.h"
+#include "arithmetic_circuit.h"
 #include "unified_mpoly_resultant.h"
 #include "dixon_flint.h"
 
@@ -70,6 +71,39 @@ static void check_composed(flint_rand_t rng)
     nmod_poly_clear(expected);nmod_poly_clear(actual);nmod_poly_clear(linear);nmod_poly_clear(sentinel);
     nmod_mpoly_clear(a,ctx);nmod_mpoly_clear(b,ctx);nmod_mpoly_clear(s,ctx);
     nmod_mpoly_clear(x,ctx);nmod_mpoly_clear(y,ctx);nmod_mpoly_ctx_clear(ctx);
+}
+
+/* The second adaptive round extends a valid cached grid onto a singular
+ * specialization. It must discard the cache and recover on a fresh grid.
+ * Res_x(x^2+1,x^2+y+1-root)=(y-root)^2, including multiplicity and scalar. */
+static void check_singular_circuit_cache(void)
+{
+    const ulong p=65537;
+    flint_rand_t state,probe;flint_rand_init(state);flint_rand_init(probe);
+    flint_rand_set_seed(state,111,222);flint_rand_set_seed(probe,111,222);
+    nmod_t mod;nmod_init(&mod,p);
+    ulong dilation=1+n_randint(probe,p-1),primitive=n_primitive_root_prime(p);
+    ulong root=nmod_mul(dilation,nmod_mul(primitive,primitive,mod),mod);
+    FILE *input=tmpfile();assert(input);
+    fprintf(input,"DRCIRCUIT 1\nprime %lu\neliminate x\npow 0 2\n"
+        "lin 1 1 2\nlin %lu 1 2 1 1\noutputs 3 4\n",
+        p,nmod_sub(1,root,mod));
+    rewind(input);char error[256];
+    dr_circuit *circuit=dr_circuit_read(input,error,sizeof(error));
+    fclose(input);assert(circuit);
+    dr_bezout_source source;dr_circuit_source(&source,circuit);
+    nmod_poly_t actual,expected,linear;
+    nmod_poly_init(actual,p);nmod_poly_init(expected,p);nmod_poly_init(linear,p);
+    nmod_poly_set_coeff_ui(linear,0,nmod_neg(root,mod));
+    nmod_poly_set_coeff_ui(linear,1,1);nmod_poly_pow(expected,linear,2);
+    dr_bezout_block_stats stats;dr_bezout_block_set_initial_points(1);
+    assert(dr_nmod_resultant_bezout_source_try(actual,2,&source,state,&stats));
+    dr_bezout_block_set_initial_points(-1);
+    assert(stats.attempts==3 && stats.points==7);
+    assert(nmod_poly_equal(actual,expected));
+    check_verification_budget(&stats,p,4);
+    nmod_poly_clear(actual);nmod_poly_clear(expected);nmod_poly_clear(linear);
+    dr_circuit_clear(circuit);flint_rand_clear(state);flint_rand_clear(probe);
 }
 
 int main(void)
@@ -164,7 +198,7 @@ int main(void)
         unified_mpoly_ctx_clear(ctx);field_ctx_clear(&field);fmpz_clear(prime);
     }
     assert(passed>=40 && unbalanced>=150 && extended>0);
-    check_composed(rng);
+    check_composed(rng);check_singular_circuit_cache();
     flint_rand_clear(rng);flint_cleanup();
     printf("Bezout block: %ld successful exact coefficient comparisons (%ld unequal degrees), %ld safe fallbacks, %ld extension checks; aliases and dispatch PASS\n",passed,unbalanced,fallbacks,extended);
     return 0;
