@@ -41,21 +41,13 @@ static double log2_step4_hnf_density_from_matrix_size(const fmpz_t matrix_size,
                                                       long entry_degree_bound,
                                                       slong param_count);
 static int uniform_positive_degree(const long *degrees, slong len, long *degree_out);
-static slong hilbert_truncated_uniform(fmpz **values_out,
-                                       slong num_forms,
-                                       slong num_vars,
-                                       long degree);
-static slong iterated_simplex_strata_uniform(fmpz **values_out,
-                                             slong num_vars,
-                                             long degree);
 static int dixon_rank_model_uniform(fmpz_t rank_out,
                                     slong num_polys,
                                     slong num_elim_vars,
                                     long degree);
 static slong hilbert_truncated_mixed(fmpz **values_out,
                                      const long *degrees,
-                                     slong num_forms,
-                                     slong num_vars);
+                                     slong num_forms, slong num_vars);
 static slong iterated_simplex_strata_mixed(fmpz **values_out,
                                            const long *degrees,
                                            slong num_polys,
@@ -311,7 +303,9 @@ static double log2_fmpz_upper_bound(const fmpz_t x) {
         ulong ux = fmpz_get_ui(x);
         return (ux > 0) ? log2((double) ux) : -INFINITY;
     }
-    return (double) (fmpz_bits(x) - 1);
+    slong exponent;
+    double mantissa = fmpz_get_d_2exp(&exponent, x);
+    return log2(mantissa) + (double) exponent;
 }
 
 static double log2_factorial_fmpz_upper_bound(const fmpz_t x) {
@@ -725,318 +719,108 @@ static int uniform_positive_degree(const long *degrees, slong len, long *degree_
     return 1;
 }
 
-static slong hilbert_truncated_uniform(fmpz **values_out,
-                                       slong num_forms,
-                                       slong num_vars,
-                                       long degree) {
-    fmpz *values = NULL;
-    slong len = 0;
-    slong cap = 16;
-    fmpz_t coeff;
-
-    if (values_out == NULL) {
-        return 0;
+/* Uniform support count through degree s. First-prefix violations are
+ * disjoint; Fuss-Catalan corrections give an exact finite sum in n, not d. */
+static void uniform_support_prefix(fmpz_t out, slong n, long d,
+                                   const fmpz_t s) {
+    fmpz_t top, boundary, fuss, term;
+    fmpz_init(top); fmpz_init(boundary); fmpz_init(fuss); fmpz_init(term);
+    fmpz_add_ui(top, s, (ulong) (n - 1));
+    binomial_fmpz_slong(out, top, n - 1);
+    for (slong j = 1; j < n; j++) {
+        fmpz_set_ui(boundary, (ulong) (d - 1));
+        fmpz_mul_ui(boundary, boundary, (ulong) j);
+        if (fmpz_cmp(boundary, s) >= 0) break;
+        fmpz_set_ui(top, (ulong) d);
+        fmpz_mul_ui(top, top, (ulong) j);
+        binomial_fmpz_slong(fuss, top, j);
+        fmpz_add_ui(boundary, boundary, 1);
+        fmpz_divexact(fuss, fuss, boundary);
+        fmpz_sub(top, s, top);
+        fmpz_add_ui(top, top, (ulong) (n - 1));
+        binomial_fmpz_slong(term, top, n - j);
+        fmpz_submul(out, fuss, term);
     }
-    *values_out = NULL;
-    if (num_forms <= 0 || num_vars <= 0 || degree <= 0) {
-        return 0;
-    }
-
-    values = (fmpz *) flint_malloc((size_t) cap * sizeof(fmpz));
-    if (values == NULL) {
-        return 0;
-    }
-    for (slong i = 0; i < cap; i++) {
-        fmpz_init(values + i);
-    }
-
-    fmpz_init(coeff);
-    for (slong e = 0; ; e++) {
-        fmpz_zero(coeff);
-        for (slong k = 0; k <= e / degree && k <= num_forms; k++) {
-            slong rem = e - k * degree;
-            fmpz_t term;
-            fmpz_t bin;
-
-            fmpz_init(term);
-            fmpz_init(bin);
-            fmpz_bin_uiui(term, (ulong) num_forms, (ulong) k);
-            fmpz_bin_uiui(bin, (ulong) (num_vars - 1 + rem), (ulong) rem);
-            fmpz_mul(term, term, bin);
-            if (k % 2) {
-                fmpz_sub(coeff, coeff, term);
-            } else {
-                fmpz_add(coeff, coeff, term);
-            }
-            fmpz_clear(bin);
-            fmpz_clear(term);
-        }
-
-        if (fmpz_sgn(coeff) <= 0) {
-            break;
-        }
-
-        if (len >= cap) {
-            slong old_cap = cap;
-            fmpz *grown;
-
-            cap *= 2;
-            grown = (fmpz *) flint_realloc(values, (size_t) cap * sizeof(fmpz));
-            if (grown == NULL) {
-                for (slong i = 0; i < old_cap; i++) {
-                    fmpz_clear(values + i);
-                }
-                flint_free(values);
-                fmpz_clear(coeff);
-                return 0;
-            }
-            values = grown;
-            for (slong i = old_cap; i < cap; i++) {
-                fmpz_init(values + i);
-            }
-        }
-
-        fmpz_set(values + len, coeff);
-        len++;
-    }
-    fmpz_clear(coeff);
-
-    *values_out = values;
-    return len;
+    fmpz_clear(top); fmpz_clear(boundary); fmpz_clear(fuss); fmpz_clear(term);
 }
 
-static slong iterated_simplex_strata_uniform(fmpz **values_out,
-                                             slong num_vars,
-                                             long degree) {
-    slong max_total;
-    fmpz *dp = NULL;
-    fmpz *next = NULL;
-
-    if (values_out == NULL) {
-        return 0;
+/* h is the central coefficient of (1+z+...+z^(d-1))^n.
+ * rho=A_floor(N/2)+A_ceil(N/2)-h, N=n*(d-1). All sizes stay exact. */
+static int uniform_rank_statistics(fmpz_t rank, fmpz_t h,
+                                    slong n, slong m, long d) {
+    if (n != m + 1 || m <= 0 || d <= 0) return 0;
+    fmpz_t center, other, top, shift, term, choose;
+    fmpz_init(center); fmpz_init(other); fmpz_init(top);
+    fmpz_init(shift); fmpz_init(term); fmpz_init(choose);
+    fmpz_set_ui(center, (ulong) (d - 1));
+    fmpz_mul_ui(center, center, (ulong) n);
+    fmpz_cdiv_q_2exp(other, center, 1);
+    fmpz_fdiv_q_2exp(center, center, 1);
+    uniform_support_prefix(rank, n, d, center);
+    uniform_support_prefix(term, n, d, other);
+    fmpz_add(rank, rank, term);
+    fmpz_zero(h);
+    for (slong j = 0; j <= n; j++) {
+        fmpz_set_ui(shift, (ulong) d);
+        fmpz_mul_ui(shift, shift, (ulong) j);
+        if (fmpz_cmp(shift, center) > 0) break;
+        fmpz_sub(top, center, shift);
+        fmpz_add_ui(top, top, (ulong) (n - 1));
+        binomial_fmpz_slong(term, top, n - 1);
+        fmpz_bin_uiui(choose, (ulong) n, (ulong) j);
+        if (j % 2) fmpz_submul(h, choose, term);
+        else fmpz_addmul(h, choose, term);
     }
-    *values_out = NULL;
-    if (num_vars <= 0 || degree <= 0) {
-        return 0;
-    }
-
-    max_total = num_vars * (degree - 1);
-    dp = (fmpz *) flint_malloc((size_t) (max_total + 1) * sizeof(fmpz));
-    next = (fmpz *) flint_malloc((size_t) (max_total + 1) * sizeof(fmpz));
-    if (dp == NULL || next == NULL) {
-        flint_free(dp);
-        flint_free(next);
-        return 0;
-    }
-    for (slong i = 0; i <= max_total; i++) {
-        fmpz_init(dp + i);
-        fmpz_init(next + i);
-        fmpz_zero(dp + i);
-        fmpz_zero(next + i);
-    }
-    fmpz_one(dp + 0);
-
-    for (slong k = 1; k <= num_vars; k++) {
-        slong prev_cap = (k - 1) * (degree - 1);
-        slong cap = k * (degree - 1);
-
-        for (slong i = 0; i <= max_total; i++) {
-            fmpz_zero(next + i);
-        }
-        for (slong s = 0; s <= prev_cap; s++) {
-            if (fmpz_is_zero(dp + s)) {
-                continue;
-            }
-            for (slong b = 0; b <= cap - s; b++) {
-                fmpz_add(next + s + b, next + s + b, dp + s);
-            }
-        }
-        for (slong i = 0; i <= max_total; i++) {
-            fmpz_set(dp + i, next + i);
-        }
-    }
-
-    for (slong i = 0; i <= max_total; i++) {
-        fmpz_clear(next + i);
-    }
-    flint_free(next);
-    *values_out = dp;
-    return max_total + 1;
-}
-
-static int dixon_rank_model_uniform(fmpz_t rank_out,
-                                    slong num_polys,
-                                    slong num_elim_vars,
-                                    long degree) {
-    fmpz *R = NULL;
-    fmpz *H = NULL;
-    slong r_len;
-    slong h_len;
-    slong sigma;
-    fmpz_t tmp;
-
-    fmpz_zero(rank_out);
-    if (num_polys <= 0 || num_elim_vars <= 0 ||
-        num_polys != num_elim_vars + 1 || degree < 2) {
-        return 0;
-    }
-
-    r_len = iterated_simplex_strata_uniform(&R, num_elim_vars, degree);
-    h_len = hilbert_truncated_uniform(&H, num_polys, num_elim_vars, degree);
-    if (r_len <= 0 || h_len <= 0 || R == NULL || H == NULL) {
-        if (R != NULL) {
-            for (slong i = 0; i < r_len; i++) fmpz_clear(R + i);
-            flint_free(R);
-        }
-        if (H != NULL) {
-            for (slong i = 0; i < h_len; i++) fmpz_clear(H + i);
-            flint_free(H);
-        }
-        return 0;
-    }
-
-    fmpz_init(tmp);
-    sigma = num_polys * (degree - 1) + 1;
-    for (slong q = 0; q < r_len; q++) {
-        slong p = sigma - q;
-        slong h_idx = FLINT_MIN(p, q);
-
-        if (p < 0 || p >= r_len) {
-            continue;
-        }
-
-        if (fmpz_cmp(R + p, R + q) <= 0) {
-            fmpz_set(tmp, R + p);
-        } else {
-            fmpz_set(tmp, R + q);
-        }
-        if (h_idx >= 0 && h_idx < h_len) {
-            fmpz_sub(tmp, tmp, H + h_idx);
-        }
-        if (fmpz_sgn(tmp) > 0) {
-            fmpz_add(rank_out, rank_out, tmp);
-        }
-    }
-
-    for (slong i = 0; i < h_len; i++) {
-        fmpz_add(rank_out, rank_out, H + i);
-    }
-
-    fmpz_clear(tmp);
-    for (slong i = 0; i < r_len; i++) fmpz_clear(R + i);
-    for (slong i = 0; i < h_len; i++) fmpz_clear(H + i);
-    flint_free(R);
-    flint_free(H);
+    fmpz_sub(rank, rank, h);
+    fmpz_clear(center); fmpz_clear(other); fmpz_clear(top);
+    fmpz_clear(shift); fmpz_clear(term); fmpz_clear(choose);
     return 1;
 }
 
+static int dixon_rank_model_uniform(fmpz_t rank_out,
+                                    slong num_polys, slong num_elim_vars,
+                                    long degree) {
+    fmpz_t h; fmpz_init(h);
+    int ok = uniform_rank_statistics(rank_out, h, num_polys, num_elim_vars, degree);
+    fmpz_clear(h);
+    return ok;
+}
+
+/* The positive Hilbert difference is obtained from the bounded product
+ * C(z)=prod_i(1+...+z^(d_i-1)). Sliding windows cost O(n*sum(d_i)),
+ * avoiding a binomial sum at every degree. Only the increasing half is needed. */
 static slong hilbert_truncated_mixed(fmpz **values_out,
                                      const long *degrees,
-                                     slong num_forms,
-                                     slong num_vars) {
-    long total_degree = 0;
-    fmpz *num = NULL;
-    fmpz *values = NULL;
-    slong len = 0;
-    slong cap = 16;
-    fmpz_t coeff;
-
-    if (values_out == NULL) {
-        return 0;
-    }
+                                     slong num_forms, slong num_vars) {
     *values_out = NULL;
-    if (degrees == NULL || num_forms <= 0 || num_vars <= 0) {
-        return 0;
-    }
-
+    if (!degrees || num_forms != num_vars + 1 || num_vars <= 0) return 0;
+    slong total = 0;
     for (slong i = 0; i < num_forms; i++) {
-        if (degrees[i] <= 0 || total_degree > LONG_MAX - degrees[i]) {
-            return 0;
+        if (degrees[i] <= 0 || degrees[i] - 1 > WORD_MAX - total) return 0;
+        total += degrees[i] - 1;
+    }
+    slong middle = total / 2;
+    fmpz *dp = flint_calloc((size_t) middle + 1, sizeof(fmpz));
+    fmpz *next = flint_calloc((size_t) middle + 1, sizeof(fmpz));
+    fmpz_t window; fmpz_init(window);
+    fmpz_one(dp);
+    for (slong i = 0; i < num_forms; i++) {
+        fmpz_zero(window);
+        for (slong e = 0; e <= middle; e++) {
+            fmpz_add(window, window, dp + e);
+            if (e >= degrees[i]) fmpz_sub(window, window, dp + e - degrees[i]);
+            fmpz_set(next + e, window);
         }
-        total_degree += degrees[i];
+        fmpz *swap = dp; dp = next; next = swap;
     }
-
-    num = (fmpz *) flint_malloc((size_t) (total_degree + 1) * sizeof(fmpz));
-    values = (fmpz *) flint_malloc((size_t) cap * sizeof(fmpz));
-    if (num == NULL || values == NULL) {
-        flint_free(num);
-        flint_free(values);
-        return 0;
-    }
-    for (long i = 0; i <= total_degree; i++) {
-        fmpz_init(num + i);
-        fmpz_zero(num + i);
-    }
-    for (slong i = 0; i < cap; i++) {
-        fmpz_init(values + i);
-    }
-    fmpz_one(num + 0);
-
-    {
-        long current_max = 0;
-        for (slong i = 0; i < num_forms; i++) {
-            long di = degrees[i];
-            for (long s = current_max; s >= 0; s--) {
-                if (!fmpz_is_zero(num + s)) {
-                    fmpz_sub(num + s + di, num + s + di, num + s);
-                }
-            }
-            current_max += di;
-        }
-    }
-
-    fmpz_init(coeff);
-    for (slong e = 0; ; e++) {
-        fmpz_zero(coeff);
-        for (slong s = 0; s <= e && s <= total_degree; s++) {
-            fmpz_t bin;
-            fmpz_t term;
-
-            if (fmpz_is_zero(num + s)) {
-                continue;
-            }
-            fmpz_init(bin);
-            fmpz_init(term);
-            fmpz_bin_uiui(bin, (ulong) (num_vars - 1 + e - s), (ulong) (e - s));
-            fmpz_mul(term, num + s, bin);
-            fmpz_add(coeff, coeff, term);
-            fmpz_clear(term);
-            fmpz_clear(bin);
-        }
-
-        if (fmpz_sgn(coeff) <= 0) {
-            break;
-        }
-
-        if (len >= cap) {
-            slong old_cap = cap;
-            fmpz *grown;
-
-            cap *= 2;
-            grown = (fmpz *) flint_realloc(values, (size_t) cap * sizeof(fmpz));
-            if (grown == NULL) {
-                for (slong i = 0; i < old_cap; i++) fmpz_clear(values + i);
-                for (long i = 0; i <= total_degree; i++) fmpz_clear(num + i);
-                flint_free(values);
-                flint_free(num);
-                fmpz_clear(coeff);
-                return 0;
-            }
-            values = grown;
-            for (slong i = old_cap; i < cap; i++) {
-                fmpz_init(values + i);
-            }
-        }
-        fmpz_set(values + len, coeff);
-        len++;
-    }
-
-    fmpz_clear(coeff);
-    for (long i = 0; i <= total_degree; i++) {
-        fmpz_clear(num + i);
-    }
-    flint_free(num);
-    *values_out = values;
+    /* Descending differences preserve the preceding C coefficient. */
+    for (slong e = middle; e > 0; e--) fmpz_sub(dp + e, dp + e, dp + e - 1);
+    slong len = 0;
+    while (len <= middle && fmpz_sgn(dp + len) > 0) len++;
+    for (slong e = len; e <= middle; e++) fmpz_clear(dp + e);
+    for (slong e = 0; e <= middle; e++) fmpz_clear(next + e);
+    flint_free(next); fmpz_clear(window);
+    *values_out = dp;
     return len;
 }
 
@@ -1102,13 +886,10 @@ static slong iterated_simplex_strata_mixed(fmpz **values_out,
             for (long i = 0; i <= max_total; i++) {
                 fmpz_zero(next + i);
             }
-            for (long s = 0; s <= prev_cap; s++) {
-                if (fmpz_is_zero(dp + s)) {
-                    continue;
-                }
-                for (long b = 0; b <= cap - s; b++) {
-                    fmpz_add(next + s + b, next + s + b, dp + s);
-                }
+            /* next[t] is the prefix sum of dp through min(t,prev_cap). */
+            for (long t = 0; t <= cap; t++) {
+                if (t > 0) fmpz_set(next + t, next + t - 1);
+                if (t <= prev_cap) fmpz_add(next + t, next + t, dp + t);
             }
             for (long i = 0; i <= max_total; i++) {
                 fmpz_set(dp + i, next + i);
@@ -1331,18 +1112,9 @@ static void step1_mq_bounds(dixon_complexity_report_t *report,
     report->step1_mq_layered_log2 = total;
 }
 
-/* Blocking square multiplication gives a rectangular multiplication bound.
- * Keep the classical bound as well: padding need not win for small blocks. */
-static double mq_rect_work(double r, double k, double c, double omega)
-{
-    if (r <= 0 || k <= 0 || c <= 0) return 0;
-    double b = fmin(r, fmin(k,c));
-    return fmin(r*k*c, ceil(r/b)*ceil(k/b)*ceil(c/b)*pow(b,omega));
-}
-
 static void mq_improved_bounds(dixon_complexity_report_t *report,
                                const long *degrees, slong n,
-                               const fmpz_t field_order, double omega)
+                               const fmpz_t field_order, double omega, int generic_field)
 {
     report->step1_mq_simplex_log2 = INFINITY;
     report->step1_mq_simplex_probe_log2 = INFINITY;
@@ -1359,7 +1131,7 @@ static void mq_improved_bounds(dixon_complexity_report_t *report,
             fmpz_mul(cardinality,cardinality,field_order); extension++;
         }
         fmpz_clear(cardinality);
-    } else return;
+    } else if (!generic_field) return;
     report->step1_mq_simplex_extension = extension;
     double scale = 2*log2((double)extension);
     double entry_work = 3.0*n*(n+1.0)*(n+2.0)/2 + 4.0*n*n*(n-1.0);
@@ -1372,78 +1144,75 @@ static void mq_improved_bounds(dixon_complexity_report_t *report,
 
 }
 
-/* Generic degree-paired Schur estimate, also for higher and mixed degrees.
- * Only the simplex Step 1 estimates above are restricted to quadratics. */
+/* Paper budget for Newton inversion of the complementary block, followed
+ * by polynomial matrix products: soft-O(sigma*rho^omega). No degree-layer
+ * products are enumerated. The core degree budget is exact for the profile. */
 static void schur_improved_bounds(dixon_complexity_report_t *report,
-    const long *degrees, slong n, const fmpz_t field_order, double omega)
+    const long *degrees, slong n, double omega)
 {
-    report->step4_mq_schur_log2=INFINITY;
-    report->step4_mq_schur_formation_log2=INFINITY;
-    report->step4_mq_core_log2=INFINITY;
-    report->step4_mq_verification_log2=INFINITY;
-    report->step3_schur_selection_log2=INFINITY;
-    if (report->num_parameter_vars!=1 || report->num_elim_vars!=n-1 ||
-        report->num_all_vars!=n || n<2 || fmpz_cmp_ui(field_order,2)<0) return;
-    /* Generic degree-paired candidate. Soft-O suppresses constants/logarithms,
-     * but retains the sums over degree layers. Candidate rank selection is
-     * Step 3; Step 4 reuses the constant-block LU for its certificate. */
-    slong *R=NULL,*H=NULL,nr=0,nh=0,sigma=0,rank=0;
-    if (!dixon_rank_profile_from_degrees(&R,&nr,&H,&nh,&sigma,&rank,degrees,n,n-1)) return;
-    slong h_size=0; for(slong d=0;d<nh;d++) h_size+=H[d];
-    double h=(double)h_size;
-    if (h_size <= 0) {flint_free(R);flint_free(H);return;}
-    double *blocks=flint_calloc((size_t)nr,sizeof(double));
-    for(slong d=0;d<nr;d++) {
-        slong other=sigma-d,low=FLINT_MIN(d,other);
-        if(other>=0 && other<nr)
-            blocks[d]=FLINT_MAX(0,FLINT_MIN(R[d],R[other])-(low<nh?H[low]:0));
-    }
-    /* Polynomial matrix products of degrees a,b cost soft-O((a+b+1)*MM),
-     * using fast polynomial arithmetic, not classical (a+1)*(b+1) convolution.
-     * MM is the rectangular square-block arithmetic bound. */
-    double formation=0,e=rank-h;
-    for(slong d=0;d<nr;d++) if(blocks[d]>0) {
-        double b=blocks[d];
-        formation+=pow(b,omega);
-        for(slong c=0;c<nh;c++) if(H[c]>0 && sigma-d-c>=0) {
-            formation+=(sigma-d-c+1.0)*mq_rect_work(b,b,(double)H[c],omega);
-            for(slong j=d+1;j<nr;j++) if(blocks[j]>0 && sigma-j-c>=0)
-                formation+=(sigma-d-c+1.0)*
-                    mq_rect_work(b,blocks[j],(double)H[c],omega);
-            for(slong a=0;a<nh && a<=d;a++) if(H[a]>0)
-                formation+=(sigma-a-c+1.0)*
-                    mq_rect_work((double)H[a],b,(double)H[c],omega);
+    report->step4_mq_schur_log2 = INFINITY;
+    report->step4_mq_schur_formation_log2 = INFINITY;
+    report->step4_mq_core_log2 = INFINITY;
+    report->step4_mq_verification_log2 = INFINITY;
+    report->step3_schur_selection_log2 = INFINITY;
+    if (report->num_parameter_vars != 1 || report->num_elim_vars != n-1 ||
+        report->num_all_vars != n || n < 2) return;
+    fmpz_t rank, h, delta, sigma, average;
+    fmpz_init(rank); fmpz_init(h); fmpz_init(delta);
+    fmpz_init(sigma); fmpz_init(average);
+    long degree;
+    if (uniform_positive_degree(degrees, n, &degree)) {
+        if (!uniform_rank_statistics(rank, h, n, n-1, degree)) goto cleanup;
+        /* Symmetry of the complete-intersection Hilbert function gives Delta. */
+        bezout_bound_fmpz(delta, degrees, n);
+    } else {
+        fmpz *R = NULL, *H = NULL;
+        slong nr = iterated_simplex_strata_mixed(&R, degrees, n, n-1);
+        slong nh = hilbert_truncated_mixed(&H, degrees, n, n-1);
+        slong budget = 1;
+        for (slong i = 0; i < n; i++) {
+            if (degrees[i] <= 0 || degrees[i]-1 > WORD_MAX-budget) {
+                if (R) { for (slong j=0;j<nr;j++) fmpz_clear(R+j); flint_free(R); }
+                if (H) { for (slong j=0;j<nh;j++) fmpz_clear(H+j); flint_free(H); }
+                goto cleanup;
+            }
+            budget += degrees[i]-1;
         }
+        int ok = dixon_rank_model_from_strata(rank, R, nr, H, nh, budget);
+        for (slong j = 0; j < nh; j++) {
+            fmpz_add(h, h, H+j);
+            fmpz_mul_si(average, H+j, budget-2*j);
+            fmpz_add(delta, delta, average);
+        }
+        if (R) { for (slong j=0;j<nr;j++) fmpz_clear(R+j); flint_free(R); }
+        if (H) { for (slong j=0;j<nh;j++) fmpz_clear(H+j); flint_free(H); }
+        if (!ok) goto cleanup;
     }
-    formation+=(e*h+h*h)*(sigma+1.0);
-    report->step4_mq_core_size=h_size;
-    report->step4_mq_schur_formation_log2=log2(formation);
-    /* The core entry bound is sigma-a-b. Its determinant degree budget is
-     * Delta = h*sigma - 2*sum_d d*H[d]. This is a bound from the matrix
-     * grading, not an assumption that every Dixon minor equals the resultant. */
-    double delta=0;
-    for(slong d=0;d<nh;d++) delta+=(double)H[d]*(sigma-2.0*d);
-    report->step4_schur_degree_bound=delta;
-    report->step4_mq_core_log2=omega*log2(h)+log2(fmax(1.0,ceil(delta/h)));
-    /* Candidate evaluation in Step 3 scans the graded coefficient slots.
-     * Step 4 only checks cached polynomial degrees (constant time per entry).
-     * Constant-block LU is already in formation, not charged a second time. */
-    double slots=0;
-    for(slong a=0;a<nr;a++) for(slong b=0;b<nr && a+b<=sigma;b++) {
-        double ra=blocks[a]+(a<nh ? H[a] : 0);
-        double cb=blocks[b]+(b<nh ? H[b] : 0);
-        slots+=ra*cb*(sigma-a-b+1.0);
-    }
-    report->step4_mq_verification_log2=2*log2((double)rank);
-    report->step3_schur_selection_log2=fmax(omega*log2((double)rank),
-                                          log2(fmax(1.0,slots)));
-    /* There are three phases: their sum and maximum differ by a constant. */
-    report->step4_mq_schur_log2=fmax(report->step4_mq_schur_formation_log2,
-        fmax(report->step4_mq_core_log2,report->step4_mq_verification_log2));
-    flint_free(blocks);flint_free(R);flint_free(H);
+    if (fmpz_sgn(rank) <= 0 || fmpz_sgn(h) <= 0) goto cleanup;
+    fmpz_one(sigma);
+    for (slong i = 0; i < n; i++) fmpz_add_ui(sigma, sigma, (ulong) (degrees[i]-1));
+    double log_rank = log2_fmpz_upper_bound(rank);
+    double log_sigma = log2_fmpz_upper_bound(sigma);
+    report->step4_mq_core_size = fmpz_fits_si(h) ? fmpz_get_si(h) : WORD_MAX;
+    report->step4_schur_degree_bound = fmpz_get_d(delta);
+    report->step4_mq_schur_formation_log2 = log_sigma + omega*log_rank;
+    fmpz_cdiv_q(average, delta, h);
+    if (fmpz_cmp_ui(average, 1) < 0) fmpz_one(average);
+    report->step4_mq_core_log2 = omega*log2_fmpz_upper_bound(h)
+        + log2_fmpz_upper_bound(average);
+    report->step4_mq_verification_log2 = 2*log_rank;
+    /* Evaluation reads at most (sigma+1)*rho^2 coefficient slots. */
+    fmpz_add_ui(average, sigma, 1);
+    report->step3_schur_selection_log2 = fmax(omega*log_rank,
+        log2_fmpz_upper_bound(average) + 2*log_rank);
+    report->step4_mq_schur_log2 = fmax(report->step4_mq_schur_formation_log2,
+        fmax(report->step4_mq_core_log2, report->step4_mq_verification_log2));
+cleanup:
+    fmpz_clear(rank); fmpz_clear(h); fmpz_clear(delta);
+    fmpz_clear(sigma); fmpz_clear(average);
 }
 
-void dixon_complexity_report_from_degrees(dixon_complexity_report_t *report,
+static void dixon_complexity_report_from_degrees_impl(dixon_complexity_report_t *report,
                                           const long *degrees,
                                           slong num_polys,
                                           slong num_all_vars,
@@ -1452,8 +1221,10 @@ void dixon_complexity_report_from_degrees(dixon_complexity_report_t *report,
                                           const fmpz_t field_characteristic,
                                           const fmpz_t field_order,
                                           double omega,
-                                          int rank_prediction) {
+                                          int rank_prediction,
+                                          int include_schur) {
     memset(report, 0, sizeof(*report));
+    int generic_field = fmpz_sgn(field_characteristic) < 0;
 
     fmpz_t matrix_size;
     fmpz_t bezout_step4;
@@ -1810,6 +1581,16 @@ void dixon_complexity_report_from_degrees(dixon_complexity_report_t *report,
         }
     }
 
+    if (generic_field) {
+        /* Assume p and q meet the interpolation conditions. Suppress only the
+         * field-size logarithms; no numerical field size is invented. */
+        report->step1_sparse_log2 = report->step1_sparse_term_bound_log2
+            + report->step1_sparse_slp_length_log2;
+        report->step1_sparse_success_prob_lb = 0.75;
+        report->step1_sparse_retry_factor = 4.0/3.0;
+        report->step1_sparse_expected_log2 = report->step1_sparse_log2 + log2(4.0/3.0);
+    }
+
     report->step1_ordinary_grid_points_log2 = step1_dense_grid_points_log2;
     report->step1_ordinary_probe_cost_log2 = report->step1_sparse_slp_length_log2;
     report->step1_ordinary_tensor_sum_log2 =
@@ -1841,8 +1622,17 @@ void dixon_complexity_report_from_degrees(dixon_complexity_report_t *report,
         ((num_polys > 0) ? (log2((double) num_polys) + (double) num_polys) : 0.0) +
         report->step1_direct_mpoly_mul_proxy_log2;
     step1_mq_bounds(report, degrees, num_polys, num_all_vars, num_elim_vars, num_parameter_vars);
-    mq_improved_bounds(report, degrees, num_polys, field_order, omega);
-    schur_improved_bounds(report, degrees, num_polys, field_order, omega);
+    mq_improved_bounds(report, degrees, num_polys, field_order, omega, generic_field);
+    /* Schur costs only participate in the detailed report. */
+    if (include_schur)
+        schur_improved_bounds(report, degrees, num_polys, omega);
+    else {
+        report->step4_mq_schur_log2 = INFINITY;
+        report->step4_mq_schur_formation_log2 = INFINITY;
+        report->step4_mq_core_log2 = INFINITY;
+        report->step4_mq_verification_log2 = INFINITY;
+        report->step3_schur_selection_log2 = INFINITY;
+    }
     report->step1_bareiss_log2 =
         ((num_polys > 1) ? (3.0 * log2((double) num_polys)) : 0.0) +
         2.0 * report->step1_sparse_term_bound_log2;
@@ -2054,7 +1844,9 @@ void dixon_complexity_report_from_degrees(dixon_complexity_report_t *report,
                                report->step4_sparse_slp_length_log2 + log2_logq,
                                report->step4_sparse_term_bound_log2 + 2.0 * log2_logq)
                 : INFINITY;
-            report->step4_sparse_log2 = step4_sparse_log2;
+            report->step4_sparse_log2 = generic_field
+                ? report->step4_sparse_term_bound_log2 + report->step4_sparse_slp_length_log2
+                : step4_sparse_log2;
         }
 
         if (rank_prediction && uniform_positive_degree(degrees, num_polys, &uniform_d) &&
@@ -2151,6 +1943,22 @@ void dixon_complexity_report_from_degrees(dixon_complexity_report_t *report,
     fmpz_clear(bezout_step4);
     fmpz_clear(matrix_size);
     fmpz_clear(rank_size);
+}
+
+/* Preserve the complete public report, independently of CLI verbosity. */
+void dixon_complexity_report_from_degrees(dixon_complexity_report_t *report,
+                                          const long *degrees,
+                                          slong num_polys,
+                                          slong num_all_vars,
+                                          slong num_elim_vars,
+                                          slong num_parameter_vars,
+                                          const fmpz_t field_characteristic,
+                                          const fmpz_t field_order,
+                                          double omega,
+                                          int rank_prediction) {
+    dixon_complexity_report_from_degrees_impl(report, degrees, num_polys,
+        num_all_vars, num_elim_vars, num_parameter_vars, field_characteristic,
+        field_order, omega, rank_prediction, 1);
 }
 
 static int complexity_is_elimination_var(const char *var_name,
@@ -2316,17 +2124,16 @@ static void dixon_complexity_write_report_body(
         const dixon_complexity_report_t *report,
         double omega) {
     int verbose_level = g_dixon_verbose_level;
+    int finite_field = fmpz_cmp_ui(field_order, 2) >= 0;
+    int generic_field = fmpz_sgn(field_characteristic) < 0;
     int schur_enabled=dixon_step4_schur_enabled(num_elim,num_parameter_vars,
         fmpz_sgn(field_characteristic)>0 && fmpz_bits(field_characteristic)<=FLINT_BITS &&
         fmpz_equal(field_characteristic,field_order));
-    /* Detailed reports use a separate view; the public report and -v 1 keep
-     * their original full-size method selection. */
+    /* Select the same arithmetic model at every verbosity level. */
     dixon_complexity_report_t detailed;
     int rank_view = 0;
-    if (verbose_level >= 2) {
-        dixon_complexity_report_from_degrees(&detailed, degrees, num_polys,
-            num_all_vars, num_elim, num_parameter_vars, field_characteristic,
-            field_order, omega, 1);
+    if (report->rank_prediction_enabled) {
+        detailed = *report;
         if (detailed.step1_mq_bounds_applicable &&
             detailed.step1_mq_layered_log2 < detailed.step1_best_log2) {
             detailed.step1_best_log2 = detailed.step1_mq_layered_log2;
@@ -2358,11 +2165,14 @@ static void dixon_complexity_write_report_body(
                 detailed.step4_sparse_log2 = num_parameter_vars > 0
                     ? log2_add_exp(detailed.step4_sparse_term_bound_log2 + la + loglogq,
                                    detailed.step4_sparse_term_bound_log2 + 2 * loglogq) : la;
+                if (generic_field)
+                    detailed.step4_sparse_log2 = num_parameter_vars > 0
+                        ? detailed.step4_sparse_term_bound_log2 + la : la;
             }
             detailed.step4_log2 = select_step4_best_method(&detailed, &detailed.step4_best_method);
             if (schur_enabled && detailed.step4_mq_schur_log2 < detailed.step4_log2) {
                 detailed.step4_log2 = detailed.step4_mq_schur_log2;
-                detailed.step4_best_method = "blocked Schur + core determinant";
+                detailed.step4_best_method = "Newton Schur + core determinant";
             }
         }
         detailed.overall_log2 = FLINT_MAX(detailed.step1_best_log2, detailed.step4_log2);
@@ -2370,7 +2180,55 @@ static void dixon_complexity_write_report_body(
             detailed.overall_log2=FLINT_MAX(detailed.overall_log2,detailed.step3_schur_selection_log2);
         report = &detailed;
     }
+    if (verbose_level == 1) {
+        fmpz_t rank, core;
+        fmpz_init(rank); fmpz_init(core);
+        fprintf(fp, "Dixon matrix size: "); fmpz_fprint(fp, matrix_size);
+        fprintf(fp, "\nRank prediction: ");
+        if (!report->rank_prediction_enabled) fprintf(fp, "disabled");
+        else if (!report->step4_rank_model_applicable) fprintf(fp, "unavailable");
+        else {
+            if (report->step4_rank_size != WORD_MAX)
+                fmpz_set_si(rank, report->step4_rank_size);
+            else {
+                long d;
+                if (uniform_positive_degree(degrees, num_polys, &d))
+                    uniform_rank_statistics(rank, core, num_polys, num_elim, d);
+                else dixon_rank_model_mixed(rank, degrees, num_polys, num_elim);
+            }
+            fmpz_fprint(fp, rank);
+        }
+        fprintf(fp, "\nSchur core size: ");
+        if (!report->rank_prediction_enabled || !schur_enabled) fprintf(fp, "disabled");
+        else if (!isfinite(report->step4_mq_schur_log2)) fprintf(fp, "unavailable");
+        else {
+            if (report->step4_mq_core_size != WORD_MAX)
+                fmpz_set_si(core, report->step4_mq_core_size);
+            else {
+                long d;
+                if (uniform_positive_degree(degrees, num_polys, &d))
+                    uniform_rank_statistics(rank, core, num_polys, num_elim, d);
+                else {
+                    fmpz *H = NULL;
+                    slong nh = hilbert_truncated_mixed(&H, degrees, num_polys, num_elim);
+                    fmpz_zero(core);
+                    for (slong j=0;j<nh;j++) {fmpz_add(core,core,H+j);fmpz_clear(H+j);}
+                    flint_free(H);
+                }
+            }
+            fmpz_fprint(fp, core);
+        }
+        fprintf(fp, "\nStep 1 complexity (log2): %.6f\n", report->step1_best_log2);
+        fprintf(fp, "Step 4 complexity (log2): %.6f\n", report->step4_log2);
+        fprintf(fp, generic_field
+            ? "Total complexity (log2; sufficiently large characteristic and field assumed; field-size logarithms suppressed): %.6f\n"
+            : "Total complexity (log2): %.6f\n", report->overall_log2);
+        fmpz_clear(rank); fmpz_clear(core);
+        return;
+    }
     if (verbose_level <= 0) {
+        if (generic_field)
+            fprintf(fp, "Field: sufficiently large characteristic and order assumed; field-size logarithms suppressed.\n");
         fprintf(fp,
                 "Overall Dixon complexity (selected Step 1=%s, Step 4=%s, log2): %.6f\n",
                 report->step1_best_method ? report->step1_best_method : "unknown",
@@ -2398,12 +2256,18 @@ static void dixon_complexity_write_report_body(
     dixon_complexity_fprint_parameter_vars(fp, all_vars, num_all_vars,
                                            elim_var_list, num_elim);
     fprintf(fp, "\n");
-    fprintf(fp, "Field characteristic p: ");
-    fmpz_fprint(fp, field_characteristic);
-    fprintf(fp, "\n");
-    fprintf(fp, "Field order q: ");
-    fmpz_fprint(fp, field_order);
-    fprintf(fp, "\n");
+    if (fmpz_sgn(field_characteristic) < 0) {
+        fprintf(fp, "Coefficient field: sufficiently large characteristic and order (assumed).\n");
+        fprintf(fp, "Counts coefficient-field operations; field-size logarithms are suppressed; no extension overhead is assumed.\n");
+    } else if (!finite_field) {
+        fprintf(fp, "Coefficient field: Q (arithmetic operation counts).\n");
+    } else {
+        fprintf(fp, "Field characteristic p: ");
+        fmpz_fprint(fp, field_characteristic);
+        fprintf(fp, "\nField order q: ");
+        fmpz_fprint(fp, field_order);
+        fprintf(fp, "\n");
+    }
     fprintf(fp, "Degree sequence: [");
     for (slong i = 0; i < num_polys; i++) {
         if (i > 0) {
@@ -2420,7 +2284,7 @@ static void dixon_complexity_write_report_body(
     fprintf(fp, "Cancellation matrix size: %ld x %ld\n", num_polys, num_polys);
     fprintf(fp, "Step 1 indeterminates (2*elim + params): %ld = 2*%ld + %ld\n",
         report->step1_var_count, report->num_elim_vars, report->num_parameter_vars);
-    if (verbose_level >= 2) {
+    if (verbose_level >= 3) {
         fprintf(fp, "Step 1 determinant total degree upper bound: %ld\n",
                 report->step1_det_total_degree);
         fprintf(fp, "Step 1 Kronecker univariate degree upper bound (log2): %.6f\n",
@@ -2428,7 +2292,7 @@ static void dixon_complexity_write_report_body(
         fprintf(fp, "Step 1 sparse term upper bound (log2 T): %.6f\n",
                 report->step1_sparse_term_bound_log2);
     }
-    if (verbose_level >= 2) {
+    if (verbose_level >= 3 && finite_field) {
         fprintf(fp, "Step 1 sparse structural model: S1 <= M^2 * binom(B+r,r) with M=");
         fmpz_fprint(fp, matrix_size);
         fprintf(fp, ", B=%ld, r=%ld (#parameter vars)\n",
@@ -2450,7 +2314,7 @@ static void dixon_complexity_write_report_body(
     //fprintf(fp, "Step 1 direct upper bound (log2): %.6f\n", report->step1_direct_log2);
     fprintf(fp, "Step 1 direct multivariate cofactor expansion (naive, log2): %.6f\n",
             report->step1_direct_mpoly_log2);
-    if (verbose_level >= 2) {
+    if (verbose_level >= 3) {
         fprintf(fp, "  Formula: log2(n!) + log2(mu1*S1), with mu1 <= binom(v + d, d)\n");
         fprintf(fp, "  Values : n=%ld, v=%ld, log2(n!)=%.6f, log2(mu1*S1)=%.6f\n",
                 num_polys,
@@ -2460,14 +2324,14 @@ static void dixon_complexity_write_report_body(
     }
     fprintf(fp, "Step 1 direct multivariate cached Laplace surrogate (n*2^n, log2): %.6f\n",
             report->step1_direct_mpoly_split_log2);
-    if (verbose_level >= 2) {
+    if (verbose_level >= 3) {
         fprintf(fp, "  Formula: log2(n) + n + log2(mu1*S1), matching the paper's n*2^n*mu1*S1 model\n");
         fprintf(fp, "  Values : n=%ld, log2(n*2^n)=%.6f, log2(mu1*S1)=%.6f\n",
                 num_polys,
                 ((num_polys > 0) ? (log2((double) num_polys) + (double) num_polys) : 0.0),
                 report->step1_direct_mpoly_mul_proxy_log2);
     }
-    if (verbose_level >= 2) {
+    if (verbose_level >= 3) {
         if (report->step1_mq_bounds_applicable) {
             fprintf(fp, "Step 1 MQ full total-degree support bound (log2): %.6f\n",
                     report->step1_mq_total_support_log2);
@@ -2481,12 +2345,16 @@ static void dixon_complexity_write_report_body(
             fprintf(fp, "  Formula: sum(k=1..n) k*binom(n,k)*mu_k*binom(v+k-1,k-1).\n");
             fprintf(fp, "  mu_k=v+1 for k<n; mu_n=binom(n+2,2); trailing k-minors have degree <=k. Peak work layer: %ld/%ld.\n",
                     report->step1_mq_peak_layer, num_polys);
-            fprintf(fp, "Step 1 MQ simplex interpolation (log2): %.6f\n",
-                    report->step1_mq_simplex_log2);
-            fprintf(fp, "  Full entry evaluation + numerical determinants: %.6f; Newton transforms: %.6f; extension degree: %ld.\n",
-                    report->step1_mq_simplex_probe_log2, report->step1_mq_simplex_transform_log2,
-                    report->step1_mq_simplex_extension);
-            fprintf(fp, "  Formula: Sdeg*(n^omega + 3*n*binom(n+2,2) + 4*n^2*(n-1) + 4*(2*n-1)*(n+2)^2)*extension_degree^2.\n");
+            if (finite_field || generic_field) {
+                fprintf(fp, "Step 1 MQ simplex interpolation (log2): %.6f\n",
+                        report->step1_mq_simplex_log2);
+                fprintf(fp, "  Full entry evaluation + numerical determinants: %.6f; Newton transforms: %.6f; extension degree: %ld.\n",
+                        report->step1_mq_simplex_probe_log2, report->step1_mq_simplex_transform_log2,
+                        report->step1_mq_simplex_extension);
+                fprintf(fp, "  Formula: Sdeg*(n^omega + 3*n*binom(n+2,2) + 4*n^2*(n-1) + 4*(2*n-1)*(n+2)^2)*extension_degree^2.\n");
+            } else {
+                fprintf(fp, "Step 1 MQ simplex interpolation: unavailable (requires a specified finite field).\n");
+            }
             fprintf(fp, "  O* exponential bases: legacy rectangular 32; uniform total-degree 13.5; layered total-degree 8.818300; simplex interpolation 6.75.\n");
         } else {
             fprintf(fp, "Step 1 MQ total-degree/layered bounds: unavailable (requires n quadratics, n-1 elimination variables, one parameter).\n");
@@ -2494,7 +2362,7 @@ static void dixon_complexity_write_report_body(
     }
     fprintf(fp, "Step 1 Bareiss determinant surrogate (n^3, log2): %.6f\n",
             report->step1_bareiss_log2);
-    if (verbose_level >= 2) {
+    if (verbose_level >= 3) {
         fprintf(fp, "  Formula: 3*log2(n) + 2*log2(S1), matching the paper's n^3*S1^2 surrogate\n");
         fprintf(fp, "  Values : n=%ld, log2(n^3)=%.6f, 2*log2(S1)=%.6f\n",
                 num_polys,
@@ -2504,7 +2372,7 @@ static void dixon_complexity_write_report_body(
     fprintf(fp, "Step 1 direct univariate after Kronecker (Leibniz/FFT, log2): %.6f\n",
             report->step1_direct_factorial_log2 + report->step1_direct_fft_log2);
     
-    if (verbose_level >= 2) {
+    if (verbose_level >= 3) {
         // fprintf(fp, "  Chosen as min{naive Leibniz+Kronecker/FFT, dense direct after Kronecker}\n");
         fprintf(fp, "  Naive Leibniz + Kronecker/FFT: %.6f\n",
                 report->step1_direct_factorial_log2 + report->step1_direct_fft_log2);
@@ -2526,7 +2394,7 @@ static void dixon_complexity_write_report_body(
     }
     fprintf(fp, "Step 1 ordinary dense interpolation (tensor-grid, log2): %.6f\n",
             report->step1_ordinary_interp_log2);
-    if (verbose_level >= 2) {
+    if (verbose_level >= 3) {
         fprintf(fp, "  Formula: soft-O(N1*(L1 + ell*B1))\n");
         fprintf(fp, "  Grid   : N = prod_i (b_i + 1)\n");
         fprintf(fp, "  Values : log2(N)=%.6f, log2(L1)=%.6f, log2(ell*B1)=%.6f\n",
@@ -2539,7 +2407,7 @@ static void dixon_complexity_write_report_body(
     }
     fprintf(fp, "Step 1 Kronecker + HNF (log2): %.6f\n",
             report->step1_hnf_log2);
-    if (verbose_level >= 2) {
+    if (verbose_level >= 3) {
         fprintf(fp, "  Formula: omega*log2(n) + log2(s)\n");
         fprintf(fp, "  Values : n=%ld, omega=%.4f, omega*log2(n)=%.6f, log2(s)=%.6f\n",
                 num_polys,
@@ -2560,7 +2428,7 @@ static void dixon_complexity_write_report_body(
         fprintf(fp,
                 "Step 2 recursive block Dixon construction (Zhao/Qin surrogate, Skip step 1, log2): %.6f\n",
                 report->step12_recursive_log2);
-        if (verbose_level >= 2) {
+        if (verbose_level >= 3) {
             fprintf(fp,
                     "  Formula: log2(m1^2 * (n!)^3 * prod_{i=2}^n m_i^3)\n");
             fprintf(fp,
@@ -2580,7 +2448,7 @@ static void dixon_complexity_write_report_body(
                 fprintf(fp, "]\n");
             }
         }
-        if (verbose_level >= 3) {
+        if (verbose_level >= 4) {
             fprintf(fp,
                     "  Table-1 standard construction surrogate (same m_i model, log2): %.6f\n",
                     report->step12_standard_table_log2);
@@ -2595,7 +2463,7 @@ static void dixon_complexity_write_report_body(
         fprintf(fp,
                 "Step 2 recursive block Dixon construction: unavailable (requires #polys = #elim + 1 with #elim > 0)\n");
     }
-    if (verbose_level >= 3) {
+    if (verbose_level >= 4) {
         long *step1_var_bounds = NULL;
         double detail_kronecker_log2 = 0.0;
         double detail_row_avg_log2 = 0.0;
@@ -2737,57 +2605,69 @@ static void dixon_complexity_write_report_body(
 
         free(step1_var_bounds);
     }
-    fprintf(fp, "Step 1 derivative sparse interpolation theoretical (Huang 2023, q-aware, log2): %.6f\n",
-            report->step1_sparse_log2);
-    if (verbose_level >= 2) {
-        fprintf(fp, "  Formula: soft-O(L*T*log q + T*log^2 q)\n");
-        fprintf(fp, "  Values : L <= 2^%.6f, T <= 2^%.6f, q = ", 
-                report->step1_sparse_slp_length_log2,
-                report->step1_sparse_term_bound_log2);
-        fmpz_fprint(fp, field_order);
-        fprintf(fp, ", D = %ld\n", report->step1_sparse_partial_degree_bound);
-    }
-    {
-        int theorem_char_ok =
-            sparse_model_applicable_long(field_characteristic,
-                                         field_order,
-                                         report->step1_sparse_partial_degree_bound);
-        double theorem_retry = theorem_char_ok ? (4.0 / 3.0) : INFINITY;
-        double theorem_expected = theorem_char_ok
-            ? (report->step1_sparse_log2 + log2(theorem_retry))
-            : INFINITY;
-        if (verbose_level >= 2) {
-            if (theorem_char_ok) {
-                fprintf(fp, "Step 1 theorem success lower bound p >= 0.75\n");
-                // fprintf(fp, "Step 1 theorem retry factor upper estimate 1/p <= 1.33333333333\n");
-                fprintf(fp, "Step 1 theorem retry-adjusted expected sparse complexity (log2): %.6f\n",
-                        theorem_expected);
-            } else {
-                fprintf(fp, "Step 1 theorem success lower bound unavailable (char(F_q) < D)\n");
-            }
-        }
-
-        if (verbose_level >= 2) {
-            fprintf(fp, "  Theorem condition: base field with char(F_q) >= D; current char=");
-            fmpz_fprint(fp, field_characteristic);
-            fprintf(fp, ", D=%ld -> %s\n",
-                    report->step1_sparse_partial_degree_bound,
-                    theorem_char_ok ? "satisfied" : "not satisfied");
-            fprintf(fp, "Step 1 probability track B (base-field one-shot bound):\n");
-            fprintf(fp, "  Formula: p >= max(0, 1 - D*T*(T-1)/(2*(q-1)))\n");
-            fprintf(fp, "  Success bound: p >= %.12g\n",
-                    report->step1_sparse_success_prob_lb);
-            fprintf(fp, "  Retry factor : 1/p <= %.12g\n",
-                    report->step1_sparse_retry_factor);
-            fprintf(fp, "  Retry-adjusted expected sparse complexity (log2): %.6f\n",
-                    report->step1_sparse_expected_log2);
-            fprintf(fp, "Step 1 sufficient q-threshold for base-field p >= 3/4 from current D,T upper bounds (log2 q): %.6f\n",
+    if (generic_field) {
+        fprintf(fp, "Step 1 sparse interpolation (large-field soft-O, log2): %.6f\n",
+                report->step1_sparse_log2);
+        if (verbose_level >= 3) {
+            fprintf(fp, "  Formula: soft-O(L1*T1); characteristic and field-size conditions assumed satisfied.\n");
+            fprintf(fp, "  Sufficient field-size threshold for success >= 3/4 (log2 q): %.6f\n",
                     report->step1_sparse_q_for_three_quarters_log2);
-            fprintf(fp, "  Sufficient base-field condition used here: q-1 >= 2*D*T*(T-1) (coarsened further in log-scale by T^2)\n");
-            if (!isfinite(report->step1_sparse_retry_factor)) {
-                fprintf(fp,
-                        "Step 1 note: Huang 2023's theorem-level 3/4 guarantee follows from char(F_q) >= D together with its evaluation-space construction; "
-                        "the bound printed above is a stricter base-field one-shot bound for the current implementation, which samples alpha directly in F_q.\n");
+        }
+    } else if (!finite_field) {
+        fprintf(fp, "Step 1 sparse interpolation: unavailable (requires a specified finite field).\n");
+    } else {
+        fprintf(fp, "Step 1 derivative sparse interpolation theoretical (Huang 2023, q-aware, log2): %.6f\n",
+                report->step1_sparse_log2);
+        if (verbose_level >= 3) {
+            fprintf(fp, "  Formula: soft-O(L*T*log q + T*log^2 q)\n");
+            fprintf(fp, "  Values : L <= 2^%.6f, T <= 2^%.6f, q = ",
+                    report->step1_sparse_slp_length_log2,
+                    report->step1_sparse_term_bound_log2);
+            fmpz_fprint(fp, field_order);
+            fprintf(fp, ", D = %ld\n", report->step1_sparse_partial_degree_bound);
+        }
+        {
+            int theorem_char_ok =
+                sparse_model_applicable_long(field_characteristic,
+                                             field_order,
+                                             report->step1_sparse_partial_degree_bound);
+            double theorem_retry = theorem_char_ok ? (4.0 / 3.0) : INFINITY;
+            double theorem_expected = theorem_char_ok
+                ? (report->step1_sparse_log2 + log2(theorem_retry))
+                : INFINITY;
+            if (verbose_level >= 3) {
+                if (theorem_char_ok) {
+                    fprintf(fp, "Step 1 theorem success lower bound p >= 0.75\n");
+                    // fprintf(fp, "Step 1 theorem retry factor upper estimate 1/p <= 1.33333333333\n");
+                    fprintf(fp, "Step 1 theorem retry-adjusted expected sparse complexity (log2): %.6f\n",
+                            theorem_expected);
+                } else {
+                    fprintf(fp, "Step 1 theorem success lower bound unavailable (char(F_q) < D)\n");
+                }
+            }
+
+            if (verbose_level >= 3) {
+                fprintf(fp, "  Theorem condition: base field with char(F_q) >= D; current char=");
+                fmpz_fprint(fp, field_characteristic);
+                fprintf(fp, ", D=%ld -> %s\n",
+                        report->step1_sparse_partial_degree_bound,
+                        theorem_char_ok ? "satisfied" : "not satisfied");
+                fprintf(fp, "Step 1 probability track B (base-field one-shot bound):\n");
+                fprintf(fp, "  Formula: p >= max(0, 1 - D*T*(T-1)/(2*(q-1)))\n");
+                fprintf(fp, "  Success bound: p >= %.12g\n",
+                        report->step1_sparse_success_prob_lb);
+                fprintf(fp, "  Retry factor : 1/p <= %.12g\n",
+                        report->step1_sparse_retry_factor);
+                fprintf(fp, "  Retry-adjusted expected sparse complexity (log2): %.6f\n",
+                        report->step1_sparse_expected_log2);
+                fprintf(fp, "Step 1 sufficient q-threshold for base-field p >= 3/4 from current D,T upper bounds (log2 q): %.6f\n",
+                        report->step1_sparse_q_for_three_quarters_log2);
+                fprintf(fp, "  Sufficient base-field condition used here: q-1 >= 2*D*T*(T-1) (coarsened further in log-scale by T^2)\n");
+                if (!isfinite(report->step1_sparse_retry_factor)) {
+                    fprintf(fp,
+                            "Step 1 note: Huang 2023's theorem-level 3/4 guarantee follows from char(F_q) >= D together with its evaluation-space construction; "
+                            "the bound printed above is a stricter base-field one-shot bound for the current implementation, which samples alpha directly in F_q.\n");
+                }
             }
         }
     }
@@ -2814,13 +2694,18 @@ static void dixon_complexity_write_report_body(
 
         fmpz_init(exact_rank_size);
         if (report->step4_rank_model_applicable) {
-            long uniform_d = 0;
-            exact_rank_available = report->step4_rank_model_is_mixed
-                ? dixon_rank_model_mixed(exact_rank_size, degrees,
-                                         num_polys, num_elim)
-                : (uniform_positive_degree(degrees, num_polys, &uniform_d) &&
-                   dixon_rank_model_uniform(exact_rank_size, num_polys,
-                                            num_elim, uniform_d));
+            if (report->step4_rank_size != WORD_MAX) {
+                fmpz_set_si(exact_rank_size, report->step4_rank_size);
+                exact_rank_available = 1;
+            } else {
+                long uniform_d = 0;
+                exact_rank_available = report->step4_rank_model_is_mixed
+                    ? dixon_rank_model_mixed(exact_rank_size, degrees,
+                                             num_polys, num_elim)
+                    : (uniform_positive_degree(degrees, num_polys, &uniform_d) &&
+                       dixon_rank_model_uniform(exact_rank_size, num_polys,
+                                                num_elim, uniform_d));
+            }
         }
 
         for (slong i = 0; i < num_polys; i++) {
@@ -2834,7 +2719,7 @@ static void dixon_complexity_write_report_body(
                 }
             }
         }
-        if (rank_view) {
+        if (rank_view && verbose_level >= 3) {
             fprintf(fp, "Step 4 estimates use rank-predicted matrix size: ");
             if (exact_rank_available) fmpz_fprint(fp, exact_rank_size);
             else fprintf(fp, "%ld", report->step4_rank_size);
@@ -2856,8 +2741,9 @@ static void dixon_complexity_write_report_body(
             if (exact_rank_available) fmpz_fprint(fp, exact_rank_size);
             else fprintf(fp, "%ld", report->step4_rank_size);
             fprintf(fp, " (log2: %.6f)\n", report->step4_rank_size_log2);
-            fprintf(fp, "Step 4 rank-predicted HNF estimate (heuristic/conjectural, log2): %.6f\n",
-                    report->step4_rank_hnf_log2);
+            if (verbose_level >= 3 || !rank_view)
+                fprintf(fp, "Step 4 rank-predicted HNF estimate (heuristic/conjectural, log2): %.6f\n",
+                        report->step4_rank_hnf_log2);
         } else if (report->rank_prediction_enabled) {
             fprintf(fp, "Step 4 rank prediction: unavailable (requires #polys = #elim + 1 and positive degrees)\n");
         } else {
@@ -2865,21 +2751,48 @@ static void dixon_complexity_write_report_body(
         }
         fprintf(fp, "Step 4 ordinary dense interpolation (log2): %.6f\n",
                 report->step4_ordinary_interp_log2);
-        fprintf(fp, "Step 4 sparse interpolation (log2): %.6f\n",
-                report->step4_sparse_log2);
-        if (verbose_level >= 2 && !schur_enabled)
+        if (generic_field)
+            fprintf(fp, "Step 4 sparse interpolation (large-field soft-O, log2): %.6f\n", report->step4_sparse_log2);
+        else if (finite_field)
+            fprintf(fp, "Step 4 sparse interpolation (log2): %.6f\n", report->step4_sparse_log2);
+        else
+            fprintf(fp, "Step 4 sparse interpolation: unavailable (requires a specified finite field).\n");
+        if (verbose_level >= 1 && report->rank_prediction_enabled && !schur_enabled)
             fprintf(fp, "Step 4 Schur estimate: disabled by policy or --no-step4-schur.\n");
-        if (verbose_level >= 2 && schur_enabled && isfinite(report->step4_mq_schur_log2)) {
-            fprintf(fp, "Step 4 blocked Schur + core determinant (soft-O, log2): %.6f\n",
+        if (schur_enabled && isfinite(report->step4_mq_schur_log2)) {
+            fprintf(fp, "Step 4 Newton Schur + core determinant (soft-O, log2): %.6f\n",
                     report->step4_mq_schur_log2);
-            fprintf(fp, "  Core size: %ld; formation: %.6f; core determinant: %.6f; certificate scan: %.6f (soft-O, log2).\n",
-                    report->step4_mq_core_size, report->step4_mq_schur_formation_log2,
+            fmpz_t core, core_delta, unused_rank;
+            fmpz_init(core); fmpz_init(core_delta); fmpz_init(unused_rank);
+            fmpz_set_si(core, report->step4_mq_core_size);
+            if (report->step4_mq_core_size == WORD_MAX) {
+                long d;
+                if (uniform_positive_degree(degrees, num_polys, &d))
+                    uniform_rank_statistics(unused_rank, core, num_polys, num_elim, d);
+                else {
+                    fmpz *H = NULL;
+                    slong nh = hilbert_truncated_mixed(&H, degrees, num_polys, num_elim);
+                    fmpz_zero(core);
+                    for (slong j=0;j<nh;j++) {fmpz_add(core,core,H+j);fmpz_clear(H+j);}
+                    flint_free(H);
+                }
+            }
+            bezout_bound_fmpz(core_delta, degrees, num_polys);
+            fprintf(fp, "  Core size: "); fmpz_fprint(fp, core);
+            fprintf(fp, "; formation: %.6f; core determinant: %.6f; certificate scan: %.6f (soft-O, log2).\n",
+                    report->step4_mq_schur_formation_log2,
                     report->step4_mq_core_log2, report->step4_mq_verification_log2);
-            fprintf(fp, "  Generic Hilbert-layer prediction; actual complement must pass rank/degree checks.\n");
-            fprintf(fp, "  Core determinant: soft-O(h^omega * ceil(Delta/h)); h=%ld, Delta=%.0f.\n",
-                    report->step4_mq_core_size, report->step4_schur_degree_bound);
-            fprintf(fp, "  Formation uses fast polynomial products: soft-O((a+b+1)*MM), not classical coefficient convolution.\n");
-            fprintf(fp, "  Step 4 = max(formation, core determinant, certificate scan); constant-block LU is reused.\n");
+            if (verbose_level >= 3) {
+                fprintf(fp, "  Hilbert-profile budget; actual complement must pass rank/degree checks.\n");
+                fprintf(fp, "  Core determinant: soft-O(h^omega * ceil(Delta/h)); h=");
+                fmpz_fprint(fp, core); fprintf(fp, ", Delta=");
+                fmpz_fprint(fp, core_delta); fprintf(fp, ".\n");
+            }
+            fmpz_clear(core); fmpz_clear(core_delta); fmpz_clear(unused_rank);
+            if (verbose_level >= 3) {
+                fprintf(fp, "  Formation budget: soft-O(sigma*rho^omega), using truncated Newton inversion and polynomial matrix products.\n");
+                fprintf(fp, "  Step 4 = max(formation budget, core determinant, certificate scan).\n");
+            }
             fprintf(fp, "  Step 3 generic candidate selection/rank verification (soft-O, log2): %.6f; counted separately in overall.\n",
                     report->step3_schur_selection_log2);
         }
@@ -2888,7 +2801,7 @@ static void dixon_complexity_write_report_body(
                 rank_view ? " (rank prediction)" : "",
                 report->step4_log2);
 
-        if (verbose_level >= 2) {
+        if (verbose_level >= 3) {
             fprintf(fp, "  HNF formula: omega*log2(M) + log2(s_4)\n");
             fprintf(fp, "  HNF values : M=");
             if (rank_view && exact_rank_available) fmpz_fprint(fp, exact_rank_size);
@@ -2921,17 +2834,21 @@ static void dixon_complexity_write_report_body(
                     report->step4_ordinary_probe_phase_log2,
                     report->step4_ordinary_tensor_phase_log2);
 
-            fprintf(fp, "  Sparse formula: soft-O(L_4*T_4*log q + T_4*log^2 q)\n");
-            fprintf(fp, "  Sparse values : log2(L_4)=%.6f, log2(T_4)=%.6f, q=",
-                    report->step4_sparse_slp_length_log2,
-                    report->step4_sparse_term_bound_log2);
-            fmpz_fprint(fp, field_order);
-            fprintf(fp, ", D_4=");
-            fmpz_fprint(fp, bezout_bound);
-            fprintf(fp, "\n");
+            if (generic_field) {
+                fprintf(fp, "  Sparse formula: soft-O(L_4*T_4); field-size logarithms suppressed.\n");
+            } else if (finite_field) {
+                fprintf(fp, "  Sparse formula: soft-O(L_4*T_4*log q + T_4*log^2 q)\n");
+                fprintf(fp, "  Sparse values : log2(L_4)=%.6f, log2(T_4)=%.6f, q=",
+                        report->step4_sparse_slp_length_log2,
+                        report->step4_sparse_term_bound_log2);
+                fmpz_fprint(fp, field_order);
+                fprintf(fp, ", D_4=");
+                fmpz_fprint(fp, bezout_bound);
+                fprintf(fp, "\n");
+            }
         }
 
-        if (verbose_level >= 3) {
+        if (verbose_level >= 4) {
             fprintf(fp, "Step 4 parameter variable-wise degree bounds (resultant side):\n");
             for (slong i = 0; i < num_all_vars; i++) {
                 if (!complexity_is_elimination_var(all_vars[i], elim_var_list, num_elim)) {
@@ -2972,7 +2889,7 @@ static void dixon_complexity_write_report_body(
             report->step4_best_method ? report->step4_best_method : "unknown",
             rank_view ? " (rank prediction)" : "",
             report->step4_log2);
-    if (verbose_level>=2 && g_dixon_schur_seed && isfinite(report->step3_schur_selection_log2))
+    if (g_dixon_schur_seed && isfinite(report->step3_schur_selection_log2))
         fprintf(fp, "Overall complexity = max(step1/2, step3 selection, step4) (soft-O, log2): %.6f\n",
                 dixon_complexity_best_total_log2(report));
     else
@@ -3015,7 +2932,7 @@ static void dixon_complexity_write_report_body(
     }
     // fprintf(fp, "Bareiss determinant surrogate (log2): %.6f\n", report->step1_bareiss_log2);
 
-    if (verbose_level >= 2) {
+    if (verbose_level >= 3) {
         fprintf(fp, "\n--- Space Complexity (Theoretical) ---\n");
         fprintf(fp, "All bounds below are matrix/object counts on the log2 scale; the true byte cost is this factor times the peak intermediate polynomial size.\n");
         fprintf(fp, "Step 1 direct multivariate cofactor expansion: log2 space ~= log2(n^2) + log2(M^2) = %.6f\n",
@@ -3080,9 +2997,15 @@ static void save_comp_result_to_file(
 
     fprintf(fp, "Dixon Complexity Analysis\n");
     fprintf(fp, "=========================\n");
-    fprintf(fp, "Field order q: ");
-    fmpz_fprint(fp, field_order);
-    fprintf(fp, "\n");
+    if (fmpz_sgn(field_characteristic) < 0)
+        fprintf(fp, "Coefficient field: sufficiently large characteristic and order (assumed).\n");
+    else if (fmpz_is_zero(field_characteristic))
+        fprintf(fp, "Coefficient field: Q.\n");
+    else {
+        fprintf(fp, "Field order q: ");
+        fmpz_fprint(fp, field_order);
+        fprintf(fp, "\n");
+    }
     fprintf(fp, "Polynomials: %s\n", polys_str);
     fprintf(fp, "Eliminate:   %s\n", vars_str);
     fprintf(fp, "Computation time: %.3f seconds\n\n", comp_time);
@@ -3172,6 +3095,9 @@ void run_complexity_analysis(
     if (ctx != NULL) {
         fmpz_set_ui(field_characteristic, fq_nmod_ctx_prime(ctx));
         fq_nmod_ctx_order(field_order, ctx);
+    } else if (power == 0 && fmpz_sgn(prime) < 0) {
+        fmpz_set_si(field_characteristic, -1);
+        fmpz_zero(field_order);
     } else if (power <= 1) {
         fmpz_set(field_characteristic, prime);
         fmpz_set(field_order, prime);
@@ -3180,7 +3106,7 @@ void run_complexity_analysis(
         fmpz_pow_ui(field_order, prime, power);
     }
 
-    dixon_complexity_report_from_degrees(&report,
+    dixon_complexity_report_from_degrees_impl(&report,
                                          degrees,
                                          num_polys,
                                          num_all_vars,
@@ -3189,7 +3115,7 @@ void run_complexity_analysis(
                                          field_characteristic,
                                          field_order,
                                          omega,
-                                         rank_prediction);
+                                         rank_prediction, rank_prediction);
 
     if (!silent_mode) {
         printf("\n=== Complexity Analysis ===\n");
@@ -3207,9 +3133,11 @@ void run_complexity_analysis(
                                             bezout,
                                            &report,
                                            omega);
-        if (output_filename) {
-            printf("\nReport saved to: %s\n", output_filename);
-        }
+        if (g_dixon_verbose_level == 1)
+            printf("\nUse -v 2 or higher for a more detailed report.\n");
+        if (output_filename)
+            printf(g_dixon_verbose_level == 1 ? "Report saved to: %s\n"
+                                               : "\nReport saved to: %s\n", output_filename);
         printf("===========================\n");
     } else if (g_dixon_verbose_level == 0) {
         dixon_complexity_write_report_body(stdout,
@@ -3339,6 +3267,9 @@ void run_complexity_analysis_from_degrees(
     if (ctx != NULL) {
         fmpz_set_ui(field_characteristic, fq_nmod_ctx_prime(ctx));
         fq_nmod_ctx_order(field_order, ctx);
+    } else if (power == 0 && fmpz_sgn(prime) < 0) {
+        fmpz_set_si(field_characteristic, -1);
+        fmpz_zero(field_order);
     } else if (power <= 1) {
         fmpz_set(field_characteristic, prime);
         fmpz_set(field_order, prime);
@@ -3347,7 +3278,7 @@ void run_complexity_analysis_from_degrees(
         fmpz_pow_ui(field_order, prime, power);
     }
 
-    dixon_complexity_report_from_degrees(&report,
+    dixon_complexity_report_from_degrees_impl(&report,
                                          degrees,
                                          num_polys,
                                          num_all_vars,
@@ -3356,7 +3287,7 @@ void run_complexity_analysis_from_degrees(
                                          field_characteristic,
                                          field_order,
                                          omega,
-                                         rank_prediction);
+                                         rank_prediction, rank_prediction);
 
     if (!silent_mode) {
         printf("\n=== Complexity Analysis ===\n");
@@ -3374,9 +3305,11 @@ void run_complexity_analysis_from_degrees(
                                            bezout,
                                            &report,
                                            omega);
-        if (output_filename) {
-            printf("\nReport saved to: %s\n", output_filename);
-        }
+        if (g_dixon_verbose_level == 1)
+            printf("\nUse -v 2 or higher for a more detailed report.\n");
+        if (output_filename)
+            printf(g_dixon_verbose_level == 1 ? "Report saved to: %s\n"
+                                               : "\nReport saved to: %s\n", output_filename);
         printf("===========================\n");
     } else if (g_dixon_verbose_level == 0) {
         dixon_complexity_write_report_body(stdout,
@@ -3914,7 +3847,7 @@ char* dixon_complexity_auto(const char **poly_strings, slong num_polys,
         fmpz_set_ui(field_characteristic, fq_nmod_ctx_prime(ctx));
         fq_nmod_ctx_order(field_order, ctx);
     }
-    dixon_complexity_report_from_degrees(&report,
+    dixon_complexity_report_from_degrees_impl(&report,
                                          analysis.degrees,
                                          num_polys,
                                          analysis.num_all_vars,
@@ -3923,7 +3856,7 @@ char* dixon_complexity_auto(const char **poly_strings, slong num_polys,
                                          field_characteristic,
                                          field_order,
                                          DIXON_OMEGA,
-                                         0);
+                                         1, 1);
     
     fmpz_t matrix_size;
     fmpz_init(matrix_size);

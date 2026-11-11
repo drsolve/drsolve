@@ -35,8 +35,13 @@ int dr_nmod_resultant_bezout_source_try(nmod_poly_t out,slong degree,
 /* Dixon/Bezout inverse-Hankel projection with verified reconstruction.
  * Equal total degrees d: constant, nonzero x^d coefficients are required;
  * block=0 selects max(min(6,d),floor(cuberoot(d))). The contiguous projection
- * starts with O(d) points, doubling up to the total-degree reconstruction
- * budget. DRSOLVE_BEZOUT_INITIAL_POINTS optionally overrides the equal-degree
+ * uses the shifted budget when the highest homogeneous parts certify
+ * resultant degree d^2; otherwise it starts with O(d) points and doubles,
+ * trying the shifted budget before the full reconstruction budget. Small
+ * budgets use a numerical denominator precheck before the polynomial det.
+ * The circuit-source path retains its O(d) starting budget and doubling,
+ * reusing inverse-Hankel samples on a fixed grid until a sample is singular.
+ * DRSOLVE_BEZOUT_INITIAL_POINTS optionally overrides the equal-degree
  * starting count (bounded by that budget); invalid values use the default.
  * DRSOLVE_PROFILE_BEZOUT=1 reports each attempt to stderr.
  * DRSOLVE_BEZOUT_HGCD_CUTOFF optionally tunes the inverse-prefix HGCD

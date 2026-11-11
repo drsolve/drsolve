@@ -131,12 +131,14 @@ The default settings use `t` as the extension field generator and FLINT's built-
 #### Complexity analysis
 Estimates the difficulty of a Dixon resultant computation without performing it.
 Reports equation count, variable count, degree sequence, Dixon matrix size,
-Bezout degree bound, and complexity in bits.
+Bezout degree bound, and log2 operation counts.
 
 ```bash
-./drsolve -c "polynomials" "eliminate_vars" field_size
+./drsolve -c "polynomials" "eliminate_vars" [field_size]
 ./drsolve -c -f input.dr
 ```
+- Omitting the field size assumes sufficiently large characteristic and field order, with field-size logarithmic factors suppressed.
+- Rank prediction is enabled by default (`--no-rank-pred` disables it).
 - Prints complexity information
 - Default output file: `out/comp_YYYYMMDD_HHMMSS.dr`
 - Add `--omega <value>` or `-w <value>` to set the matrix-multiplication exponent
@@ -224,6 +226,7 @@ use `--dixon` to select ordinary Dixon construction.
 - `--subres` is for exactly 2 polynomials and 1 elimination variable
 
 #### Verbosity
+For complexity analysis, levels 1/2/3/4 mean six-line summary/normal/detailed/debug; level 1 is the default.
 ```bash
 ./drsolve -v 0 <arguments>
 ./drsolve -v 2 <arguments>

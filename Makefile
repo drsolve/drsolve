@@ -459,6 +459,10 @@ test-components: $(BUILD_DIR)/component_tests
 	./$(BUILD_DIR)/component_tests roots
 	./$(BUILD_DIR)/component_tests complexity
 
+.PHONY: test-complexity-cli
+test-complexity-cli: $(DIXON_TARGET)
+	python3 $(SRC_DIR)/test/cli/complexity_cli_test.py ./$(DIXON_TARGET)
+
 $(BUILD_DIR)/component_tests: $(COMPONENT_TEST_SOURCES) $(DIXON_SHARED_LIB)
 	$(CC) $(ALL_CFLAGS) -o $@ $(COMPONENT_TEST_SOURCES) -L. -ldrsolve $(FLINT_LIBS) $(SYSTEM_LIBS) $(LDFLAGS) $(RPATH_FLAGS)
 

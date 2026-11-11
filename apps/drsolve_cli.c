@@ -3263,6 +3263,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
 
     /* ---- parse flags ---- */
     int    verbose_level = 1;
+    int    verbose_debug_alias = 0;
     int    solve_mode  = 0;
     int execution_failed = 0;
     int sift_mode = 0, sift_active = 0, sift_limits_given = 0;
@@ -3283,7 +3284,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int    field_eq_final_only_mode = 0; /* --field-equation-s */
     int    time_mode   = 0;   /* --time */
     double omega       = DIXON_OMEGA;   /* default, overridden by --omega */
-    int rank_prediction = 0; /* opt-in: expensive experimental rank model */
+    int rank_prediction = 1; /* fast rank bound enabled by default */
     int    det_method_step1 = -1;  /* determinant method override for step 1 */
     int    det_method_step4 = -1;  /* determinant method override for step 4 */
     int    num_threads = -1;  /* number of threads, -1 means use default */
@@ -3336,9 +3337,11 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--silent") == 0) {
             verbose_level = 0;
+            verbose_debug_alias = 0;
         } else if (strcmp(argv[i], "--solve-verbose") == 0) {
             solve_mode = 1;
             verbose_level = 2;
+            verbose_debug_alias = 0;
         } else if (!strcmp(argv[i], "--sift")) {
             sift_mode = 1;
         } else if (!strcmp(argv[i], "--no-sift")) {
@@ -3433,6 +3436,8 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         } else if (strcmp(argv[i], "--rank-pred") == 0 ||
                    strcmp(argv[i], "--rank-prediction") == 0) {
             rank_prediction = 1;
+        } else if (strcmp(argv[i], "--no-rank-pred") == 0) {
+            rank_prediction = 0;
         } else if (strcmp(argv[i], "--homogeneous") == 0 ||
                    strcmp(argv[i], "--hom") == 0) {
             random_homogeneous = 1;
@@ -3481,6 +3486,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             return 1;
         } else if (strcmp(argv[i], "--debug") == 0) {
             verbose_level = 2;
+            verbose_debug_alias = 1;
         } else if ((strcmp(argv[i], "--verbose") == 0 ||
                     strcmp(argv[i], "-v")        == 0) && i + 1 < argc) {
             if (!parse_verbose_level(argv[i + 1], &verbose_level)) {
@@ -3488,6 +3494,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
                         argv[i + 1]);
                 return 1;
             }
+            verbose_debug_alias = 0;
             i++;
         } else if (strcmp(argv[i], "--verbose") == 0 ||
                    strcmp(argv[i], "-v")        == 0) {
@@ -3797,6 +3804,8 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         }
     }
 
+    if (comp_mode && verbose_debug_alias) verbose_level = 3;
+
     /* --quotient selects construction; only a solve option requests solving. */
     if (quotient_resultant && !solve_mode) resultant_only_mode = 1;
 
@@ -3804,7 +3813,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
 
     int silent_mode = (verbose_level == 0);
     int solve_verbose_mode = (verbose_level >= 2);
-    int debug_mode = (verbose_level >= 2);
+    int debug_mode = (verbose_level >= (comp_mode ? 3 : 2));
 
     if (random_vardeg && random_homogeneous) {
         fprintf(stderr, "Error: --vardeg and --homogeneous are mutually exclusive.\n");
@@ -3885,8 +3894,8 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
 
     /* ---- determine input mode ---- */
     if (rand_mode) {
-        /* --random / -r: positional args are "d1,d2,...,dn" field_size */
-        if (file_input_arg || positional_count != 2) {
+        /* Complexity mode also accepts a degree specification without a field. */
+        if (file_input_arg || (positional_count != 2 && !(comp_mode && positional_count == 1))) {
             if (!silent_mode) {
                 fprintf(stderr, "Error: Random mode requires exactly:\n");
                 fprintf(stderr, "  %s [-s|--comp] --random \"d1,d2,...,dn\" field_size\n",
@@ -3895,7 +3904,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             return 1;
         }
         deg_str   = positional_args[0];
-        field_str = positional_args[1];
+        field_str = positional_count == 2 ? positional_args[1] : NULL;
         /* n+1 equations in n variables can eliminate every variable.
          * Only larger systems need automatic full-system solver mode. */
         if (!comp_mode) {
@@ -4010,11 +4019,11 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             fclose(fp);
             need_free = 1;
 
-        } else if (positional_count == 3) {
-            /* command line: polys vars field_size */
+        } else if (positional_count == 2 || positional_count == 3) {
+            /* command line: polys vars [field_size] */
             polys_str = positional_args[0];
             vars_str  = positional_args[1];
-            field_str = positional_args[2];
+            field_str = positional_count == 3 ? positional_args[2] : NULL;
 
             output_filename = choose_output_filename(cli_output_filename, NULL,
                                                      "comp", NULL);
@@ -4022,7 +4031,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         } else {
             if (!silent_mode) {
                 fprintf(stderr, "Error: Complexity mode requires:\n");
-                fprintf(stderr, "  %s --comp \"polynomials\" \"eliminate_vars\" field_size\n",
+                fprintf(stderr, "  %s --comp \"polynomials\" \"eliminate_vars\" [field_size]\n",
                         prog_name);
                 fprintf(stderr, "  %s --comp [-f] input_file\n", prog_name);
             }
@@ -4194,7 +4203,12 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     char *field_poly_str = NULL;
     char *gen_var_name   = NULL;
 
-    if (!parse_field_size(field_str, p_fmpz, &power,
+    int comp_field_unspecified = comp_mode && field_str == NULL;
+    if (comp_field_unspecified) {
+        /* Negative characteristic denotes an unspecified coefficient field. */
+        fmpz_set_si(p_fmpz, -1);
+        power = 0;
+    } else if (!parse_field_size(field_str, p_fmpz, &power,
                           &field_poly_str, &gen_var_name)) {
         if (!silent_mode) {
             fprintf(stderr, "Error: Invalid field size '%s'\n", field_str);
@@ -4213,7 +4227,8 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         return 1;
     }
 
-    int rational_mode = fmpz_is_zero(p_fmpz);
+    /* Complexity-only degree analysis needs no initialized arithmetic context. */
+    int rational_mode = comp_field_unspecified || fmpz_is_zero(p_fmpz);
     int large_prime_mode = (!rational_mode && power == 1 && !fmpz_abs_fits_ui(p_fmpz));
     int ctx_initialized = 0;
 
@@ -4225,6 +4240,10 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         prime = fmpz_get_ui(p_fmpz);
     }
 
+    if (comp_field_unspecified && (field_eq_mode || field_eq_final_only_mode)) {
+        fprintf(stderr, "Error: field-equation reduction requires an explicit finite field size.\n");
+        goto cleanup_fail;
+    }
     if (rational_mode) {
         if (ideal_str) {
             fprintf(stderr, "Error: field_size=0 currently does not support --ideal.\n");
@@ -4686,7 +4705,8 @@ random_done:
             }
         } else if (comp_mode) {
             printf("Mode: Complexity analysis  |  Field: ");
-            print_field_label(stdout, p_fmpz, power);
+            if (comp_field_unspecified) printf("sufficiently large (assumed; field-operation counts)");
+            else print_field_label(stdout, p_fmpz, power);
             printf("\n");
         } else {
             printf("Mode: Polynomial system solver  |  Field: ");
@@ -5257,7 +5277,7 @@ random_done:
         } else {
             printf("Memory: unavailable\n");
         }
-        if (time_mode || verbose_level >= 2) {
+        if (time_mode || verbose_level >= (comp_mode ? 3 : 2)) {
             printf("Total - CPU time: %.3f seconds | Wall time: %.3f seconds | Threads: %d\n",
                    cpu_time, wall_time, total_threads);
         } else {

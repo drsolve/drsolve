@@ -80,6 +80,41 @@ with tempfile.TemporaryDirectory() as d:
     ref=run([equations,str(p),'--threads','1','-v','2','-o',str(out)])
     assert ref.returncode==0 and pairs(proc.stdout)==pairs(ref.stdout),(proc.stdout,ref.stdout,ref.stderr)
    comparisons+=1
+ # Several adaptive rounds must reuse read-only inverse-Hankel samples.
+ # Compare against a fully expanded independent resultant, including retries
+ # from a user-specified tiny budget.
+ lines=['DRCIRCUIT 1','prime 2130706433','eliminate x','const 1']
+ next_id=3;xp=[2,0];yp=[2,1]
+ for e in range(2,17):
+  xp.append(next_id);lines.append(f'pow 0 {e}');next_id+=1
+  yp.append(next_id);lines.append(f'pow 1 {e}');next_id+=1
+ terms=[]
+ for i in range(17):
+  for j in range(17-i):
+   if i and j:
+    ref_id=next_id;lines.append(f'mul {xp[i]} {yp[j]}');next_id+=1
+   else:ref_id=xp[i] if i else yp[j]
+   terms.append(((i,j),ref_id))
+ outputs=[];equations=[]
+ for k in range(2):
+  poly={e:rng.randrange(1,2130706433) for e,_ in terms}
+  lines.append('lin 0'+''.join(f' {poly[e]} {ref_id}' for e,ref_id in terms))
+  outputs.append(next_id);next_id+=1;equations.append(pretty(poly))
+ lines.append('outputs '+' '.join(map(str,outputs)))
+ path.write_text('\n'.join(lines)+'\n')
+ ref=run([','.join(equations),'x','2130706433',
+          '--threads','1','--resultant-only','--no-bezout-block','-o',str(out)])
+ assert ref.returncode==0,ref.stderr
+ expected=monic(out.read_text().split('Resultant:\n')[1],2130706433)
+ for flags in ([],['--bezout-initial-points','1']):
+  proc=subprocess.run([binary,'--circuit',str(path),'--threads','2',
+                       '--resultant-only','-o',str(out),*flags],
+                      capture_output=True,text=True,timeout=120,
+                      env=dict(os.environ,DRSOLVE_PROFILE_BEZOUT='1'))
+  assert proc.returncode==0,proc.stdout+proc.stderr
+  assert expected==monic(out.read_text().split('Resultant:\n')[1],2130706433)
+  assert re.search(r'Circuit attempt [2-9]:.*reused=[1-9]',proc.stderr),proc.stderr
+
  # A cubic identity reduces to a quadratic: degree certification must fold
  # the exact cancellation, rather than guess the smaller bound from samples.
  path.write_text("""DRCIRCUIT 1

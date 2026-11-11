@@ -175,6 +175,8 @@ char* dixon_complexity_auto(const char **poly_strings, slong num_polys,
                            const fq_nmod_ctx_t ctx);
 char* dixon_complexity_auto_str(const char *poly_string, const char *vars_string, const fq_nmod_ctx_t ctx);
 
+/* For an unspecified sufficiently large field, pass prime=-1, power=0 and
+ * ctx=NULL. Field-size logarithmic factors are then suppressed. */
 void run_complexity_analysis(const char *polys_str,
                              const char *vars_str,
                              const fmpz_t prime,

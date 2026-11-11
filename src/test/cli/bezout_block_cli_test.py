@@ -52,6 +52,32 @@ with tempfile.TemporaryDirectory() as tmp:
             assert got == ref, (args, log)
             match = re.search(r'C adaptive interpolation, block \d+, (\d+) points', log)
             assert match and int(match[1]) <= 2*degree+1, log
+    # Coprime highest homogeneous parts certify degree d^2: skip undersampled
+    # attempts. A forced small budget must still reject before the polynomial
+    # determinant, then reach the shifted budget and return identical output.
+    args = ['-r', '[32]*2', '1073741827', '--seed', '0']
+    env = dict(os.environ, DRSOLVE_PROFILE_BEZOUT='1')
+    log, ref = run(args, [], env)
+    short = 1 + 2*((32*32+5)//6) - 2*32 + 2*6
+    assert f'attempt 1: points={short} status=accepted' in log, log
+    assert 'attempt 2:' not in log, log
+    log, got = run(args, ['--bezout-initial-points', '1'], env)
+    assert got == ref, log
+    first = re.search(r'Bezout attempt 1:.*', log)[0]
+    assert 'status=reconstruction_failed' in first, first
+    assert 'determinant=0.000000' in first, first
+    assert f'points={short} status=accepted' in log, log
+
+    # A shared top-degree factor prevents the full-degree shortcut, but does
+    # not imply a low-degree resultant. Stop growth at the shifted budget.
+    args = ['x^16-y^16+x+1,(x+y)*(x^15+2*y^15)+x^14+y^14+3',
+            'x', '1073741827']
+    _, ref = run(args, ['--no-bezout-block'])
+    log, got = run(args, [], env)
+    assert got == ref, log
+    assert 'attempt 1: points=33 ' in log, log
+    assert 'attempt 2: points=67 ' in log, log
+
     # New backend can be explicitly disabled, then re-enabled (last flag wins).
     for prime in [998244353, 1000000007]:
         args = ['-r', '[32]*2', str(prime), '--seed', '19']
@@ -106,7 +132,7 @@ with tempfile.TemporaryDirectory() as tmp:
         if flags[-1] != '0':
             assert 'attempt 1: points=1 ' in log, log
         else:
-            assert 'attempt 1: points=17 ' in log, log
+            assert 'attempt 1: points=19 ' in log, log
     for bad in ('-1', 'abc', '18446744073709551616', ''):
         proc = subprocess.run([binary, '--bezout-initial-points='+bad, *args],
                               capture_output=True, text=True, timeout=10)

@@ -48,7 +48,7 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("OPTIONS:\n");
     printf("  -r \"[d1,d2,...,dn]\" random polynomial generation\n");
     printf("  -s  solving mode (auto-enables when no vars given)\n");
-    printf("  -c  complexity analysis mode\n");
+    printf("  -c  complexity analysis mode (field_size optional)\n");
     printf("EXAMPLES:\n");
     printf("  Dixon resultant elimination:\n");
     printf("    %s \"x+y+z, x*y+y*z+z*x, x*y*z+1\" \"x,y\" 257\n", prog_name);
@@ -61,7 +61,7 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("    %s -r -s \"[2,3,4]\" 2^8 --seed 1234\n", prog_name);
     printf("  Complexity analysis:\n");
     printf("    %s -c \"x^2+y^2+1, x*y+z, x+y+z^2\" \"x,y\" 257\n", prog_name);
-    printf("    %s -c -r \"[10]*10\" 257\n", prog_name);
+    printf("    %s -c -r \"[10]*10\"\n", prog_name);
     printf("  File input:\n");
     printf("    %s examples/example.dr\n", prog_name);
     printf("    %s examples/example_solve.dr -o solution.dr\n", prog_name);
@@ -82,6 +82,7 @@ void drsolve_cli_print_usage(const char *prog_name)
     printf("  --test <n>        Run built-in tests (1: Dixon matrix size, 2: Bezout bound, 3: solver correctness, 4: performance)\n");
     printf("  --time            Print per-step timing information\n");
     printf("  -v, --verbose <n> Verbosity level (0:silent, 1:default, 2:detailed, 3:debug, 4:matrix)\n");
+    printf("                    Complexity: 1 summary, 2 normal, 3 detailed, 4 debug\n");
     printf("  -h, --help        Show this help\n");
     printf("  --help-full       Show all options, defaults, file format and examples\n");
     printf("  -V, --version     Print version and build information\n");
@@ -242,9 +243,12 @@ void drsolve_cli_print_full_usage(const char *prog_name)
     puts("");
     puts("COMPLEXITY AND REDUCTION:");
     puts("  -c, --comp                    Complexity analysis (alias --complexity).");
+    puts("                                FIELD is optional; counts coefficient-field operations.");
+    puts("                                Omit FIELD to assume sufficiently large characteristic and order.");
     printf("  -w, --omega VALUE             Matrix exponent (default %.4g).\n", DIXON_OMEGA);
-    puts("  --rank-pred                   Experimental rank prediction (default off;");
+    puts("  --rank-pred                   Enable rank prediction (default on;");
     puts("                                alias --rank-prediction).");
+    puts("  --no-rank-pred                Disable rank prediction and Schur estimates.");
     puts("  --ideal \"a^3=b+1,...\"         Reduce by substitution relations after products.");
     puts("                                With file input, read relations from the file.");
     puts("  --field-equation              Reduce x^q -> x after each multiplication.");
@@ -265,7 +269,8 @@ void drsolve_cli_print_full_usage(const char *prog_name)
     puts("                                0 silent; 1 normal; 2 detailed with timing;");
     puts("                                3 profiling; 4 matrix dumps (up to 100 x 100)");
     puts("                                and recursive fast-Dixon traces.");
-    puts("  --silent / --debug            Aliases for -v 0 / -v 2.");
+    puts("  Complexity output: 1 summary; 2 normal; 3 detailed; 4 debug.");
+    puts("  --silent / --debug            Aliases for -v 0 / -v 2 (-v 3 with --comp).");
     puts("  --solve-verbose               Enable solving with -v 2.");
     puts("  --time                        Per-step timing; interpolation shows CPU/wall time");
     puts("                                and threads.");
@@ -339,6 +344,7 @@ static int validate_cli_options(int argc, char *argv[])
         {"complexity", no_argument, NULL, 'c'},
         {"rank-pred", no_argument, NULL, OPT_FLAG},
         {"rank-prediction", no_argument, NULL, OPT_FLAG},
+        {"no-rank-pred", no_argument, NULL, OPT_FLAG},
         {"random", no_argument, NULL, 'r'},
         {"vardeg", no_argument, NULL, OPT_FLAG},
         {"homogeneous", no_argument, NULL, OPT_FLAG},
