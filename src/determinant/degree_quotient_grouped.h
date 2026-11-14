@@ -45,10 +45,18 @@ static grouped_operator *grouped_build(grouped_operator **cache,map_node **maps,
             g->right_identity=!group_x && fixed==0;
             if(!g->left_identity)dq_mat_init(g->left,spaces[a].h,spaces[ca].h,prime);
             if(!g->right_identity)dq_mat_init(g->right,spaces[cb].h,spaces[b].h,prime);
-            if(group_x && !g->left_identity)
-                dq_mat_set(g->left,multiplication(maps,ca,fixed));
-            if(!group_x && !g->right_identity)
-                dq_mat_transpose(g->right,multiplication(maps,cb,fixed));
+            /* Read normal-form rows directly. Caching a dense multiplication
+             * map here would duplicate the operator's owned matrix. */
+            if(group_x && !g->left_identity) {
+                const map_node *m=monomial_rows(maps,ca,fixed);
+                for(slong i=0;i<spaces[ca].h;i++)for(slong j=0;j<spaces[a].h;j++)
+                    dq_set(dq_mat_entry(g->left,j,i),dq_mat_entry(spaces[a].reduce,m->rows[i],j));
+            }
+            if(!group_x && !g->right_identity) {
+                const map_node *m=monomial_rows(maps,cb,fixed);
+                for(slong i=0;i<spaces[cb].h;i++)for(slong j=0;j<spaces[b].h;j++)
+                    dq_set(dq_mat_entry(g->right,i,j),dq_mat_entry(spaces[b].reduce,m->rows[i],j));
+            }
             /* Assemble the sparse polynomial action before reducing once.
              * C * normal_forms replaces a sum of separately reduced maps. */
             slong from=group_x?cb:ca,to=group_x?b:a;
@@ -59,19 +67,18 @@ static grouped_operator *grouped_build(grouped_operator **cache,map_node **maps,
                    (group_x?p.x:p.y)==fixed)term_count++;
             }
             /* Short polynomials are cheaper as a linear combination of
-             * cached maps; dense action/RREF multiplication suits long ones. */
+             * normal-form rows; dense action/RREF multiplication suits long ones. */
             if(term_count<=16) {
                 for(slong t=0;t<e->count;t++) {
                     pair_term p=e->terms[t];
                     if(key_degree(p.x)!=ax || key_degree(p.y)!=by ||
                        (group_x?p.x:p.y)!=fixed)continue;
-                    const dq_mat_struct *m=multiplication(maps,from,group_x?p.y:p.x);
-                    if(group_x) {
-                        for(slong r=0;r<m->r;r++)for(slong c=0;c<m->c;c++)
-                            dq_addmul(dq_mat_entry(g->right,c,r),p.c,dq_mat_entry(m,r,c));
-                    } else {
-                        for(slong r=0;r<m->r;r++)for(slong c=0;c<m->c;c++)
-                            dq_addmul(dq_mat_entry(g->left,r,c),p.c,dq_mat_entry(m,r,c));
+                    const map_node *m=monomial_rows(maps,from,group_x?p.y:p.x);
+                    for(slong c=0;c<spaces[from].h;c++)for(slong r=0;r<spaces[to].h;r++) {
+                        if(group_x)
+                            dq_addmul(dq_mat_entry(g->right,c,r),p.c,dq_mat_entry(spaces[to].reduce,m->rows[c],r));
+                        else
+                            dq_addmul(dq_mat_entry(g->left,r,c),p.c,dq_mat_entry(spaces[to].reduce,m->rows[c],r));
                     }
                 }
                 continue;

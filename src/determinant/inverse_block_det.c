@@ -133,71 +133,95 @@ static int reconstruct(nmod_poly_t candidate, const nmod_poly_mat_t a,
     flint_rand_t state, dr_inverse_block_stats *stats)
 {
     slong n=a->r;ulong prime=a->modulus; nmod_t mod;nmod_init(&mod,prime);
-    if ((size_t)n>SIZE_MAX/(size_t)n || (size_t)n*n>SIZE_MAX/(size_t)count/sizeof(ulong) ||
+    /* Keep a batch large enough for geometric evaluation and parallel solves.
+     * This bounds temporary storage, not the number of supported samples. */
+    slong batch=FLINT_MAX(64, workers);
+    for (slong i=0;i<n;i++) for (slong j=0;j<n;j++)
+        batch=FLINT_MAX(batch,nmod_poly_mat_entry(a,i,j)->length);
+    batch=FLINT_MIN(batch,count);
+    /* Store small-field samples compactly; arithmetic remains limb-sized. */
+    int compact=prime<=UINT32_MAX;
+    size_t sample_bytes=compact ? sizeof(uint32_t) : sizeof(ulong);
+    if ((size_t)n>SIZE_MAX/(size_t)n || (size_t)n*n>SIZE_MAX/(size_t)batch/sample_bytes ||
         (size_t)count>SIZE_MAX/sizeof(nmod_mat_struct) ||
         (size_t)m>SIZE_MAX/(size_t)m/4/sizeof(nmod_poly_struct)) return 0;
-    double start=seconds();
-    ulong *values=flint_malloc((size_t)n*n*count*sizeof(ulong));
-#ifdef _OPENMP
-    #pragma omp parallel num_threads(workers) if(workers>1)
-#endif
-    {
-        int previous=flint_set_num_workers(0);
-        nmod_geometric_progression_t geo;
-        _nmod_geometric_progression_init_function(geo,root,count,mod,1);
-        nmod_poly_t scaled;nmod_poly_init(scaled,prime);
-#ifdef _OPENMP
-        #pragma omp for collapse(2) schedule(static)
-#endif
-        for (slong i=0;i<n;i++) for (slong j=0;j<n;j++) {
-            const nmod_poly_struct *entry=nmod_poly_mat_entry(a,i,j);
-            ulong *dest=values+((size_t)i*n+j)*count;
-            nmod_poly_fit_length(scaled,entry->length);ulong power=1;
-            for (slong k=0;k<entry->length;k++) {
-                scaled->coeffs[k]=nmod_mul(entry->coeffs[k],power,mod);
-                power=nmod_mul(power,dilation,mod);
-            }
-            scaled->length=entry->length;
-            if (entry->length) _nmod_poly_evaluate_geometric_nmod_vec_fast_precomp(
-                dest,scaled->coeffs,scaled->length,geo,count,mod);
-            else for (slong k=0;k<count;k++) dest[k]=0;
-        }
-        nmod_poly_clear(scaled);nmod_geometric_progression_clear(geo);
-        flint_reset_num_workers(previous);
-    }
-    stats->evaluation+=seconds()-start;start=seconds();
+    double start;
     nmod_mat_t u,v;nmod_mat_init(u,m,n,prime);nmod_mat_init(v,n,m,prime);
     for (slong i=0;i<n;i++) for (slong j=0;j<m;j++) {
         nmod_mat_entry(u,j,i)=n_randint(state,prime);
         nmod_mat_entry(v,i,j)=n_randint(state,prime);
     }
     nmod_mat_struct *blocks=flint_malloc(count*sizeof(*blocks));int failed=0;
+    void *values=flint_malloc((size_t)n*n*batch*sample_bytes);
+    ulong batch_dilation=dilation;
+    for (slong first=0;first<count;) {
+        slong points=FLINT_MIN(batch,count-first);
+        start=seconds();
 #ifdef _OPENMP
-    #pragma omp parallel num_threads(workers) reduction(|:failed) if(workers>1)
+        #pragma omp parallel num_threads(workers) if(workers>1)
 #endif
-    {
-        int previous=flint_set_num_workers(0);
-        nmod_mat_t value,x,h;nmod_mat_init(value,n,n,prime);
-        nmod_mat_init(x,n,m,prime);nmod_mat_init(h,m,m,prime);
+        {
+            int previous=flint_set_num_workers(0);
+            nmod_geometric_progression_t geo;
+            _nmod_geometric_progression_init_function(geo,root,batch,mod,1);
+            nmod_poly_t scaled;nmod_poly_init(scaled,prime);
+            ulong *scratch=compact ? flint_malloc(batch*sizeof(ulong)) : NULL;
 #ifdef _OPENMP
-        #pragma omp for schedule(static)
+            #pragma omp for collapse(2) schedule(static)
 #endif
-        for (slong k=0;k<count;k++) {
-            nmod_mat_init(blocks+k,2*m,m,prime);
-            for (slong i=0;i<n;i++) for (slong j=0;j<n;j++)
-                nmod_mat_entry(value,i,j)=values[((size_t)i*n+j)*count+k];
-            if (!nmod_mat_solve(x,value,v)) {failed=1;continue;}
-            nmod_mat_mul(h,u,x);
-            for (slong i=0;i<m;i++) {
-                for (slong j=0;j<m;j++) nmod_mat_entry(blocks+k,i,j)=nmod_mat_entry(h,i,j);
-                nmod_mat_entry(blocks+k,m+i,i)=1;
+            for (slong i=0;i<n;i++) for (slong j=0;j<n;j++) {
+                const nmod_poly_struct *entry=nmod_poly_mat_entry(a,i,j);
+                size_t offset=((size_t)i*n+j)*batch;
+                ulong *dest=compact ? scratch : (ulong *)values+offset;
+                nmod_poly_fit_length(scaled,entry->length);ulong power=1;
+                for (slong k=0;k<entry->length;k++) {
+                    scaled->coeffs[k]=nmod_mul(entry->coeffs[k],power,mod);
+                    power=nmod_mul(power,batch_dilation,mod);
+                }
+                scaled->length=entry->length;
+                if (entry->length) _nmod_poly_evaluate_geometric_nmod_vec_fast_precomp(
+                    dest,scaled->coeffs,scaled->length,geo,points,mod);
+                else for (slong k=0;k<points;k++) dest[k]=0;
+                if (compact) for (slong k=0;k<points;k++)
+                    ((uint32_t *)values)[offset+k]=(uint32_t)dest[k];
             }
+            flint_free(scratch);
+            nmod_poly_clear(scaled);nmod_geometric_progression_clear(geo);
+            flint_reset_num_workers(previous);
         }
-        nmod_mat_clear(value);nmod_mat_clear(x);nmod_mat_clear(h);
-        flint_reset_num_workers(previous);
+        stats->evaluation+=seconds()-start;start=seconds();
+#ifdef _OPENMP
+        #pragma omp parallel num_threads(workers) reduction(|:failed) if(workers>1)
+#endif
+        {
+            int previous=flint_set_num_workers(0);
+            nmod_mat_t value,x,h;nmod_mat_init(value,n,n,prime);
+            nmod_mat_init(x,n,m,prime);nmod_mat_init(h,m,m,prime);
+#ifdef _OPENMP
+            #pragma omp for schedule(static)
+#endif
+            for (slong k=0;k<points;k++) {
+                nmod_mat_init(blocks+first+k,2*m,m,prime);
+                for (slong i=0;i<n;i++) for (slong j=0;j<n;j++)
+                    nmod_mat_entry(value,i,j)=compact
+                        ? ((uint32_t *)values)[((size_t)i*n+j)*batch+k]
+                        : ((ulong *)values)[((size_t)i*n+j)*batch+k];
+                if (!nmod_mat_solve(x,value,v)) {failed=1;continue;}
+                nmod_mat_mul(h,u,x);
+                for (slong i=0;i<m;i++) {
+                    for (slong j=0;j<m;j++) nmod_mat_entry(blocks+first+k,i,j)=nmod_mat_entry(h,i,j);
+                    nmod_mat_entry(blocks+first+k,m+i,i)=1;
+                }
+            }
+            nmod_mat_clear(value);nmod_mat_clear(x);nmod_mat_clear(h);
+            flint_reset_num_workers(previous);
+        }
+        stats->inverse+=seconds()-start;
+        batch_dilation=nmod_mul(batch_dilation,nmod_pow_ui(nmod_mul(root,root,mod),points,mod),mod);
+        first+=points;
     }
     nmod_mat_clear(u);nmod_mat_clear(v);flint_free(values);
-    stats->inverse+=seconds()-start;int ok=0;
+    int ok=0;
     if (!failed) {
         slong *shift=flint_calloc(2*m,sizeof(slong)), *order=flint_malloc(2*m*sizeof(slong));
         nmod_poly_mat_t basis,den;

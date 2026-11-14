@@ -817,12 +817,20 @@ static int compute_unified_mpoly_det_layered_dp(unified_mpoly_t result, unified_
                      * column index is n-1-index. For n>=4, these n outputs and
                      * n inputs fit below the middle-layer entry peak. */
                     if (k == size) {
+                        slong child = size - 1 - index;
                         if (unified_mpoly_is_zero(matrix[0][index]) ||
-                            unified_mpoly_is_zero(previous[size - 1 - index])) continue;
+                            unified_mpoly_is_zero(previous[child])) {
+                            unified_mpoly_clear(previous[child]);
+                            previous[child] = NULL;
+                            continue;
+                        }
 #ifdef DRSOLVE_DET_TESTING
                         drsolve_det_test_event(1, size);
 #endif
-                        unified_mpoly_mul(current[index], matrix[0][index], previous[size - 1 - index]);
+                        unified_mpoly_mul(current[index], matrix[0][index], previous[child]);
+                        /* Each root term exclusively owns this cofactor. */
+                        unified_mpoly_clear(previous[child]);
+                        previous[child] = NULL;
                         if (index & 1) {
                             unified_mpoly_zero(product);
                             unified_mpoly_sub(current[index], product, current[index]);
@@ -867,8 +875,18 @@ static int compute_unified_mpoly_det_layered_dp(unified_mpoly_t result, unified_
 #endif
                         for (slong left = 0; left < count; left += 2 * stride) {
                             if (!product_ok || !sum_ok || left + stride >= count) continue;
-                            unified_mpoly_add(sum, current[left], current[left + stride]);
-                            unified_mpoly_swap(current[left], sum);
+                            unified_mpoly_t merged = unified_mpoly_init(ctx);
+                            if (merged == NULL) {
+                                failed = 1;
+                                continue;
+                            }
+                            unified_mpoly_add(merged, current[left], current[left + stride]);
+                            /* Neither input is read after this merge. Do not
+                             * retain its storage until the end of the tree. */
+                            unified_mpoly_clear(current[left]);
+                            unified_mpoly_clear(current[left + stride]);
+                            current[left] = merged;
+                            current[left + stride] = NULL;
                         }
                     }
                 }

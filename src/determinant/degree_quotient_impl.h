@@ -9,6 +9,9 @@
  * returns to its caller; the experiment reports failures as process errors.
  */
 #include <assert.h>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -61,6 +64,7 @@ typedef struct {
     grade *grades;
     double setup_seconds,update_seconds;
     slong products;
+    slong inner_threads;
 } degree_worker;
 static _Thread_local degree_worker active_worker;
 #define spaces (active_worker.grades)
@@ -293,9 +297,48 @@ static void bezout_core(dq_mat_t out,const entry *entries,int reduced) {
     for(slong k=1;k<=n;k++) {
         grouped_operator *operators=NULL;
         grouped_workspace *temps=NULL,*products=NULL;
-        for(slong mask=1;mask<masks;mask++)if(__builtin_popcountl(mask)==k) {
-            slong total=prefix_degree[k];
-            for(slong a=FLINT_MAX(0,total-right_degree);a<=FLINT_MIN(left_degree,total);a++) {
+        slong total=prefix_degree[k];
+        /* Operators depend on the bidegree, not the subset mask. Finish all
+         * masks for one bidegree before releasing that operator cache. */
+        for(slong a=FLINT_MAX(0,total-right_degree);a<=FLINT_MIN(left_degree,total);a++) {
+#if defined(_OPENMP) && !defined(DEGREE_QUOTIENT_EXTENSION)
+            if(reduced && grouped_kernel && active_worker.inner_threads>1 && k<n) {
+                slong b=total-a;
+                grouped_operator *ops[n];
+                double stage=seconds();
+                for(slong j=0;j<n;j++)
+                    ops[j]=grouped_build(&operators,&maps,entries+(k-1)*n+j,a,b);
+                operator_setup_seconds+=seconds()-stage;
+                degree_worker parent=active_worker;
+                slong products_count=0;
+                stage=seconds();
+                #pragma omp parallel num_threads(parent.inner_threads) reduction(+:products_count)
+                {
+                    degree_worker saved=active_worker;active_worker=parent;
+                    matrix_products=0;
+                    grouped_workspace *local_temps=NULL,*local_products=NULL;
+                    #pragma omp for schedule(dynamic,1)
+                    for(slong mask=1;mask<masks;mask++)if(__builtin_popcountl(mask)==k) {
+                        dq_mat_struct *dst=state+mask*stride+a;
+                        dq_mat_init(dst,spaces[a].h,spaces[b].h,prime);
+                        slong pos=0;
+                        for(slong j=0;j<n;j++)if(mask&(1L<<j)) {
+                            slong child=mask^(1L<<j);int neg=(k-1+pos++)&1;
+                            grouped_apply(dst,ops[j],state+child*stride,neg,
+                                          &local_temps,&local_products);
+                        }
+                    }
+                    products_count=matrix_products;
+                    grouped_scratch_clear(local_temps);grouped_scratch_clear(local_products);
+                    active_worker=saved;
+                }
+                matrix_products+=products_count;
+                operator_update_seconds+=seconds()-stage;
+                grouped_clear(operators);operators=NULL;
+                continue;
+            }
+#endif
+            for(slong mask=1;mask<masks;mask++)if(__builtin_popcountl(mask)==k) {
                 slong b=total-a;grade *ga=spaces+a,*gb=spaces+b;
                 dq_mat_struct *dst=state+mask*stride+a;
                 dq_mat_init(dst,reduced?ga->h:ga->size,reduced?gb->h:gb->size,prime);
@@ -339,8 +382,9 @@ static void bezout_core(dq_mat_t out,const entry *entries,int reduced) {
                     }
                 }
             }
+            grouped_clear(operators);operators=NULL;
         }
-        grouped_clear(operators);grouped_scratch_clear(temps);grouped_scratch_clear(products);
+        grouped_scratch_clear(temps);grouped_scratch_clear(products);
         for(slong mask=0;mask<masks;mask++)if(__builtin_popcountl(mask)==k-1)
             for(slong a=0;a<stride;a++)if(state[mask*stride+a].r){dq_mat_clear(state+mask*stride+a);memset(state+mask*stride+a,0,sizeof(*state));}
     }

@@ -1791,6 +1791,31 @@ static void mq_filtered_mul(nmod_mpoly_t out, const nmod_mpoly_t a,
     if (f) mq_filter_poly(out, ctx, f, 0);
 }
 
+/* Dense root products often have identical support. In that case their
+ * sum needs no new exponent or coefficient buffer. Check before modifying
+ * either input; differing supports retain FLINT's general merge. */
+static int nmod_mpoly_add_same_support_inplace(nmod_mpoly_t a,
+    const nmod_mpoly_t b, const nmod_mpoly_ctx_t ctx)
+{
+    if (a->length != b->length || a->bits != b->bits) return 0;
+    if (a->length == 0) return 1;
+    slong words = mpoly_words_per_exp(a->bits, ctx->minfo);
+    if (memcmp(a->exps, b->exps,
+               (size_t) a->length * words * sizeof(ulong)) != 0) return 0;
+    slong length = 0;
+    for (slong i = 0; i < a->length; i++) {
+        ulong coeff = nmod_add(a->coeffs[i], b->coeffs[i], ctx->mod);
+        if (!coeff) continue;
+        a->coeffs[length] = coeff;
+        if (length != i)
+            memmove(a->exps + length * words, a->exps + i * words,
+                    (size_t) words * sizeof(ulong));
+        length++;
+    }
+    _nmod_mpoly_set_length(a, length, ctx);
+    return 1;
+}
+
 /* Layered minor DP, using colex column-subset ranks and adjacent layers.
  * The final expansion is parallelized by cofactor, followed by a tree sum.
  * The entry limit excludes arithmetic temporaries and matrix views.
@@ -1935,12 +1960,20 @@ static int compute_nmod_mpoly_det_layered_dp(nmod_mpoly_t result, nmod_mpoly_t *
                      * column index is n-1-index. For n>=4, these n outputs and
                      * n inputs fit below the middle-layer entry peak. */
                     if (k == size) {
+                        slong child = size - 1 - index;
                         if (nmod_mpoly_is_zero(matrix[0][index], ctx) ||
-                            nmod_mpoly_is_zero(previous[size - 1 - index], ctx)) continue;
+                            nmod_mpoly_is_zero(previous[child], ctx)) {
+                            nmod_mpoly_clear(previous[child], ctx);
+                            nmod_mpoly_init(previous[child], ctx);
+                            continue;
+                        }
 #ifdef DRSOLVE_DET_TESTING
                         drsolve_det_test_event(1, size);
 #endif
-                        mq_filtered_mul(current[index], matrix[0][index], previous[size - 1 - index], ctx, layer_filter);
+                        mq_filtered_mul(current[index], matrix[0][index], previous[child], ctx, layer_filter);
+                        /* Each root term exclusively owns its cofactor. */
+                        nmod_mpoly_clear(previous[child], ctx);
+                        nmod_mpoly_init(previous[child], ctx);
                         if (index & 1) {
                             nmod_mpoly_zero(product, ctx);
                             nmod_mpoly_sub(current[index], product, current[index], ctx);
@@ -1996,8 +2029,17 @@ static int compute_nmod_mpoly_det_layered_dp(nmod_mpoly_t result, nmod_mpoly_t *
 #endif
                         for (slong left = 0; left < count; left += 2 * stride) {
                             if (!product_ok || !sum_ok || left + stride >= count) continue;
-                            nmod_mpoly_add(sum, current[left], current[left + stride], ctx);
-                            nmod_mpoly_swap(current[left], sum, ctx);
+                            if (!nmod_mpoly_add_same_support_inplace(
+                                    current[left], current[left + stride], ctx)) {
+                                nmod_mpoly_add(sum, current[left], current[left + stride], ctx);
+                                nmod_mpoly_swap(current[left], sum, ctx);
+                            }
+                            /* Release the consumed right input and any old
+                             * left buffer before the next tree level. */
+                            nmod_mpoly_clear(sum, ctx);
+                            nmod_mpoly_init(sum, ctx);
+                            nmod_mpoly_clear(current[left + stride], ctx);
+                            nmod_mpoly_init(current[left + stride], ctx);
                         }
                     }
                 }

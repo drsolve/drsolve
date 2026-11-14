@@ -73,6 +73,20 @@ static slong sample_workers(slong requested,slong points)
 }
 static int sample_cores(ulong *values,slong points,slong h,slong workers,slong *used)
 {
+    slong inner_threads=1;
+#ifdef _OPENMP
+    /* Experimental split: preserve the total requested thread budget. */
+    const char *split=getenv("DRSOLVE_QUOTIENT_SAMPLE_WORKERS");
+    if(split && !omp_in_parallel()) {
+        char *end;errno=0;long requested=strtol(split,&end,10);
+        if(!errno && *split && !*end && requested>0 && requested<workers) {
+            inner_threads=workers/requested;workers=requested;
+        }
+    }
+    int saved_levels=omp_get_max_active_levels();
+    if(inner_threads>1 && saved_levels<2)omp_set_max_active_levels(2);
+#endif
+    if(inner_threads>1)info("  Hybrid quotient: %ld sample workers x %ld inner threads\n",workers,inner_threads);
     degree_worker *contexts=flint_calloc(workers,sizeof(*contexts));
     contexts[0]=active_worker;
     for(slong w=1;w<workers;w++)contexts[w]=clone_worker(contexts);
@@ -87,6 +101,7 @@ static int sample_cores(ulong *values,slong points,slong h,slong workers,slong *
         *used=1;
 #endif
         degree_worker saved=active_worker;active_worker=contexts[id];
+        active_worker.inner_threads=inner_threads;
         ulong **q=new_coefficients();
         nmod_mat_t core;nmod_mat_init(core,h,h,prime);
         #pragma omp for schedule(dynamic,1)
@@ -101,7 +116,11 @@ static int sample_cores(ulong *values,slong points,slong h,slong workers,slong *
         nmod_mat_clear(core);clear_coefficients(q);active_worker=saved;
     }
     for(slong w=1;w<workers;w++)clear_worker_copy(contexts+w);
-    flint_free(contexts);return valid;
+    flint_free(contexts);
+#ifdef _OPENMP
+    omp_set_max_active_levels(saved_levels);
+#endif
+    return valid;
 }
 static int compute(unified_mpoly_struct *result,const unified_mpoly_struct *polys,
                    slong nv,slong np,slong requested_workers,mq_quotient_stats *stats)

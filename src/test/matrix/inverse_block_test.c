@@ -42,7 +42,8 @@ int main(void)
             for (int shape=0;shape<3;shape++) {
                 for (slong i=0;i<n;i++) for (slong j=0;j<n;j++) {
                     nmod_poly_struct *entry=nmod_poly_mat_entry(a,i,j);nmod_poly_zero(entry);
-                    slong degree=shape==0 ? 3 : 1+n_randint(rng,7);
+                    /* Exercise multiple sampling batches, including a partial tail. */
+                    slong degree=shape==0 ? (prime>65537 ? 35 : 3) : 1+n_randint(rng,7);
                     if (shape==2 && i>j) continue;
                     for (slong k=0;k<=degree;k++) nmod_poly_set_coeff_ui(entry,k,n_randint(rng,prime));
                 }

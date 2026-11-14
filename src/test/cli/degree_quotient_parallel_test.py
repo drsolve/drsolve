@@ -16,11 +16,15 @@ def main():
     parser.add_argument("--threads", nargs="+", type=int, default=[1, 2, 4, 8])
     parser.add_argument("--cases", nargs="+", default=["[3]*5", "[8]*3", "[2,3,4]"])
     parser.add_argument("--binary", default="./drsolve")
+    parser.add_argument("--sample-workers", type=int, help="Exercise experimental hybrid sampling")
     args = parser.parse_args()
     assert args.repeat > 0 and min(args.threads) > 0
     out = Path("out/degree_quotient_parallel")
     out.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, LD_LIBRARY_PATH=".:/usr/local/lib", OMP_DYNAMIC="FALSE")
+    if args.sample_workers is not None:
+        assert args.sample_workers > 0
+        env["DRSOLVE_QUOTIENT_SAMPLE_WORKERS"] = str(args.sample_workers)
     records = []
     for case in args.cases:
         for seed in args.seeds:
@@ -51,6 +55,9 @@ def main():
                             assert "fallback:" not in log, log
                             row["workers"] = int(re.search(r"sample workers: ([0-9]+)", log)[1])
                             assert 1 <= row["workers"] <= threads
+                            if args.sample_workers is not None and threads > args.sample_workers:
+                                assert "Hybrid quotient:" in log, log
+                                assert row["workers"] == args.sample_workers, log
                             row["sampling"] = float(re.search(r"Step 2 time: ([0-9.]+)", log)[1])
                         records.append(row)
                         (out / "results.json").write_text(json.dumps(records, indent=2) + "\n")
