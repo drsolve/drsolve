@@ -32,6 +32,7 @@ typedef struct {
 struct dr_circuit {
     circuit_node *nodes;
     slong count,capacity,outputs[2],slots,degree;
+    slong resultant_degree_hint;
     int eliminate;
     nmod_t mod;
 };
@@ -205,6 +206,68 @@ static slong arity(const circuit_node *n) {
         n->op==C_ADD || n->op==C_SUB || n->op==C_MUL?2:0;
 }
 static slong operand(const circuit_node *n,slong i) {return n->op==C_LIN?n->refs[i]:i?n->b:n->a;}
+/* Degree arithmetic saturates at the existing total-degree bound. This is
+ * only a startup estimate, never a substitute for resultant verification. */
+static slong degree_product(slong a,ulong b,slong bound)
+{
+    return !a || !b?0:b>(ulong)(bound/a)?bound:a*(slong)b;
+}
+static slong lifted_degree(const dr_circuit *c,const unsigned char *live,
+    const unsigned char *lift,slong trial,slong *weight,slong bound)
+{
+    slong factor=1;
+    for(slong i=0;i<c->count;i++) {
+        weight[i]=0;if(!live[i])continue;
+        const circuit_node *n=c->nodes+i;
+        slong a=weight[n->a],b=weight[n->b],w=0;
+        switch(n->op) {
+        case C_X:case C_Y:w=1;break;
+        case C_CONST:break;
+        case C_ADD:case C_SUB:w=FLINT_MAX(a,b);break;
+        case C_MUL:w=a>bound-b?bound:a+b;break;
+        case C_POW:
+            w=degree_product(a,n->exponent,bound);
+            if(a && n->exponent>1 && (lift[i] || i==trial)) {
+                /* Replace u^e by an auxiliary z of weight deg(u).
+                 * Its relation z-u^e contributes a factor e. */
+                w=a;factor=degree_product(factor,n->exponent,bound);
+            }
+            break;
+        case C_LIN:
+            for(slong j=0;j<n->nargs;j++)if(n->coeffs[j])
+                w=FLINT_MAX(w,weight[n->refs[j]]);
+            break;
+        }
+        weight[i]=w;
+    }
+    factor=degree_product(factor,(ulong)weight[c->outputs[0]],bound);
+    return degree_product(factor,(ulong)weight[c->outputs[1]],bound);
+}
+static slong estimate_resultant_degree(const dr_circuit *c)
+{
+    if(c->degree<1 || c->degree>WORD_MAX/c->degree)return 0;
+    slong bound=c->degree*c->degree,best=bound;
+    unsigned char *live=flint_calloc(c->count,1),*lift=flint_calloc(c->count,1);
+    slong *weight=flint_calloc(c->count,sizeof(*weight));
+    live[c->outputs[0]]=live[c->outputs[1]]=1;
+    for(slong i=c->count;i-->0;)if(live[i])
+        for(slong j=0;j<arity(c->nodes+i);j++)live[operand(c->nodes+i,j)]=1;
+    /* Greedily lift shared nonlinear subexpressions when doing so reduces
+     * the weighted degree product. No round counts or family names are used.
+     * Exact cancellation can make this estimate loose; adaptive sampling
+     * and the independently certified verification bound remain necessary. */
+    for(;;) {
+        slong choice=-1,next=best;
+        for(slong i=0;i<c->count;i++)if(live[i] && !lift[i] &&
+            c->nodes[i].op==C_POW && c->nodes[i].exponent>1) {
+            slong value=lifted_degree(c,live,lift,i,weight,bound);
+            if(value>0 && value<next){next=value;choice=i;}
+        }
+        if(choice<0)break;
+        lift[choice]=1;best=next;
+    }
+    flint_free(weight);flint_free(lift);flint_free(live);return best;
+}
 static void assign_slots(dr_circuit *c)
 {
     slong *last=flint_malloc(c->count*sizeof(*last)),*free_slots=flint_malloc(c->count*sizeof(*free_slots)),nf=0;
@@ -297,7 +360,8 @@ dr_circuit *dr_circuit_read(FILE *input,char *error,size_t error_size)
     if(a->degree<1 || a->degree!=b->degree || !a->leading || !b->leading) {
         why="unsupported circuit: need certified equal positive total degrees and constant nonzero leading coefficients; try the expanded .dr interface";goto fail;
     }
-    c->degree=a->degree;assign_slots(c);free(line);return c;
+    c->degree=a->degree;c->resultant_degree_hint=estimate_resultant_degree(c);
+    assign_slots(c);free(line);return c;
 fail:
     snprintf(error,error_size,"line %ld: %s",lineno,why);free(line);dr_circuit_clear(c);return NULL;
 }
@@ -365,7 +429,7 @@ static int specialize_gr(gr_poly_t f,gr_poly_t g,gr_srcptr point,gr_ctx_t ctx,co
 }
 void dr_circuit_source(dr_bezout_source *source,const dr_circuit *c)
 {
-    *source=(dr_bezout_source){c,workspace_init,workspace_clear,specialize,specialize_gr};
+    *source=(dr_bezout_source){c,workspace_init,workspace_clear,specialize,specialize_gr,c->resultant_degree_hint};
 }
 static int scalar_check(const dr_circuit *c,ulong x,ulong y)
 {
@@ -439,7 +503,7 @@ int dr_circuit_cli_main(int argc,char **argv,void (*print_banner)(void))
         printf("Mode: %s  |  Field: F_%lu\n",only?"Circuit resultant":"Circuit polynomial system solver",c->mod.n);
         printf("System: 2 equations, 2 variables (x, y)\nEliminate: %c  |  Remaining variable: %c\n",c->eliminate?'y':'x',c->eliminate?'x':'y');
     }
-    if(verbose)printf("Circuit: prime=%lu nodes=%ld workspace_slots=%ld degree=%ld eliminate=%c threads=%d\n",c->mod.n,c->count,c->slots,c->degree,c->eliminate?'y':'x',threads);
+    if(verbose)printf("Circuit: prime=%lu nodes=%ld workspace_slots=%ld degree=%ld resultant_degree_estimate=%ld eliminate=%c threads=%d\n",c->mod.n,c->count,c->slots,c->degree,c->resultant_degree_hint,c->eliminate?'y':'x',threads);
     double parsed=dr_profile_now();
     dr_bezout_source source;dr_circuit_source(&source,c);
     nmod_poly_t resultant;nmod_poly_init(resultant,c->mod.n);

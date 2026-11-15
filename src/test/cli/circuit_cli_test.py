@@ -113,7 +113,35 @@ with tempfile.TemporaryDirectory() as d:
                       env=dict(os.environ,DRSOLVE_PROFILE_BEZOUT='1'))
   assert proc.returncode==0,proc.stdout+proc.stderr
   assert expected==monic(out.read_text().split('Resultant:\n')[1],2130706433)
-  assert re.search(r'Circuit attempt [2-9]:.*reused=[1-9]',proc.stderr),proc.stderr
+  if flags:
+   assert re.search(r'Circuit attempt [2-9]:.*reused=[1-9]',proc.stderr),proc.stderr
+  else:
+   assert 'Circuit attempt 1: points=86 status=accepted' in proc.stderr,proc.stderr
+
+ # Shared power gates must reduce the startup estimate without relying on
+ # Poseidon names or round metadata. An unused high-degree gate has no effect.
+ for a,b in ((3,3),(2,5)):
+  for eliminate in ('x','y'):
+   path.write_text(f'''DRCIRCUIT 1
+prime 65537
+eliminate {eliminate}
+add 0 1
+pow 2 {a}
+add 3 0
+pow 4 {b}
+lin 1 1 5 1 0
+lin 2 1 5 1 1
+pow 0 1000
+outputs 6 7
+''')
+   proc=run(['--circuit',str(path),'--threads','2','--resultant-only','-o',str(out)])
+   assert proc.returncode==0,proc.stdout+proc.stderr
+   assert f'resultant_degree_estimate={a*b} ' in proc.stdout,proc.stdout
+   got=monic(out.read_text().split('Resultant:\n')[1],65537)
+   common=f'((x+y)^{a}+x)^{b}'
+   ref=run([f'{common}+x+1,{common}+y+2',eliminate,'65537',
+            '--threads','1','--resultant-only','--no-bezout-block','-o',str(out)])
+   assert ref.returncode==0 and got==monic(out.read_text().split('Resultant:\n')[1],65537),(proc.stdout,ref.stdout,ref.stderr)
 
  # A cubic identity reduces to a quadratic: degree certification must fold
  # the exact cancellation, rather than guess the smaller bound from samples.

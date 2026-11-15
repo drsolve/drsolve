@@ -28,6 +28,9 @@ typedef struct {
     void (*clear)(void *workspace,const void *data);
     void (*eval)(nmod_poly_t f,nmod_poly_t g,ulong point,void *workspace,const void *data);
     int (*eval_gr)(gr_poly_t f,gr_poly_t g,gr_srcptr point,gr_ctx_t ctx,const void *data);
+    /* Optional startup estimate only; zero means unknown. Verification and
+     * the final reconstruction budget always retain the certified d*d bound. */
+    slong resultant_degree_hint;
 } dr_bezout_source;
 int dr_nmod_resultant_bezout_source_try(nmod_poly_t out,slong degree,
     const dr_bezout_source *source,flint_rand_t state,dr_bezout_block_stats *stats);
@@ -35,13 +38,15 @@ int dr_nmod_resultant_bezout_source_try(nmod_poly_t out,slong degree,
 /* Dixon/Bezout inverse-Hankel projection with verified reconstruction.
  * Equal total degrees d: constant, nonzero x^d coefficients are required;
  * block=0 selects max(min(6,d),floor(cuberoot(d))). The contiguous projection
- * uses the shifted budget when the highest homogeneous parts certify
- * resultant degree d^2; otherwise it starts with O(d) points and doubles,
- * trying the shifted budget before the full reconstruction budget. Small
- * budgets use a numerical denominator precheck before the polynomial det.
- * The circuit-source path retains its O(d) starting budget and doubling,
- * reusing inverse-Hankel samples on a fixed grid until a sample is singular.
- * DRSOLVE_BEZOUT_INITIAL_POINTS optionally overrides the equal-degree
+ * starts with 2*ceil(D/block) points, where D is the degree product after
+ * cancelling the constant leading term. Circuit sources may provide a
+ * structural degree estimate; otherwise D=d^2. These startup estimates do
+ * not change the certified verification bound or the full retry budget.
+ * Equal-degree retries double, trying the shifted budget when approached
+ * from below. Small expanded budgets use a numerical denominator precheck.
+ * Circuit retries reuse inverse-Hankel samples on a fixed grid until a
+ * sample is singular. Unequal-degree retries use the full spaced budget.
+ * DRSOLVE_BEZOUT_INITIAL_POINTS optionally overrides the
  * starting count (bounded by that budget); invalid values use the default.
  * DRSOLVE_PROFILE_BEZOUT=1 reports each attempt to stderr.
  * DRSOLVE_BEZOUT_HGCD_CUTOFF optionally tunes the inverse-prefix HGCD

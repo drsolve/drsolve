@@ -181,18 +181,29 @@ static int verify(nmod_poly_t candidate,const nmod_poly_struct *coeffs,
     if(ext==1)gr_ctx_clear(ctx);else fq_nmod_ctx_clear(fq);
     return ok;
 }
-/* The coefficient of y^(d*d) in Res_x(f,g) is
- * Res_x(f_d(x,1),g_d(x,1)). A nonzero value certifies the full degree;
- * a zero value says nothing about the smaller degree or its multiplicities. */
-static int full_resultant_degree(const nmod_poly_struct *coeffs,slong d,ulong p)
+/* Cancel the constant leading term before estimating the degree product.
+ * This also detects cheap degree drops in expanded composed inputs. */
+static slong reduced_degree_estimate(const nmod_poly_struct *coeffs,slong d,
+    slong bound,ulong p)
 {
-    nmod_poly_t f,g;nmod_poly_init(f,p);nmod_poly_init(g,p);
+    nmod_poly_t t;nmod_poly_init(t,p);slong degree=-1;
+    ulong scale=nmod_div(nmod_poly_get_coeff_ui(coeffs+2*d+1,0),
+                        nmod_poly_get_coeff_ui(coeffs+d,0),t->mod);
     for(slong i=0;i<=d;i++) {
-        nmod_poly_set_coeff_ui(f,i,nmod_poly_get_coeff_ui(coeffs+i,d-i));
-        nmod_poly_set_coeff_ui(g,i,nmod_poly_get_coeff_ui(coeffs+d+1+i,d-i));
+        nmod_poly_scalar_mul_nmod(t,coeffs+i,scale);
+        nmod_poly_sub(t,coeffs+d+1+i,t);
+        if(t->length)degree=FLINT_MAX(degree,nmod_poly_degree(t)+i);
     }
-    int full=nmod_poly_resultant(f,g)!=0;
-    nmod_poly_clear(f);nmod_poly_clear(g);return full;
+    nmod_poly_clear(t);
+    return degree<1?1:degree>bound/d?bound:d*degree;
+}
+
+/* A startup heuristic, not a sufficient reconstruction bound: row degrees
+ * need not balance. Keep the larger certified budget and independent checks. */
+static slong initial_count(slong degree,slong block,slong full_count)
+{
+    slong half=degree/block+(degree%block!=0);
+    return half>full_count/2?full_count:FLINT_MAX(1,2*half);
 }
 
 /* Reject undersampled denominators before their expensive polynomial
@@ -484,28 +495,25 @@ int dr_nmod_mpoly_resultant_bezout_block_try(nmod_poly_t out,
         if(half>(WORD_MAX-1-2*d)/2)return 0;
         short_count=1+2*half-2*d+2*m;full_count=1+2*half+2*d;
     }
-    /* The total-degree bound is often very loose for composed systems.
-     * Start with O(d) points, then double until independent resultant checks
-     * succeed. Only the full bound is trusted by verification; an undersampled
-     * reconstruction is never accepted just because its degree looks small. */
-    slong count=unbalanced?short_count:FLINT_MIN(short_count,2*d+1);
+    slong count=initial_count(bound,m,full_count);
+    slong max_count=FLINT_MIN((ulong)full_count,(out->mod.n-1)/2);
+    if(max_count<1)return 0;
     /* Optional starting budget; correctness still requires the same checks.
      * Full_count is the existing theoretical reconstruction budget. */
     int automatic_initial=1;
     const char *initial=getenv("DRSOLVE_BEZOUT_INITIAL_POINTS");
-    if(!unbalanced && initial_points_setting < 0 && initial && *initial) {
+    if(initial_points_setting < 0 && initial && *initial) {
         char *end;errno=0;
         unsigned long value=strtoul(initial,&end,10);
         if(errno || initial[0]=='-' || end==initial || *end || !value || value>(ulong)WORD_MAX) {
             fprintf(stderr,"Invalid DRSOLVE_BEZOUT_INITIAL_POINTS: expected a positive slong; using automatic budget.\n");
         } else {count=FLINT_MIN((slong)value,full_count);automatic_initial=0;}
     }
-    if(!unbalanced && initial_points_setting > 0) {
+    if(initial_points_setting > 0) {
         count=FLINT_MIN(initial_points_setting,full_count);automatic_initial=0;
     }
     const char *profile_env=getenv("DRSOLVE_PROFILE_BEZOUT");
     int profile=profile_env && *profile_env && strcmp(profile_env,"0");
-    if((ulong)count>(out->mod.n-1)/2)return 0;
     slong rows=2*(d+1);
     if((size_t)rows>SIZE_MAX/sizeof(nmod_poly_struct))return 0;
     nmod_poly_struct *coeffs=flint_malloc(rows*sizeof(*coeffs));
@@ -522,9 +530,9 @@ int dr_nmod_mpoly_resultant_bezout_block_try(nmod_poly_t out,
                 nmod_mpoly_get_term_coeff_ui(inputs[k],i,ctx));
         }
     }
-    if(!unbalanced && automatic_initial) {
+    if(prepared && automatic_initial) {
         double degree_start=seconds();
-        if(full_resultant_degree(coeffs,d,out->mod.n))count=short_count;
+        count=initial_count(reduced_degree_estimate(coeffs,d,bound,out->mod.n),m,full_count);
         stats->evaluation+=seconds()-degree_start;
     }
     if(dr_profile_enabled())dr_profile_end("block.prepare_coefficients",prep_start);
@@ -541,6 +549,7 @@ int dr_nmod_mpoly_resultant_bezout_block_try(nmod_poly_t out,
     }
     nmod_poly_t candidate;nmod_poly_init(candidate,out->mod.n);
     ulong root=prepared?n_primitive_root_prime(out->mod.n):1;int ok=0;
+    count=FLINT_MIN(count,max_count);
     stats->block=m;
     for(int attempt=0;prepared;attempt++) {
         if((ulong)count>(out->mod.n-1)/2)break;
@@ -571,10 +580,10 @@ int dr_nmod_mpoly_resultant_bezout_block_try(nmod_poly_t out,
         }
         if(unbalanced) {
             if(attempt)break;
-            count=full_count;
+            count=max_count;
         } else {
-            if(count==full_count)break;
-            slong next=count>(full_count-1)/2?full_count:2*count+1;
+            if(count==max_count)break;
+            slong next=count>(max_count-1)/2?max_count:2*count+1;
             count=count<short_count?FLINT_MIN(next,short_count):next;
         }
     }
@@ -598,7 +607,13 @@ int dr_nmod_resultant_bezout_source_try(nmod_poly_t out,slong d,
     slong half=bound/m+(bound%m!=0);
     if(half>(WORD_MAX-1-2*d)/2)return 0;
     slong short_count=1+2*half-2*d+2*m,full_count=1+2*half+2*d;
-    slong count=FLINT_MIN(short_count,2*d+1);
+    slong estimate=source->resultant_degree_hint>0?
+        FLINT_MIN(source->resultant_degree_hint,bound):bound;
+    slong count=initial_count(estimate,m,full_count);
+    /* The squared geometric progression has (p-1)/2 distinct points.
+     * Try its remaining points before giving up when doubling crosses it. */
+    slong max_count=FLINT_MIN((ulong)full_count,(out->mod.n-1)/2);
+    if(max_count<1)return 0;
     const char *initial=getenv("DRSOLVE_BEZOUT_INITIAL_POINTS");
     if(initial_points_setting<0 && initial && *initial) {
         char *end;errno=0;unsigned long v=strtoul(initial,&end,10);
@@ -607,6 +622,7 @@ int dr_nmod_resultant_bezout_source_try(nmod_poly_t out,slong d,
         else count=FLINT_MIN((slong)v,full_count);
     }
     if(initial_points_setting>0)count=FLINT_MIN(initial_points_setting,full_count);
+    count=FLINT_MIN(count,max_count);
     stats->degree_a=stats->degree_b=d;stats->block=m;
     if((ulong)count>(out->mod.n-1)/2)return 0;
     ulong root=n_primitive_root_prime(out->mod.n);
@@ -631,8 +647,8 @@ int dr_nmod_resultant_bezout_source_try(nmod_poly_t out,slong d,
             stats->attempts,count,ok?"accepted":reconstructed?"verification_failed":"reconstruction_failed",
             nmod_poly_degree(candidate),seconds()-started,reused);
         if(ok){nmod_poly_swap(out,candidate);break;}
-        if(count==full_count)break;
-        count=count>(full_count-1)/2?full_count:2*count+1;
+        if(count==max_count)break;
+        count=count>(max_count-1)/2?max_count:2*count+1;
     }
     clear_sample_cache(&cache);nmod_poly_clear(candidate);return ok;
 }

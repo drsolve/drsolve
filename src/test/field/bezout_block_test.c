@@ -54,7 +54,10 @@ static void check_composed(flint_rand_t rng)
         nmod_poly_set_coeff_ui(expected,0,nmod_add(nmod_poly_get_coeff_ui(expected,0),2,expected->mod));
         dr_bezout_block_stats stats;
         assert(dr_nmod_mpoly_resultant_bezout_block_try(actual,a,b,0,ctx,0,rng,&stats));
-        assert(nmod_poly_equal(actual,expected));assert(stats.points<=2*d+1);
+        assert(nmod_poly_equal(actual,expected));
+        /* A small resultant degree alone does not balance the projected
+         * numerator/denominator degrees. The optimistic budget must retry. */
+        assert(stats.attempts>1);
         check_verification_budget(&stats,prime,d*d);
 
         /* Repeated invariant factors can be invisible to a small projection.
@@ -100,6 +103,14 @@ static void check_singular_circuit_cache(void)
     assert(dr_nmod_resultant_bezout_source_try(actual,2,&source,state,&stats));
     dr_bezout_block_set_initial_points(-1);
     assert(stats.attempts==3 && stats.points==7);
+    assert(nmod_poly_equal(actual,expected));
+    check_verification_budget(&stats,p,4);
+    /* A deliberately wrong hint may alter startup work, never the proof
+     * budget or the accepted resultant (including multiplicity). */
+    source.resultant_degree_hint=1;
+    dr_bezout_block_set_initial_points(0);
+    assert(dr_nmod_resultant_bezout_source_try(actual,2,&source,state,&stats));
+    dr_bezout_block_set_initial_points(-1);
     assert(nmod_poly_equal(actual,expected));
     check_verification_budget(&stats,p,4);
     nmod_poly_clear(actual);nmod_poly_clear(expected);nmod_poly_clear(linear);
