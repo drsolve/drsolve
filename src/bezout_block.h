@@ -15,6 +15,7 @@ void dr_bezout_block_set_initial_points(slong points);
 typedef struct {
     slong points, block, attempts, verification_extension_degree, verification_checks;
     slong degree_a, degree_b;
+    int accepted_by_solutions;
     double evaluation, inverse, interpolation, determinant, verification;
 } dr_bezout_block_stats;
 /* Specialization oracle for two equal-total-degree polynomials in K[x,y].
@@ -31,6 +32,10 @@ typedef struct {
     /* Optional startup estimate only; zero means unknown. Verification and
      * the final reconstruction budget always retain the certified d*d bound. */
     slong resultant_degree_hint;
+    /* Optional solving-only acceptance: a positive return certifies witnesses,
+     * not the resultant or completeness. Unset for resultant computation. */
+    int (*accept_candidate)(const nmod_poly_t candidate,void *data);
+    void *accept_data;
 } dr_bezout_source;
 int dr_nmod_resultant_bezout_source_try(nmod_poly_t out,slong degree,
     const dr_bezout_source *source,flint_rand_t state,dr_bezout_block_stats *stats);

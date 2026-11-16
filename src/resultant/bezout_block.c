@@ -198,12 +198,65 @@ static slong reduced_degree_estimate(const nmod_poly_struct *coeffs,slong d,
     return degree<1?1:degree>bound/d?bound:d*degree;
 }
 
+/* Opt-in first-candidate diagnostics; never changes acceptance. */
+static void diagnostic_save(const char *prefix,const char *suffix,const nmod_poly_t p)
+{
+    size_t n=strlen(prefix)+strlen(suffix)+1;char *path=flint_malloc(n);
+    snprintf(path,n,"%s%s",prefix,suffix);FILE *f=fopen(path,"w");
+    if(f){nmod_poly_fprint(f,p);fputc('\n',f);fclose(f);}
+    else perror(path);
+    flint_free(path);
+}
+static void diagnostic_factor(const char *prefix,const nmod_poly_t candidate,
+    slong d,slong bound,const dr_bezout_source *source)
+{
+    diagnostic_save(prefix,".candidate",candidate);
+    slong extra=nmod_poly_degree(candidate)-source->resultant_degree_hint;
+    fprintf(stderr,"DIAG candidate_degree=%ld hint=%ld extra=%ld\n",nmod_poly_degree(candidate),source->resultant_degree_hint,extra);
+    if(extra<0 || source->resultant_degree_hint<1)return;
+    ulong p=candidate->mod.n;slong n=extra+1;
+    ulong *xs=flint_malloc(n*sizeof(ulong)),*ys=flint_malloc(n*sizeof(ulong));
+    nmod_poly_t f,g,h,q,r;nmod_poly_init(f,p);nmod_poly_init(g,p);nmod_poly_init(h,p);nmod_poly_init(q,p);nmod_poly_init(r,p);
+    void *w=source->init(source->data);ulong point=1009;
+    for(slong i=0;i<n;) {
+        ulong expected=specialized_resultant(NULL,d,point,f,g,source,w);
+        if(expected){xs[i]=point;ys[i]=nmod_div(nmod_poly_evaluate_nmod(candidate,point),expected,candidate->mod);i++;}
+        point++;
+    }
+    nmod_poly_interpolate_nmod_vec(h,xs,ys,n);
+    int matched=0;
+    for(int i=0;i<8;i++,point+=101) {
+        ulong expected=specialized_resultant(NULL,d,point,f,g,source,w);
+        ulong actual=nmod_poly_evaluate_nmod(candidate,point);
+        int pass=actual==nmod_mul(expected,nmod_poly_evaluate_nmod(h,point),candidate->mod);
+        matched+=pass;
+        fprintf(stderr,"DIAG ratio_holdout point=%lu candidate=%lu actual_resultant=%lu pass=%d\n",point,actual,expected,pass);
+    }
+    diagnostic_save(prefix,".factor_fit",h);
+    if(h->length) {
+        nmod_poly_divrem(q,r,candidate,h);
+        fprintf(stderr,"DIAG factor_fit_degree=%ld holdouts=%d/8 remainder_degree=%ld\n",nmod_poly_degree(h),matched,nmod_poly_degree(r));
+        if(!r->length && matched==8) {
+            flint_rand_t state;flint_rand_init(state);slong ext=0,checks=0;
+            int ok=verify(q,NULL,d,bound,state,&ext,&checks,source);
+            fprintf(stderr,"DIAG quotient_degree=%ld verified=%d extension=%ld checks=%ld\n",nmod_poly_degree(q),ok,ext,checks);
+            diagnostic_save(prefix,".quotient",q);flint_rand_clear(state);
+        }
+    }
+    source->clear(w,source->data);flint_free(xs);flint_free(ys);
+    nmod_poly_clear(f);nmod_poly_clear(g);nmod_poly_clear(h);nmod_poly_clear(q);nmod_poly_clear(r);
+}
+
 /* A startup heuristic, not a sufficient reconstruction bound: row degrees
  * need not balance. Keep the larger certified budget and independent checks. */
 static slong initial_count(slong degree,slong block,slong full_count)
 {
     slong half=degree/block+(degree%block!=0);
-    return half>full_count/2?full_count:FLINT_MAX(1,2*half);
+    if(half>full_count/2)return full_count;
+    slong count=FLINT_MAX(1,2*half);
+    /* Add ceil(count/256) slack without overflowing the capped budget. */
+    slong extra=count/256+(count%256!=0);
+    return extra>full_count-count?full_count:count+extra;
 }
 
 /* Reject undersampled denominators before their expensive polynomial
@@ -374,6 +427,36 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
         }
         for(slong i=0;i<m;i++)for(slong j=0;j<m;j++)
             nmod_poly_set(nmod_poly_mat_entry(den,i,j),nmod_poly_mat_entry(basis,order[i],j));
+        const char *diag=getenv("DRSOLVE_BEZOUT_DIAGNOSTIC");
+        if(source && diag && *diag) {
+            fprintf(stderr,"DIAG basis count=%ld block=%ld row_degrees=",count,m);
+            for(slong i=0;i<2*m;i++)fprintf(stderr,"%s%ld",i?",":"",shift[i]);
+            fprintf(stderr,"\nDIAG selected_rows=");
+            for(slong i=0;i<m;i++)fprintf(stderr,"%s%ld",i?",":"",order[i]);
+            fprintf(stderr,"\nDIAG denominator_row_degrees=");
+            for(slong i=0;i<m;i++){slong degree=-1;for(slong j=0;j<m;j++)degree=FLINT_MAX(degree,nmod_poly_degree(nmod_poly_mat_entry(den,i,j)));fprintf(stderr,"%s%ld",i?",":"",degree);}
+            fprintf(stderr,"\n");
+            void *w=source->init(source->data);nmod_poly_t f,g,h;nmod_poly_init(f,p);nmod_poly_init(g,p);nmod_poly_init(h,p);
+            for(ulong point=1009;point<1013;point++) {
+                source->eval(f,g,point,w,source->data);
+                ulong scale=nmod_div(nmod_poly_get_coeff_ui(g,d),nmod_poly_get_coeff_ui(f,d),result->mod);
+                nmod_poly_scalar_mul_nmod(h,f,scale);nmod_poly_sub(g,g,h);
+                dr_bezout_prefix_stats ps;
+                int valid=dr_bezout_left_moments_profile(h,f,g,2*m-1,1024,&ps,0);
+                slong failed_rows=0;ulong z=nmod_div(point,dilation,result->mod);
+                if(valid==1)for(slong i=0;i<m;i++) {
+                    int bad=0;
+                    for(slong j=0;j<m;j++) {
+                        ulong residual=nmod_poly_evaluate_nmod(nmod_poly_mat_entry(basis,order[i],m+j),z);
+                        for(slong k=0;k<m;k++)residual=nmod_add(residual,nmod_mul(nmod_poly_evaluate_nmod(nmod_poly_mat_entry(den,i,k),z),nmod_poly_get_coeff_ui(h,k+j),result->mod),result->mod);
+                        bad|=residual!=0;
+                    }
+                    failed_rows+=bad;
+                }
+                fprintf(stderr,"DIAG fraction_holdout point=%lu regular=%d failed_rows=%ld/%ld\n",point,valid,failed_rows,m);
+            }
+            source->clear(w,source->data);nmod_poly_clear(f);nmod_poly_clear(g);nmod_poly_clear(h);
+        }
         dr_profile_end("block.select_denominator",detail_start);
         stats->interpolation+=seconds()-start;start=seconds();
         int plausible=1;
@@ -636,7 +719,13 @@ int dr_nmod_resultant_bezout_source_try(nmod_poly_t out,slong d,
         double started=seconds();slong reused=cache.count;
         int reconstructed=reconstruct(candidate,NULL,d,m,count,
             stats->attempts==1 && count==short_count,root,dilation,NULL,stats,source,0,state,&cache);
-        if(reconstructed) {
+        const char *diag=getenv("DRSOLVE_BEZOUT_DIAGNOSTIC");
+        if(reconstructed && diag && *diag)diagnostic_factor(diag,candidate,d,bound,source);
+        if(reconstructed && source->accept_candidate &&
+           source->accept_candidate(candidate,source->accept_data)) {
+            stats->accepted_by_solutions=1;ok=1;
+        }
+        if(reconstructed && !ok) {
             double t=seconds();
             ok=verify(candidate,NULL,d,bound,state,&stats->verification_extension_degree,
                 &stats->verification_checks,source);
@@ -644,9 +733,11 @@ int dr_nmod_resultant_bezout_source_try(nmod_poly_t out,slong d,
         }
         if(profile && *profile && strcmp(profile,"0"))fprintf(stderr,
             "Circuit attempt %ld: points=%ld status=%s degree=%ld wall=%.6f reused=%ld\n",
-            stats->attempts,count,ok?"accepted":reconstructed?"verification_failed":"reconstruction_failed",
+            stats->attempts,count,ok?(stats->accepted_by_solutions?"solutions_verified":"accepted"):reconstructed?"verification_failed":"reconstruction_failed",
             nmod_poly_degree(candidate),seconds()-started,reused);
         if(ok){nmod_poly_swap(out,candidate);break;}
+        const char *once=getenv("DRSOLVE_BEZOUT_FIRST_ATTEMPT_ONLY");
+        if(once && *once && strcmp(once,"0"))break;
         if(count==max_count)break;
         count=count>(max_count-1)/2?max_count:2*count+1;
     }

@@ -52,14 +52,14 @@ with tempfile.TemporaryDirectory() as tmp:
             assert got == ref, (args, log)
             match = re.search(r'C adaptive interpolation, block \d+, (\d+) points', log)
             assert match, log
-    # The generic degree product supplies 2*ceil(d^2/m) startup points.
+    # The generic degree product supplies 2*ceil(d^2/m) points plus ceil(N/256) slack.
     # A forced small budget must still reject before the polynomial
     # determinant, then reach the shifted budget and return identical output.
     args = ['-r', '[32]*2', '1073741827', '--seed', '0']
     env = dict(os.environ, DRSOLVE_PROFILE_BEZOUT='1')
     log, ref = run(args, [], env)
     short = 1 + 2*((32*32+5)//6) - 2*32 + 2*6
-    assert f'attempt 1: points={2*((32*32+5)//6)} status=accepted' in log, log
+    assert 'attempt 1: points=344 status=accepted' in log, log
     assert 'attempt 2:' not in log, log
     log, got = run(args, ['--bezout-initial-points', '1'], env)
     assert got == ref, log
@@ -74,7 +74,7 @@ with tempfile.TemporaryDirectory() as tmp:
     _, ref = run(args, ['--no-bezout-block'])
     log, got = run(args, [], env)
     assert got == ref, log
-    assert 'attempt 1: points=86 ' in log, log
+    assert 'attempt 1: points=87 ' in log, log
 
     # New backend can be explicitly disabled, then re-enabled (last flag wins).
     for prime in [998244353, 1000000007]:
@@ -130,7 +130,7 @@ with tempfile.TemporaryDirectory() as tmp:
         if flags[-1] != '0':
             assert 'attempt 1: points=1 ' in log, log
         else:
-            assert 'attempt 1: points=22 ' in log, log
+            assert 'attempt 1: points=23 ' in log, log
     for bad in ('-1', 'abc', '18446744073709551616', ''):
         proc = subprocess.run([binary, '--bezout-initial-points='+bad, *args],
                               capture_output=True, text=True, timeout=10)

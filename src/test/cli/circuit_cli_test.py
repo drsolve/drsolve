@@ -116,7 +116,7 @@ with tempfile.TemporaryDirectory() as d:
   if flags:
    assert re.search(r'Circuit attempt [2-9]:.*reused=[1-9]',proc.stderr),proc.stderr
   else:
-   assert 'Circuit attempt 1: points=86 status=accepted' in proc.stderr,proc.stderr
+   assert 'Circuit attempt 1: points=87 status=accepted' in proc.stderr,proc.stderr
 
  # Shared power gates must reduce the startup estimate without relying on
  # Poseidon names or round metadata. An unused high-degree gate has no effect.
@@ -177,3 +177,25 @@ outputs 10 11
   path.write_text(text);proc=run(['--circuit',str(path),'--threads','2'])
   assert proc.returncode!=0 and 'No solutions' not in proc.stdout,(text,proc.stdout,proc.stderr)
  print(f'Circuit: {comparisons} expanded resultant/solution comparisons; extension checks and rejected inputs PASS')
+
+# Solving accepts verified witnesses; resultant-only keeps its certificate.
+with tempfile.TemporaryDirectory() as folder:
+ folder=Path(folder);path=folder/'witness.drc';output=folder/'result.txt'
+ for eliminate in ('x','y'):
+  path.write_text('\n'.join(['DRCIRCUIT 1','prime 101',f'eliminate {eliminate}',
+   'pow 0 2','pow 1 2','add 2 3','lin 0 1 2 2 3','outputs 4 5'])+'\n')
+  base=[binary,'--circuit',str(path),'--threads','1','-o',str(output)]
+  proc=subprocess.run(base,capture_output=True,text=True,check=True,timeout=30)
+  assert pairs(proc.stdout)=={(0,0)},proc.stdout
+  assert 'Circuit candidate:' in proc.stdout and 'completeness are not certified' in output.read_text()
+  assert 'Verification: field degree' not in proc.stdout
+  proc=subprocess.run(base+['--resultant-only'],capture_output=True,text=True,check=True,timeout=30)
+  assert 'Circuit resultant:' in proc.stdout and 'Verification: field degree' in proc.stdout
+  assert 'Circuit candidate:' not in proc.stdout
+ # A rootless candidate must not certify inconsistency without full verification.
+ path.write_text('\n'.join(['DRCIRCUIT 1','prime 101','eliminate y',
+  'pow 0 2','pow 1 2','add 2 3','lin 1 1 4','outputs 4 5'])+'\n')
+ proc=subprocess.run([binary,'--circuit',str(path),'--threads','1','-o',str(output)],capture_output=True,text=True,check=True,timeout=30)
+ assert not pairs(proc.stdout) and 'No solutions over the finite field.' in proc.stdout
+ assert 'Verification: field degree' in proc.stdout and 'Circuit candidate:' not in proc.stdout
+print('Candidate witness acceptance, strict resultant mode, and rootless fallback passed.')

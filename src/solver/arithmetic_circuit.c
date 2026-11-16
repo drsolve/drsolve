@@ -429,7 +429,7 @@ static int specialize_gr(gr_poly_t f,gr_poly_t g,gr_srcptr point,gr_ctx_t ctx,co
 }
 void dr_circuit_source(dr_bezout_source *source,const dr_circuit *c)
 {
-    *source=(dr_bezout_source){c,workspace_init,workspace_clear,specialize,specialize_gr,c->resultant_degree_hint};
+    *source=(dr_bezout_source){c,workspace_init,workspace_clear,specialize,specialize_gr,c->resultant_degree_hint,NULL,NULL};
 }
 static int scalar_check(const dr_circuit *c,ulong x,ulong y)
 {
@@ -444,6 +444,40 @@ static int scalar_check(const dr_circuit *c,ulong x,ulong y)
         }
     }
     int ok=!w[c->nodes[c->outputs[0]].slot] && !w[c->nodes[c->outputs[1]].slot];flint_free(w);return ok;
+}
+
+typedef struct {
+    const dr_circuit *c;
+    ulong *xy;
+    slong count;
+    double roots_time,back_time;
+} candidate_solutions;
+
+static int accept_candidate_solutions(const nmod_poly_t candidate,void *data)
+{
+    candidate_solutions *found=data;const dr_circuit *c=found->c;
+    if(nmod_poly_degree(candidate)<1)return 0;
+    nmod_roots_t roots;nmod_roots_init(roots);double t=dr_profile_now();
+    our_nmod_poly_roots(roots,candidate,1);
+    found->roots_time+=dr_profile_now()-t;t=dr_profile_now();
+    void *w=workspace_init(c);
+    nmod_poly_t f,g,h;nmod_poly_init(f,c->mod.n);nmod_poly_init(g,c->mod.n);nmod_poly_init(h,c->mod.n);
+    for(slong i=0;i<roots->num;i++) {
+        specialize(f,g,roots->roots[i],w,c);nmod_poly_gcd(h,f,g);
+        nmod_roots_t second;nmod_roots_init(second);our_nmod_poly_roots(second,h,1);
+        for(slong j=0;j<second->num;j++) {
+            ulong x=c->eliminate?roots->roots[i]:second->roots[j];
+            ulong y=c->eliminate?second->roots[j]:roots->roots[i];
+            if(!scalar_check(c,x,y))continue;
+            found->xy=flint_realloc(found->xy,2*(found->count+1)*sizeof(ulong));
+            found->xy[2*found->count]=x;found->xy[2*found->count+1]=y;found->count++;
+        }
+        nmod_roots_clear(second);
+    }
+    nmod_poly_clear(f);nmod_poly_clear(g);nmod_poly_clear(h);
+    workspace_clear(w,c);nmod_roots_clear(roots);
+    found->back_time+=dr_profile_now()-t;
+    return found->count>0;
 }
 
 static char *circuit_output_filename(const char *input,int only)
@@ -506,6 +540,8 @@ int dr_circuit_cli_main(int argc,char **argv,void (*print_banner)(void))
     if(verbose)printf("Circuit: prime=%lu nodes=%ld workspace_slots=%ld degree=%ld resultant_degree_estimate=%ld eliminate=%c threads=%d\n",c->mod.n,c->count,c->slots,c->degree,c->resultant_degree_hint,c->eliminate?'y':'x',threads);
     double parsed=dr_profile_now();
     dr_bezout_source source;dr_circuit_source(&source,c);
+    candidate_solutions found={0};found.c=c;
+    if(!only){source.accept_candidate=accept_candidate_solutions;source.accept_data=&found;}
     nmod_poly_t resultant;nmod_poly_init(resultant,c->mod.n);
     flint_rand_t state;flint_rand_init(state);dr_bezout_block_stats stats;
     int ok=dr_nmod_resultant_bezout_source_try(resultant,c->degree,&source,state,&stats);
@@ -519,13 +555,18 @@ int dr_circuit_cli_main(int argc,char **argv,void (*print_banner)(void))
     FILE *out=output?fopen(output,"w"):NULL;
     if(!out){
         if(output)perror(output);
-        flint_free(default_output);nmod_poly_clear(resultant);dr_circuit_clear(c);flint_cleanup_master();return 1;
+        flint_free(found.xy);flint_free(default_output);nmod_poly_clear(resultant);dr_circuit_clear(c);flint_cleanup_master();return 1;
     }
     fprintf(out,"Circuit %s\nInput: %s\nField: F_%lu\nSystem: 2 equations, 2 variables (x, y)\n",
         only?"resultant":"solutions",input,c->mod.n);
-    fprintf(out,"Original equation total degrees: [%ld, %ld]\nResultant degree: %ld\n\n",
-        c->nodes[c->outputs[0]].degree,c->nodes[c->outputs[1]].degree,nmod_poly_degree(resultant));
-    if(verbose)printf("Circuit resultant: degree=%ld block=%ld points=%ld attempts=%ld\nVerification: field degree %ld, %ld checks\n",
+    fprintf(out,"Original equation total degrees: [%ld, %ld]\n%s degree: %ld\n\n",
+        c->nodes[c->outputs[0]].degree,c->nodes[c->outputs[1]].degree,stats.accepted_by_solutions?"Candidate":"Resultant",nmod_poly_degree(resultant));
+    if(stats.accepted_by_solutions) {
+        const char *message="Valid solutions verified by substitution; resultant equality and solution completeness are not certified.\n";
+        fputs(message,out);if(verbose)fputs(message,stdout);
+        if(verbose)printf("Circuit candidate: degree=%ld block=%ld points=%ld attempts=%ld\n",nmod_poly_degree(resultant),stats.block,stats.points,stats.attempts);
+    }
+    else if(verbose)printf("Circuit resultant: degree=%ld block=%ld points=%ld attempts=%ld\nVerification: field degree %ld, %ld checks\n",
         nmod_poly_degree(resultant),stats.block,stats.points,stats.attempts,stats.verification_extension_degree,stats.verification_checks);
     if(show_timing)printf("Sampling+inverse %.6fs | interpolation %.6fs | determinant %.6fs | verification %.6fs\n",
         stats.inverse,stats.interpolation,stats.determinant,stats.verification);
@@ -533,6 +574,14 @@ int dr_circuit_cli_main(int argc,char **argv,void (*print_banner)(void))
     if(only) {
         fprintf(out,"Solve time (wall): %.3f seconds\n\n",eliminated-start);
         FILE *dest=out?out:stdout;fprintf(dest,"Resultant:\n");nmod_poly_fprint_pretty(dest,resultant,c->eliminate?"x":"y");fputc('\n',dest);
+    } else if(stats.accepted_by_solutions) {
+        solutions=found.count;
+        for(slong i=0;i<solutions;i++) {
+            if(verbose)printf("[%ld] x = %lu, y = %lu [PASS]\n",i+1,found.xy[2*i],found.xy[2*i+1]);
+            fprintf(out,"[%ld] x = %lu, y = %lu [PASS]\n",i+1,found.xy[2*i],found.xy[2*i+1]);
+        }
+        if(verbose)printf("Found %ld verified solution(s).\n",solutions);
+        fprintf(out,"Found %ld verified solution(s).\n",solutions);
     } else {
         nmod_roots_t roots;nmod_roots_init(roots);double t=dr_profile_now();
         our_nmod_poly_roots(roots,resultant,1);roots_time=dr_profile_now()-t;
@@ -556,6 +605,9 @@ int dr_circuit_cli_main(int argc,char **argv,void (*print_banner)(void))
         if(solutions)fprintf(out,"Found %ld solution set(s).\n",solutions);
         if(!solutions && ok){if(verbose)puts("No solutions over the finite field.");if(out)fputs("No solutions over the finite field.\n",out);}
     }
+    roots_time+=found.roots_time;back_time+=found.back_time;
+    eliminated-=found.roots_time+found.back_time;
+    flint_free(found.xy);
     if(!only)fprintf(out,"Solve time (wall): %.3f seconds\n",dr_profile_now()-start);
     if(out){int failed=ferror(out);if(fclose(out))failed=1;if(failed){fprintf(stderr,"Error: could not write result to %s\n",output);ok=0;}}
     nmod_poly_clear(resultant);dr_circuit_clear(c);flint_cleanup_master();
