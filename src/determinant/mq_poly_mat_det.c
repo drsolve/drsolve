@@ -93,6 +93,11 @@ int nmod_poly_mat_mq_schur(nmod_poly_mat_t core, ulong *factor, const nmod_poly_
     slong n = B->r;
     if (!mq_schur_valid(core, factor, B, rd, cd, h, sigma)) return 0;
     slong e = n - h;
+    if (e == 0) {
+        nmod_poly_mat_set(core, B);
+        *factor = 1;
+        return 1;
+    }
 
     slong *rows = flint_malloc((size_t)e * sizeof(slong));
     slong *cols = flint_malloc((size_t)e * sizeof(slong));
@@ -231,19 +236,36 @@ int nmod_poly_mat_mq_schur(nmod_poly_mat_t core, ulong *factor, const nmod_poly_
             }
             nmod_poly_mat_clear(rhs);
         }
-        nmod_poly_mat_t U, product;
-        nmod_poly_mat_init(U, h, e, B->modulus);
-        nmod_poly_mat_init(product, h, h, B->modulus);
-        for (slong i = 0; i < h; i++)
-            for (slong j = 0; j < e; j++)
-                nmod_poly_set(nmod_poly_mat_entry(U, i, j), nmod_poly_mat_entry(B, i, cols[j]));
-        mq_block_mul(product, U, X);
-        for (slong i = 0; i < h; i++)
-            for (slong j = 0; j < h; j++)
-                nmod_poly_sub(nmod_poly_mat_entry(core, i, j), nmod_poly_mat_entry(B, i, j),
-                              nmod_poly_mat_entry(product, i, j));
-        nmod_poly_mat_clear(product);
-        nmod_poly_mat_clear(U);
+        /* Form A - U X directly in core. A panel owns only its reordered
+         * U rows, and the multiplier needs transforms for one output tile. */
+        const slong tile = 64;
+        for (slong r = 0; r < h; r += tile)
+        {
+            slong height = FLINT_MIN(tile, h - r);
+            nmod_poly_mat_t U;
+            nmod_poly_mat_init(U, height, e, B->modulus);
+            for (slong i = 0; i < height; i++)
+                for (slong j = 0; j < e; j++)
+                    nmod_poly_set(nmod_poly_mat_entry(U, i, j),
+                                  nmod_poly_mat_entry(B, r + i, cols[j]));
+            for (slong c = 0; c < h; c += tile)
+            {
+                slong width = FLINT_MIN(tile, h - c);
+                nmod_poly_mat_t right, product;
+                nmod_poly_mat_window_init(right, X, 0, c, e, c + width);
+                nmod_poly_mat_window_init(product, core, r, c, r + height, c + width);
+                mq_block_mul(product, U, right);
+                for (slong i = 0; i < height; i++)
+                    for (slong j = 0; j < width; j++)
+                    {
+                        nmod_poly_struct *p = nmod_poly_mat_entry(product, i, j);
+                        nmod_poly_sub(p, nmod_poly_mat_entry(B, r + i, c + j), p);
+                    }
+                nmod_poly_mat_window_clear(product);
+                nmod_poly_mat_window_clear(right);
+            }
+            nmod_poly_mat_clear(U);
+        }
         nmod_poly_mat_clear(X);
         *factor = scale;
     }

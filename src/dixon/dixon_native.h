@@ -5,6 +5,7 @@
 #include "dixon_flint.h"
 
 int dixon_bivariate_native_eligible(const unified_mpoly_struct *polys, slong nvars, slong npars);
+/* Consumes the selected rows and sets their pointers to NULL. */
 void dixon_bivariate_native_selected_det(unified_mpoly_struct *result,
                                          unified_mpoly_struct **matrix, slong size,
                                          const slong *rows, const slong *cols, slong y_degree,

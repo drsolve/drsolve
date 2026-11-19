@@ -854,6 +854,11 @@ static void fast_dixon_poly_to_native(nmod_poly_t out, const unified_mpoly_struc
 
 static void fast_dixon_poly_from_native(unified_mpoly_struct *out, const nmod_poly_t in)
 {
+    if (out->field_id == FIELD_ID_NMOD) {
+        nmod_mpoly_set_nmod_poly(GET_NMOD_POLY(out), in, 0, GET_NMOD_CTX(out->ctx_ptr));
+        out->canonical = 1;
+        return;
+    }
     const fq_nmod_ctx_struct *ctx = out->ctx;
     dr_mpoly_clear(out);
     fast_dixon_poly_init_zero(out, 0, 1, ctx);
@@ -872,20 +877,37 @@ static void fast_dixon_matrix_to_native(nmod_poly_mat_t out, const fast_dixon_ma
         fast_dixon_poly_to_native(nmod_poly_mat_entry(out,i,j), &FAST_DIXON_ENTRY(in,i,j));
 }
 
-static void fast_dixon_matrix_mul_native(fast_dixon_matrix_t *dest,
-                                         const nmod_poly_mat_t left,
-                                         const nmod_poly_mat_t right)
+/* D[i,j] = S[i]*F[j] + D[i-1,j+1]. Each anti-diagonal needs
+ * only its previous block and writes disjoint entries of the output. */
+static void fast_dixon_build_native_products(fast_dixon_matrix_t *out,
+                                            const nmod_poly_mat_struct *s, slong ns,
+                                            const nmod_poly_mat_struct *f, slong nf,
+                                            int threads)
 {
-    if (fast_dixon_profile_heavy_enabled()) g_fast_dixon_profile.native_block_products++;
-    nmod_poly_mat_t product;
-    nmod_poly_mat_init(product, dest->rows, dest->cols, fq_nmod_ctx_prime(dest->ctx));
-    nmod_poly_mat_mul(product, left, right);
-    for (slong i = 0; i < dest->rows; i++) for (slong j = 0; j < dest->cols; j++) {
-        nmod_poly_struct *value = nmod_poly_mat_entry(product,i,j);
-        if (nmod_poly_is_zero(value)) continue;
-        fast_dixon_poly_from_native(&FAST_DIXON_ENTRY(dest,i,j), value);
+    slong rows = s->r, cols = f->c;
+    if (fast_dixon_profile_heavy_enabled())
+        g_fast_dixon_profile.native_block_products += ns * nf;
+#ifdef _OPENMP
+    #pragma omp parallel for if(threads > 1) num_threads(threads) schedule(dynamic)
+#endif
+    for (slong diagonal = 0; diagonal < ns + nf - 1; diagonal++) {
+        nmod_poly_mat_t sum, product;
+        nmod_poly_mat_init(sum, rows, cols, fq_nmod_ctx_prime(out->ctx));
+        nmod_poly_mat_init(product, rows, cols, fq_nmod_ctx_prime(out->ctx));
+        for (slong i = FLINT_MAX(0, diagonal - nf + 1); i <= FLINT_MIN(diagonal, ns - 1); i++) {
+            slong j = diagonal - i;
+            nmod_poly_mat_mul(product, s + i, f + j);
+            nmod_poly_mat_add(sum, sum, product);
+            for (slong r = 0; r < rows; r++)
+                for (slong c = 0; c < cols; c++) {
+                    const nmod_poly_struct *entry = nmod_poly_mat_entry(sum, r, c);
+                    if (entry->length)
+                        fast_dixon_poly_from_native(&FAST_DIXON_ENTRY(out, i*rows+r, j*cols+c), entry);
+                }
+        }
+        nmod_poly_mat_clear(product);
+        nmod_poly_mat_clear(sum);
     }
-    nmod_poly_mat_clear(product);
 }
 
 static int fast_dixon_use_unified(slong npars, const fq_nmod_ctx_t ctx)
@@ -1691,7 +1713,8 @@ static void fast_dixon_build_matrix(fast_dixon_matrix_t *out,
             (fast_dixon_matrix_t *) flint_malloc((size_t) num_f_blocks * sizeof(fast_dixon_matrix_t));
         fast_dixon_matrix_support_t *f_supports =
             (fast_dixon_matrix_support_t *) flint_malloc((size_t) num_f_blocks * sizeof(fast_dixon_matrix_support_t));
-        fast_dixon_matrix_t *d_blocks =
+        int native = total_nvars == 2 && fast_dixon_use_native(npars, ctx);
+        fast_dixon_matrix_t *d_blocks = native ? NULL :
             (fast_dixon_matrix_t *) flint_malloc((size_t) current_degree * num_f_blocks * sizeof(fast_dixon_matrix_t));
 
         for (slong i = 0; i < current_degree; i++) {
@@ -1770,7 +1793,6 @@ static void fast_dixon_build_matrix(fast_dixon_matrix_t *out,
         phase_start = get_wall_time();
         {
             slong total_products = current_degree * num_f_blocks;
-            int native = total_nvars == 2 && fast_dixon_use_native(npars, ctx);
             int unified = total_nvars == 2 && fast_dixon_use_unified(npars, ctx);
             field_ctx_t field;
             unified_mat_poly_struct *us = unified ? flint_malloc(current_degree*sizeof(*us)) : NULL;
@@ -1798,25 +1820,30 @@ static void fast_dixon_build_matrix(fast_dixon_matrix_t *out,
                     else fast_dixon_matrix_to_unified(uf+b-current_degree,f_blocks+b-current_degree,&field);
                 }
             }
+            if (native) {
+                fast_dixon_matrix_init(out, current_degree * d_block_rows,
+                                       num_f_blocks * lower_size, npars, ctx);
+                fast_dixon_build_native_products(out, ns, current_degree, nf, num_f_blocks,
+                                                 parallel_threads);
+            } else {
 #ifdef _OPENMP
-            #pragma omp parallel for if(parallel_threads > 1) num_threads(parallel_threads) schedule(dynamic)
+                #pragma omp parallel for if(parallel_threads > 1) num_threads(parallel_threads) schedule(dynamic)
 #endif
-            for (slong block_idx = 0; block_idx < total_products; block_idx++) {
-                slong i = block_idx / num_f_blocks;
-                slong j = block_idx % num_f_blocks;
+                for (slong block_idx = 0; block_idx < total_products; block_idx++) {
+                    slong i = block_idx / num_f_blocks;
+                    slong j = block_idx % num_f_blocks;
 
-                fast_dixon_matrix_init(&d_blocks[block_idx],
-                                       d_block_rows, lower_size, npars, ctx);
-                if (native)
-                    fast_dixon_matrix_mul_native(&d_blocks[block_idx],ns+i,nf+j);
-                else if(unified)
-                    fast_dixon_matrix_mul_unified(&d_blocks[block_idx],us+i,uf+j);
-                else fast_dixon_matrix_mul_accumulate_supported(&d_blocks[block_idx],
-                                                           &s_blocks[i],
-                                                           &s_supports[i],
-                                                           &f_blocks[j],
-                                                           &f_supports[j],
-                                                           0);
+                    fast_dixon_matrix_init(&d_blocks[block_idx],
+                                           d_block_rows, lower_size, npars, ctx);
+                    if(unified)
+                        fast_dixon_matrix_mul_unified(&d_blocks[block_idx],us+i,uf+j);
+                    else fast_dixon_matrix_mul_accumulate_supported(&d_blocks[block_idx],
+                                                               &s_blocks[i],
+                                                               &s_supports[i],
+                                                               &f_blocks[j],
+                                                               &f_supports[j],
+                                                               0);
+                }
             }
             if (native) {
                 for (slong b = 0; b < current_degree; b++) nmod_poly_mat_clear(ns+b);
@@ -1833,46 +1860,48 @@ static void fast_dixon_build_matrix(fast_dixon_matrix_t *out,
             level_profile->mul_time += get_wall_time() - phase_start;
         }
 
-        phase_start = get_wall_time();
-        for (slong i = 1; i < current_degree; i++) {
-            for (slong j = 0; j < num_f_blocks - 1; j++) {
-                fast_dixon_matrix_add_inplace(&d_blocks[i * num_f_blocks + j],
-                                              &d_blocks[(i - 1) * num_f_blocks + (j + 1)],
-                                              0);
+        if (!native) {
+            phase_start = get_wall_time();
+            for (slong i = 1; i < current_degree; i++) {
+                for (slong j = 0; j < num_f_blocks - 1; j++) {
+                    fast_dixon_matrix_add_inplace(&d_blocks[i * num_f_blocks + j],
+                                                  &d_blocks[(i - 1) * num_f_blocks + (j + 1)],
+                                                  0);
+                }
             }
-        }
-        if (level_profile != NULL) {
-            level_profile->recurrence_time += get_wall_time() - phase_start;
-        }
+            if (level_profile != NULL) {
+                level_profile->recurrence_time += get_wall_time() - phase_start;
+            }
 
-        phase_start = get_wall_time();
-        fast_dixon_matrix_init(out,
-                               current_degree * d_block_rows,
-                               num_f_blocks * lower_size,
-                               npars,
-                               ctx);
+            phase_start = get_wall_time();
+            fast_dixon_matrix_init(out,
+                                   current_degree * d_block_rows,
+                                   num_f_blocks * lower_size,
+                                   npars,
+                                   ctx);
 
-        {
-            slong total_products = current_degree * num_f_blocks;
+            {
+                slong total_products = current_degree * num_f_blocks;
 #ifdef _OPENMP
-            #pragma omp parallel for if(parallel_threads > 1) num_threads(parallel_threads) schedule(static)
+                #pragma omp parallel for if(parallel_threads > 1) num_threads(parallel_threads) schedule(static)
 #endif
-            for (slong block_idx = 0; block_idx < total_products; block_idx++) {
-                slong i = block_idx / num_f_blocks;
-                slong j = block_idx % num_f_blocks;
+                for (slong block_idx = 0; block_idx < total_products; block_idx++) {
+                    slong i = block_idx / num_f_blocks;
+                    slong j = block_idx % num_f_blocks;
 
-                fast_dixon_matrix_move_block(out,
-                                             i * d_block_rows,
-                                             j * lower_size,
-                                             &d_blocks[block_idx]);
+                    fast_dixon_matrix_move_block(out,
+                                                 i * d_block_rows,
+                                                 j * lower_size,
+                                                 &d_blocks[block_idx]);
+                }
             }
-        }
-        if (level_profile != NULL) {
-            level_profile->assemble_time += get_wall_time() - phase_start;
-        }
+            if (level_profile != NULL) {
+                level_profile->assemble_time += get_wall_time() - phase_start;
+            }
 
-        for (slong i = 0; i < current_degree * num_f_blocks; i++) {
-            fast_dixon_matrix_clear(&d_blocks[i]);
+            for (slong i = 0; i < current_degree * num_f_blocks; i++) {
+                fast_dixon_matrix_clear(&d_blocks[i]);
+            }
         }
         for (slong i = 0; i < current_degree; i++) {
             fast_dixon_matrix_support_clear(&s_supports[i]);
@@ -1915,6 +1944,7 @@ static void clear_fast_dixon_coeff_matrix(unified_mpoly_struct **coeff_matrix, s
     }
 
     for (slong i = 0; i < matrix_size; i++) {
+        if (coeff_matrix[i] == NULL) continue;
         for (slong j = 0; j < matrix_size; j++) {
             dr_mpoly_clear(&coeff_matrix[i][j]);
         }
@@ -1996,8 +2026,7 @@ static void fast_dixon_print_bottleneck_hint(const fast_dixon_level_profile_t *t
     if (best == 0) {
         fast_dixon_info_log("    -> likely dominated by repeatedly constructing lower-level Dixon blocks for many valid F_j tuples.\n");
     } else if (best == 1) {
-        fast_dixon_info_log("    -> likely dominated by repeated dr_mpoly_mul/dr_mpoly_add during "
-                            "all S_i * F_j products.\n");
+        fast_dixon_info_log("    -> most time was spent computing the S_i * F_j blocks.\n");
     } else if (best == 2) {
         fast_dixon_info_log("    -> likely dominated by scattering coefficients into Sylvester-style S_i blocks.\n");
     } else {
@@ -2060,6 +2089,8 @@ static void fast_dixon_print_profile_report(const fast_dixon_matrix_t *full_matr
         fast_dixon_info_log("      build S_i blocks        : %.3f s\n", top->s_build_time);
         fast_dixon_info_log("      build F_j blocks        : %.3f s (child lower-level builds %.3f s)\n",
                             top->f_build_time, top->f_child_build_time);
+        if (top->current_vars == 2 && fast_dixon_use_native(full_matrix->npars, full_matrix->ctx))
+            fast_dixon_info_log("      Native block multiplication includes recurrence and assembly.\n");
         fast_dixon_info_log("      multiply S_i * F_j      : %.3f s\n", top->mul_time);
         fast_dixon_info_log("      recurrence accumulation : %.3f s\n", top->recurrence_time);
         fast_dixon_info_log("      final block assembly    : %.3f s\n", top->assemble_time);
@@ -2259,7 +2290,6 @@ static void fast_dixon_extract_square_submatrix(unified_mpoly_struct ***coeff_ma
             unified_mpoly_struct *source = trimmed_grid[row_idx_array[i]][col_idx_array[j]];
             if (source != NULL) {
                 dr_mpoly_move(&(*coeff_matrix_out)[i][j], source);
-                fast_dixon_poly_init_zero(source, 0, npars, full_matrix->ctx);
             } else {
                 fast_dixon_poly_init_zero(&(*coeff_matrix_out)[i][j], 0, npars, full_matrix->ctx);
             }
@@ -2389,6 +2419,7 @@ static void fq_dixon_fast_resultant_common(unified_mpoly_struct *result,
     fast_dixon_extract_square_submatrix(&coeff_matrix, &matrix_size, &full_matrix, npars,
                                          polys, nvars, degrees,
                                          &selected_rows, &selected_cols);
+    fast_dixon_matrix_clear(&full_matrix);
 
     if (matrix_size > 0) {
         dixon_recursive_det_options native = {
@@ -2420,7 +2451,6 @@ static void fq_dixon_fast_resultant_common(unified_mpoly_struct *result,
 
     clear_fast_dixon_coeff_matrix(coeff_matrix, matrix_size);
     flint_free(selected_rows); flint_free(selected_cols);
-    fast_dixon_matrix_clear(&full_matrix);
     flint_free(degrees);
     flint_free(poly_ptrs);
 

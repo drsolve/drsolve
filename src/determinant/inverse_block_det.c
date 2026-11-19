@@ -221,34 +221,43 @@ static int reconstruct(nmod_poly_t candidate, const nmod_poly_mat_t a,
         first+=points;
     }
     nmod_mat_clear(u);nmod_mat_clear(v);flint_free(values);
-    int ok=0;
+    nmod_poly_mat_t basis, den;
+    slong *shift = NULL;
     if (!failed) {
-        slong *shift=flint_calloc(2*m,sizeof(slong)), *order=flint_malloc(2*m*sizeof(slong));
-        nmod_poly_mat_t basis,den;
-        nmod_poly_mat_init(basis,2*m,2*m,prime);nmod_poly_mat_init(den,m,m,prime);
-        start=seconds();nmod_poly_mat_pmintbasis_geometric(basis,shift,NULL,blocks,root,count);
-        for (slong i=0;i<2*m;i++) order[i]=i;
-        for (slong i=1;i<2*m;i++) {
-            slong row=order[i],j=i;
-            while (j>0 && shift[order[j-1]]>shift[row]) {order[j]=order[j-1];j--;}
-            order[j]=row;
-        }
-        for (slong i=0;i<m;i++) for (slong j=0;j<m;j++)
-            nmod_poly_set(nmod_poly_mat_entry(den,i,j),nmod_poly_mat_entry(basis,order[i],j));
-        stats->interpolation+=seconds()-start;start=seconds();
-        ok=nmod_poly_mat_det_hnf(candidate,den);
-        if (ok) {
-            ulong inv=nmod_inv(dilation,mod),power=1;
-            for (slong i=0;i<candidate->length;i++) {
-                candidate->coeffs[i]=nmod_mul(candidate->coeffs[i],power,mod);
-                power=nmod_mul(power,inv,mod);
-            }
-        }
-        stats->determinant+=seconds()-start;
-        nmod_poly_mat_clear(basis);nmod_poly_mat_clear(den);flint_free(shift);flint_free(order);
+        start = seconds();
+        shift = flint_calloc(2*m, sizeof(slong));
+        nmod_poly_mat_init(basis, 2*m, 2*m, prime);
+        nmod_poly_mat_pmintbasis_geometric(basis, shift, NULL, blocks, root, count);
     }
     for (slong k=0;k<count;k++) nmod_mat_clear(blocks+k);
-    flint_free(blocks);return ok;
+    flint_free(blocks);
+    if (failed) return 0;
+
+    slong *order = flint_malloc(2*m * sizeof(slong));
+    nmod_poly_mat_init(den, m, m, prime);
+    for (slong i=0;i<2*m;i++) order[i]=i;
+    for (slong i=1;i<2*m;i++) {
+        slong row=order[i],j=i;
+        while (j>0 && shift[order[j-1]]>shift[row]) {order[j]=order[j-1];j--;}
+        order[j]=row;
+    }
+    for (slong i=0;i<m;i++) for (slong j=0;j<m;j++)
+        nmod_poly_swap(nmod_poly_mat_entry(den,i,j),nmod_poly_mat_entry(basis,order[i],j));
+    nmod_poly_mat_clear(basis);
+    flint_free(order);
+    flint_free(shift);
+    stats->interpolation+=seconds()-start;start=seconds();
+    int ok=nmod_poly_mat_det_hnf(candidate,den);
+    if (ok) {
+        ulong inv=nmod_inv(dilation,mod),power=1;
+        for (slong i=0;i<candidate->length;i++) {
+            candidate->coeffs[i]=nmod_mul(candidate->coeffs[i],power,mod);
+            power=nmod_mul(power,inv,mod);
+        }
+    }
+    stats->determinant+=seconds()-start;
+    nmod_poly_mat_clear(den);
+    return ok;
 }
 #endif
 

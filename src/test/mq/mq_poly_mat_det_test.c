@@ -123,8 +123,38 @@ static void check_adaptive(void)
     puts("Adaptive Schur: randomized exact determinants and rejection preservation PASS");
 }
 
+/* A rank-one Schur update with partial tiles on both axes. */
+static void check_partial_tiles(void)
+{
+    enum { h = 67, n = h + 1 };
+    const ulong prime = 65537;
+    slong degrees[n] = {0};
+    degrees[h] = 1;
+    nmod_poly_mat_t matrix, core;
+    nmod_poly_mat_init(matrix, n, n, prime);
+    nmod_poly_mat_init(core, h, h, prime);
+    nmod_poly_one(nmod_poly_mat_entry(matrix, h, h));
+    for (slong i = 0; i < h; i++) {
+        nmod_poly_one(nmod_poly_mat_entry(matrix, i, i));
+        nmod_poly_set_coeff_ui(nmod_poly_mat_entry(matrix, i, h), 1, i + 1);
+        nmod_poly_set_coeff_ui(nmod_poly_mat_entry(matrix, h, i), 1, h - i);
+    }
+    ulong factor = 0;
+    assert(nmod_poly_mat_mq_schur(core, &factor, matrix, degrees, degrees, h, 2));
+    assert(factor == 1);
+    for (slong i = 0; i < h; i++)
+        for (slong j = 0; j < h; j++) {
+            const nmod_poly_struct *p = nmod_poly_mat_entry(core, i, j);
+            assert(nmod_poly_degree(p) == 2 && p->coeffs[0] == (i == j));
+            assert(p->coeffs[1] == 0 && p->coeffs[2] == prime - (i + 1)*(h - j));
+        }
+    nmod_poly_mat_clear(core);
+    nmod_poly_mat_clear(matrix);
+}
+
 int main(void)
 {
+    check_partial_tiles();
     check_adaptive();
     ulong primes[] = {2, 3, 257, 65537, 101, 998244353,
 #if FLINT_BITS == 64

@@ -5661,16 +5661,27 @@ void dixon_bivariate_native_selected_det(unified_mpoly_struct *result,
     const fq_nmod_ctx_struct *ctx = polys[0].ctx;
     nmod_poly_mat_t native;
     nmod_poly_mat_init(native, size, size, fq_nmod_ctx_prime(ctx));
+    /* The recursive caller transfers the selected rows. Release each row
+     * as soon as its coefficients are in the native determinant matrix. */
     #pragma omp parallel for schedule(static)
-    for (slong i = 0; i < size; i++) for (slong j = 0; j < size; j++) {
-            const unified_mpoly_struct *source = &matrix[i][j];
-            for (slong t = 0; t < dr_mpoly_length(source); t++) {
-                DR_MPOLY_TERM(term_19, source, t);
-
-                slong d = term_19.par_exp ? term_19.par_exp[0] : 0;
-                nmod_poly_set_coeff_ui(nmod_poly_mat_entry(native, i, j), d,
-                                       nmod_poly_get_coeff_ui(term_19.coeff, 0));
+    for (slong i = 0; i < size; i++) {
+        for (slong j = 0; j < size; j++) {
+            unified_mpoly_struct *source = &matrix[i][j];
+            nmod_poly_struct *entry = nmod_poly_mat_entry(native, i, j);
+            if (source->field_id == FIELD_ID_NMOD && source->canonical) {
+                nmod_mpoly_get_nmod_poly(entry, GET_NMOD_POLY(source), 0,
+                                         GET_NMOD_CTX(source->ctx_ptr));
+            } else {
+                for (slong t = 0; t < dr_mpoly_length(source); t++) {
+                    DR_MPOLY_TERM(term, source, t);
+                    nmod_poly_set_coeff_ui(entry, term.par_exp[0],
+                                           nmod_poly_get_coeff_ui(term.coeff, 0));
+                }
             }
+            dr_mpoly_clear(source);
+        }
+        flint_free(matrix[i]);
+        matrix[i] = NULL;
     }
     dixon_mq_step4_profile profile = {0};
     if (g_dixon_mq_step4_schur != 0) {
