@@ -133,23 +133,6 @@ static double _now(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &t
    L1 cache, these tiles are reused from L1 for all the rows of A. */
 #define NMOD_POLY_MAT_MUL_SD_FFT_DIRECT_TILE_BUDGET (UWORD(1) << 15)
 
-/* Retain small workspaces across products. Release larger panels when the
-   product ends so subsequent interpolation and determinant steps can reuse RAM. */
-#define SD_FFT_RETAIN_BYTES (UWORD(8) << 20)
-static double * _sd_fft_direct_alloc(mpn_ctx_struct *R, ulong nbytes)
-{
-    if (nbytes <= SD_FFT_RETAIN_BYTES)
-        return mpn_ctx_fit_buffer(R, nbytes);
-    return flint_aligned_alloc(FLINT_FFT_SMALL_ALIGNMENT,
-                               n_round_up(nbytes, FLINT_FFT_SMALL_ALIGNMENT));
-}
-
-static void _sd_fft_direct_free(double *buf, ulong nbytes)
-{
-    if (nbytes > SD_FFT_RETAIN_BYTES)
-        flint_aligned_free(buf);
-}
-
 /*
     Multiply each of the np transforms of X by the plan's normalization
     factor, in place, restricted to the ztrunc points read by the inverse
@@ -696,7 +679,8 @@ static void _sd_fft_direct(nmod_poly_mat_t C,
     const ulong nbytes = ((ulong) nthreads * scratchdbls
                           + ((ulong) k * NCG + (ulong) NRG * (k + NCG)) * opdbls)
                          * sizeof(double);
-    double * buf = _sd_fft_direct_alloc(R, nbytes);
+    /* FLINT owns the aligned workspace and reuses it across products. */
+    double * buf = mpn_ctx_fit_buffer(R, nbytes);
     double * tilebuf = buf + (ulong) nthreads * scratchdbls;
     _tiles_struct Bt = { tilebuf, (ulong) k * NCG, ntiles, T };
     _tiles_struct At = { Bt.data + Bt.nops * opdbls, (ulong) NRG * k, ntiles, T };
@@ -850,7 +834,6 @@ static void _sd_fft_direct(nmod_poly_mat_t C,
     flint_free(zlen);
     flint_free(nzA);
     flint_free(cntA);
-    _sd_fft_direct_free(buf, nbytes);
     flint_give_back_threads(handles, nworkers);
     fft_small_plan_clear(P);
 }
