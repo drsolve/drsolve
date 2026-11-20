@@ -69,6 +69,8 @@ int main(void)
         }
     trial(998244353,6,6,6,1025,2049,1024,1025,rng);++cases;
     trial(1000000007,6,6,6,1025,2049,1024,1025,rng);++cases;
+    /* Large transforms with partial final panels in both dimensions. */
+    trial(1000000007,9,24,17,513,768,256,640,rng);++cases;
     /* Automatic dispatch for short, wide Schur panels, in both orientations.
      * Compare every coefficient against FLINT with FFT enabled and disabled. */
     assert(dr_test_setenv("DRSOLVE_PML_MUL", "auto", 1) == 0);

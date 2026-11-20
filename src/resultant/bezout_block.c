@@ -290,18 +290,17 @@ static int denominator_precheck(const nmod_poly_mat_t den,
 }
 
 /* A fixed geometric grid makes circuit samples reusable across adaptive
- * attempts. Interpolation only reads these blocks. Discard the whole grid
+ * attempts. Store only the distinct Hankel moments of each [H; I]. Discard the grid
  * on a singular specialization so the next attempt can change dilation. */
 typedef struct {
-    nmod_mat_struct *blocks;
+    ulong *moments;
     slong count;
 } bezout_sample_cache;
 
 static void clear_sample_cache(bezout_sample_cache *cache)
 {
     double start=dr_profile_start();
-    for(slong k=0;k<cache->count;k++)nmod_mat_clear(cache->blocks+k);
-    flint_free(cache->blocks);cache->blocks=NULL;cache->count=0;
+    flint_free(cache->moments);cache->moments=NULL;cache->count=0;
     dr_profile_end("block.clear_samples",start);
 }
 
@@ -311,8 +310,10 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
     int precheck,flint_rand_t state,bezout_sample_cache *cache)
 {
     const slong rows=2*(d+1);const ulong p=result->mod.n;
+    const size_t moment_count=2*m-1;
     if((!source && (size_t)count>SIZE_MAX/sizeof(ulong)/(size_t)rows) ||
-       (size_t)count>SIZE_MAX/sizeof(nmod_mat_struct))return 0;
+       (cache && (indices || (size_t)count>SIZE_MAX/sizeof(ulong)/moment_count)) ||
+       (!cache && (size_t)count>SIZE_MAX/sizeof(nmod_mat_struct)))return 0;
     double start=seconds();
     ulong *values=NULL;
     if(!source) {
@@ -339,8 +340,11 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
     }
     stats->evaluation+=seconds()-start;start=seconds();
     slong reused=cache?cache->count:0;
-    nmod_mat_struct *blocks=flint_realloc(cache?cache->blocks:NULL,count*sizeof(*blocks));
-    if(cache){cache->blocks=blocks;cache->count=count;}
+    nmod_mat_struct *blocks=NULL;
+    if(cache) {
+        cache->moments=flint_realloc(cache->moments,(size_t)count*moment_count*sizeof(ulong));
+        cache->count=count;
+    } else blocks=flint_malloc(count*sizeof(*blocks));
     /* Internal tuning override; zero selects classical Euclid. */
     slong hgcd_cutoff=1024;
     const char *cutoff_env=getenv("DRSOLVE_BEZOUT_HGCD_CUTOFF");
@@ -367,7 +371,7 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
         for(slong k=reused;k<count;k++) {
             int timed=detail && k%64==0;
             double sample_start=timed?dr_profile_now():0,phase=sample_start;
-            nmod_mat_init(blocks+k,2*m,m,p);
+            if(blocks)nmod_mat_init(blocks+k,2*m,m,p);
             if(source) {
                 ulong point=nmod_mul(dilation,nmod_pow_ui(nmod_mul(root,root,result->mod),(ulong)k,result->mod),result->mod);
                 source->eval(f,g,point,worker,source->data);
@@ -393,7 +397,10 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
             if(timed){sampled++;setup+=ps.setup;hgcd+=ps.hgcd;division+=ps.division;
                 update+=ps.update;fallback+=ps.fallback;cleanup+=ps.cleanup;series+=ps.series;phase=dr_profile_now();}
             if(success!=1){failed=1;if(timed)sample_total+=dr_profile_now()-sample_start;continue;}
-            for(slong i=0;i<m;i++) {
+            if(cache) {
+                ulong *sample=cache->moments+(size_t)k*precision;
+                for(slong j=0;j<precision;j++)sample[j]=nmod_poly_get_coeff_ui(h,j);
+            } else for(slong i=0;i<m;i++) {
                 for(slong j=0;j<m;j++)nmod_mat_entry(blocks+k,i,j)=
                     nmod_poly_get_coeff_ui(h,indices?indices[i]+indices[j]:i+j);
                 nmod_mat_entry(blocks+k,m+i,i)=1;
@@ -415,7 +422,8 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
         nmod_poly_mat_t basis,den;nmod_poly_mat_init(basis,2*m,2*m,p);nmod_poly_mat_init(den,m,m,p);
         start=seconds();
         double detail_start=dr_profile_start();
-        nmod_poly_mat_pmintbasis_geometric(basis,shift,NULL,blocks,root,count);
+        if(cache)drsolve_pmintbasis_geometric_moments(basis,shift,cache->moments,root,count);
+        else nmod_poly_mat_pmintbasis_geometric(basis,shift,NULL,blocks,root,count);
         dr_profile_end("block.pmintbasis",detail_start);
         detail_start=dr_profile_start();
         /* Ordered weak Popov is pivot ordered. Select the m lowest shifted
@@ -426,7 +434,7 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
             order[j]=row;
         }
         for(slong i=0;i<m;i++)for(slong j=0;j<m;j++)
-            nmod_poly_set(nmod_poly_mat_entry(den,i,j),nmod_poly_mat_entry(basis,order[i],j));
+            nmod_poly_swap(nmod_poly_mat_entry(den,i,j),nmod_poly_mat_entry(basis,order[i],j));
         const char *diag=getenv("DRSOLVE_BEZOUT_DIAGNOSTIC");
         if(source && diag && *diag) {
             fprintf(stderr,"DIAG basis count=%ld block=%ld row_degrees=",count,m);
@@ -457,6 +465,7 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
             }
             source->clear(w,source->data);nmod_poly_clear(f);nmod_poly_clear(g);nmod_poly_clear(h);
         }
+        nmod_poly_mat_clear(basis);
         dr_profile_end("block.select_denominator",detail_start);
         stats->interpolation+=seconds()-start;start=seconds();
         int plausible=1;
@@ -467,7 +476,7 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
         if(plausible)ok=nmod_poly_mat_det_hnf(result,den);
         stats->determinant+=seconds()-start;
         double clear_start=dr_profile_start();
-        nmod_poly_mat_clear(basis);nmod_poly_mat_clear(den);
+        nmod_poly_mat_clear(den);
         dr_profile_end("block.clear_basis",clear_start);
         flint_free(shift);flint_free(weights);flint_free(order);
         if(ok) {
@@ -478,10 +487,11 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
             }
         }
     }
-    if(!cache || failed) {
-        bezout_sample_cache owned={blocks,count};clear_sample_cache(&owned);
-        if(cache){cache->blocks=NULL;cache->count=0;}
+    if(blocks) {
+        for(slong k=0;k<count;k++)nmod_mat_clear(blocks+k);
+        flint_free(blocks);
     }
+    if(cache && failed)clear_sample_cache(cache);
     return ok;
 }
 

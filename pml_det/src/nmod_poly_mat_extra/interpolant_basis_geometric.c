@@ -35,6 +35,17 @@ static double profile_now(void)
 #include "nmod_mat_poly.h"
 #include "nmod_poly_mat_utils.h"
 
+/* Recover the sampled block [H; I], where H[i,j] = moments[i+j]. */
+static void set_moment_block(nmod_mat_t block, const ulong *moments)
+{
+    const slong n = block->c;
+    for (slong i = 0; i < n; i++) {
+        for (slong j = 0; j < n; j++)
+            nmod_mat_entry(block, i, j) = moments[i+j];
+        nmod_mat_entry(block, n+i, i) = 1;
+    }
+}
+
 /* Same D&C shape as nmod_poly_mat_pmintbasis (interpolant_basis.c), but
    points are rho_start * rho^k (k=0..d-1), rho = r^2, using one shared,
    already-built G (see nmod_poly_mat_pmintbasis_geometric below).
@@ -44,7 +55,7 @@ static double profile_now(void)
 static void _pmintbasis_geometric_rec(nmod_poly_mat_t intbas,
                                       slong * shift,
                                       const nmod_mat_struct * E,
-                                      slong n,
+                                      const ulong *moments, slong n,
                                       ulong r,
                                       ulong rho_start,
                                       slong d,
@@ -64,7 +75,20 @@ static void _pmintbasis_geometric_rec(nmod_poly_mat_t intbas,
             pts[k] = cur;
             cur = nmod_mul(cur, rho, mod);
         }
+        nmod_mat_struct *blocks = NULL;
+        if (moments) {
+            blocks = flint_malloc(d * sizeof(*blocks));
+            for (slong k = 0; k < d; k++) {
+                nmod_mat_init(blocks+k, m, n, mod.n);
+                set_moment_block(blocks+k, moments + (size_t)k*(2*n-1));
+            }
+            E = blocks;
+        }
         nmod_poly_mat_mintbasis(intbas, shift, pts, E, d);
+        if (blocks) {
+            for (slong k = 0; k < d; k++) nmod_mat_clear(blocks+k);
+            flint_free(blocks);
+        }
         if (prof) prof[0] += profile_now()-t;
         flint_free(pts);
         return;
@@ -77,7 +101,7 @@ static void _pmintbasis_geometric_rec(nmod_poly_mat_t intbas,
        than d1, extra entries simply unused. */
     nmod_poly_mat_t P1;
     nmod_poly_mat_init(P1, m, m, intbas->modulus);
-    _pmintbasis_geometric_rec(P1, shift, E, n, r, rho_start, d1, mod, G, prof);
+    _pmintbasis_geometric_rec(P1, shift, E, moments, n, r, rho_start, d1, mod, G, prof);
     if (prof) t = profile_now();
 
      /* R_i = P1(zeta*rho^i) * E_{d1+i}, i=0..d2-1, zeta = rho_start*rho^d1
@@ -100,69 +124,89 @@ static void _pmintbasis_geometric_rec(nmod_poly_mat_t intbas,
     for (slong k = 1; k <= d1; k++)
         zeta_pow[k] = nmod_mul(zeta_pow[k - 1], zeta, mod);
 
-    ulong * P1vals = (ulong *) flint_malloc(m * m * d2 * sizeof(ulong));
-    /* Entry evaluations are independent. Keep small recursion nodes serial. */
-#ifdef _OPENMP
-    #pragma omp parallel if(!omp_in_parallel() && d2 >= 256 && m*m >= 8)
-#endif
+    /* Reuse the evaluation buffer across row panels. Each panel writes
+       disjoint rows of every residual matrix. */
+    const slong panel_rows = (double)m*m*d2*sizeof(ulong) > 4*1024*1024
+                             ? FLINT_MIN(m, 8) : m;
+    ulong *P1vals = flint_malloc((size_t)panel_rows*m*d2*sizeof(*P1vals));
+    nmod_mat_struct *R = flint_malloc(d2 * sizeof(*R));
+    nmod_mat_t residuals;
+    nmod_mat_init(residuals, d2*m, n, mod.n);
+    for (slong idx = 0; idx < d2; idx++)
+        nmod_mat_window_init(R+idx, residuals, idx*m, 0, (idx+1)*m, n);
+
+    for (slong first = 0; first < m; first += panel_rows)
     {
-        ulong * scaled = (ulong *) flint_malloc((d1 + 1) * sizeof(ulong));
+        const slong rows = FLINT_MIN(panel_rows, m-first);
+        /* Entry evaluations are independent. Keep small recursion nodes serial. */
 #ifdef _OPENMP
-        #pragma omp for schedule(static)
+        #pragma omp parallel if(!omp_in_parallel() && d2 >= 256 && rows*m >= 8)
 #endif
-        for (slong ij = 0; ij < m*m; ij++)
         {
-            const nmod_poly_struct * entry = nmod_poly_mat_entry(P1, ij/m, ij%m);
-            slong len = nmod_poly_length(entry);
-            /* Write directly into the final buffer; no per-entry copy. */
-            ulong *vs = P1vals + ij*d2;
-            if (len <= 1)
+            ulong * scaled = (ulong *) flint_malloc((d1 + 1) * sizeof(ulong));
+#ifdef _OPENMP
+            #pragma omp for schedule(static)
+#endif
+            for (slong ij = 0; ij < rows*m; ij++)
             {
-                ulong c = len ? entry->coeffs[0] : 0;
-                for (slong idx=0; idx<d2; idx++) vs[idx]=c;
+                const nmod_poly_struct * entry = nmod_poly_mat_entry(P1, first+ij/m, ij%m);
+                slong len = nmod_poly_length(entry);
+                /* Write directly into the final buffer; no per-entry copy. */
+                ulong *vs = P1vals + ij*d2;
+                if (len <= 1)
+                {
+                    ulong c = len ? entry->coeffs[0] : 0;
+                    for (slong idx=0; idx<d2; idx++) vs[idx]=c;
+                }
+                else
+                {
+                    for (slong k = 0; k < len; k++)
+                        scaled[k] = nmod_mul(entry->coeffs[k], zeta_pow[k], mod);
+                    _nmod_poly_evaluate_geometric_nmod_vec_fast_precomp(vs, scaled, len, G, d2, mod);
+                }
             }
-            else
-            {
-                for (slong k = 0; k < len; k++)
-                    scaled[k] = nmod_mul(entry->coeffs[k], zeta_pow[k], mod);
-                _nmod_poly_evaluate_geometric_nmod_vec_fast_precomp(vs, scaled, len, G, d2, mod);
-            }
+            flint_free(scaled);
         }
-        flint_free(scaled);
+        if (prof) { prof[1] += profile_now()-t; t=profile_now(); }
+#ifdef _OPENMP
+        #pragma omp parallel if(!omp_in_parallel() && d2 >= 256)
+#endif
+        {
+            nmod_mat_t evalP1, sample;
+            if (moments) nmod_mat_init(sample, m, n, mod.n);
+            nmod_mat_init(evalP1, rows, m, intbas->modulus);
+#ifdef _OPENMP
+            #pragma omp for schedule(static)
+#endif
+            for (slong idx = 0; idx < d2; idx++)
+            {
+                for (slong i = 0; i < rows; i++)
+                    for (slong j = 0; j < m; j++)
+                        nmod_mat_entry(evalP1, i, j) = P1vals[(i * m + j) * d2 + idx];
+                nmod_mat_t panel;
+                nmod_mat_window_init(panel, R+idx, first, 0, first+rows, n);
+                if (moments) {
+                    set_moment_block(sample, moments + (size_t)(d1+idx)*(2*n-1));
+                    nmod_mat_mul(panel, evalP1, sample);
+                } else {
+                    nmod_mat_mul(panel, evalP1, E + (d1+idx));
+                }
+                nmod_mat_window_clear(panel);
+            }
+            if (moments) nmod_mat_clear(sample);
+            nmod_mat_clear(evalP1);
+        }
+        if (prof) { prof[2] += profile_now()-t; t=profile_now(); }
     }
     flint_free(zeta_pow);
-
-    if (prof) { prof[1] += profile_now()-t; t=profile_now(); }
-    /* R, the "new E" for the second half's recursive call, is a plain
-       array too -- nmod_mat_mul writes each R_i directly. */
-    nmod_mat_struct * R = (nmod_mat_struct *) flint_malloc(FLINT_MAX(d2, 1) * sizeof(nmod_mat_struct));
-#ifdef _OPENMP
-    #pragma omp parallel if(!omp_in_parallel() && d2 >= 256)
-#endif
-    {
-        nmod_mat_t evalP1;
-        nmod_mat_init(evalP1, m, m, intbas->modulus);
-#ifdef _OPENMP
-        #pragma omp for schedule(static)
-#endif
-        for (slong idx = 0; idx < d2; idx++)
-        {
-            for (slong i = 0; i < m; i++)
-                for (slong j = 0; j < m; j++)
-                    nmod_mat_entry(evalP1, i, j) = P1vals[(i * m + j) * d2 + idx];
-            nmod_mat_init(R + idx, m, n, intbas->modulus);
-            nmod_mat_mul(R + idx, evalP1, E + (d1 + idx));
-        }
-        nmod_mat_clear(evalP1);
-    }
     flint_free(P1vals);
 
-    if (prof) prof[2] += profile_now()-t;
     nmod_poly_mat_t P2;
     nmod_poly_mat_init(P2, m, m, intbas->modulus);
-    _pmintbasis_geometric_rec(P2, shift, R, n, r, zeta, d2, mod, G, prof);
+    _pmintbasis_geometric_rec(P2, shift, R, NULL, n, r, zeta, d2, mod, G, prof);
     for (slong idx = 0; idx < d2; idx++)
-        nmod_mat_clear(R + idx);
+        nmod_mat_window_clear(R + idx);
+    nmod_mat_clear(residuals);
     flint_free(R);
 
     if (prof) t=profile_now();
@@ -173,10 +217,10 @@ static void _pmintbasis_geometric_rec(nmod_poly_mat_t intbas,
     nmod_poly_mat_clear(P2);
 }
 
-void nmod_poly_mat_pmintbasis_geometric(nmod_poly_mat_t intbas,
+static void pmintbasis_geometric(nmod_poly_mat_t intbas,
                                         slong * shift,
                                         ulong * pts,
-                                        const nmod_mat_struct * E,
+                                        const nmod_mat_struct * E, const ulong *moments,
                                         ulong r,
                                         slong d)
 {
@@ -194,7 +238,7 @@ void nmod_poly_mat_pmintbasis_geometric(nmod_poly_mat_t intbas,
                 "r must be nonzero (r=0 degenerates FLINT's geometric-"
                 "progression setup, which computes 1/r unconditionally).\n");
 
-    const slong n = E[0].c;
+    const slong n = moments ? intbas->r / 2 : E[0].c;
 
     nmod_t mod;
     nmod_init(&mod, intbas->modulus);
@@ -204,7 +248,7 @@ void nmod_poly_mat_pmintbasis_geometric(nmod_poly_mat_t intbas,
 
     double prof[4]={0};
     int profiling = getenv("DRSOLVE_PROFILE_INTERPOLANT") != NULL;
-    _pmintbasis_geometric_rec(intbas, shift, E, n, r, 1, d, mod, G, profiling ? prof : NULL);
+    _pmintbasis_geometric_rec(intbas, shift, E, moments, n, r, 1, d, mod, G, profiling ? prof : NULL);
     if (profiling)
         fprintf(stderr, "interpolant: base %.6f evaluation %.6f residual %.6f multiply %.6f\n",
                 prof[0], prof[1], prof[2], prof[3]);
@@ -221,6 +265,18 @@ void nmod_poly_mat_pmintbasis_geometric(nmod_poly_mat_t intbas,
             cur = nmod_mul(cur, rho, mod);
         }
     }
+}
+
+void nmod_poly_mat_pmintbasis_geometric(nmod_poly_mat_t basis, slong *shift,
+    ulong *points, const nmod_mat_struct *values, ulong ratio, slong count)
+{
+    pmintbasis_geometric(basis, shift, points, values, NULL, ratio, count);
+}
+
+void drsolve_pmintbasis_geometric_moments(nmod_poly_mat_t basis, slong *shift,
+    const ulong *moments, ulong ratio, slong count)
+{
+    pmintbasis_geometric(basis, shift, NULL, NULL, moments, ratio, count);
 }
 
 /* Local boundary fix: accept every mathematically available length,

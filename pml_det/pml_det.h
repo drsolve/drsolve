@@ -41,6 +41,10 @@ void nmod_poly_mat_pmintbasis(nmod_poly_mat_t basis, slong *shift,
 void nmod_poly_mat_pmintbasis_geometric(nmod_poly_mat_t basis, slong *shift,
     ulong *points, const nmod_mat_struct *values, ulong ratio, slong count);
 
+/* For a 2n-by-2n basis, store each [H; I] sample as 2n-1 Hankel moments. */
+void drsolve_pmintbasis_geometric_moments(nmod_poly_mat_t basis, slong *shift,
+    const ulong *moments, ulong ratio, slong count);
+
 /* Chooses a primitive-root ratio; supports count <= (p-1)/2, or count <= 1. */
 void nmod_poly_mat_pmintbasis_geometric_auto(nmod_poly_mat_t basis, slong *shift,
     ulong *points, const nmod_mat_struct *values, slong count);

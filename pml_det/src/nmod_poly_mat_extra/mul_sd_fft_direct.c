@@ -133,15 +133,21 @@ static double _now(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &t
    L1 cache, these tiles are reused from L1 for all the rows of A. */
 #define NMOD_POLY_MAT_MUL_SD_FFT_DIRECT_TILE_BUDGET (UWORD(1) << 15)
 
-/* Reuse FLINT's thread-local aligned FFT scratch storage. */
-static double * _sd_fft_direct_alloc(mpn_ctx_struct * R, ulong nbytes, ulong unused)
+/* Retain small workspaces across products. Release larger panels when the
+   product ends so subsequent interpolation and determinant steps can reuse RAM. */
+#define SD_FFT_RETAIN_BYTES (UWORD(8) << 20)
+static double * _sd_fft_direct_alloc(mpn_ctx_struct *R, ulong nbytes)
 {
-    (void) unused;
-    return (double *) mpn_ctx_fit_buffer(R, nbytes);
+    if (nbytes <= SD_FFT_RETAIN_BYTES)
+        return mpn_ctx_fit_buffer(R, nbytes);
+    return flint_aligned_alloc(FLINT_FFT_SMALL_ALIGNMENT,
+                               n_round_up(nbytes, FLINT_FFT_SMALL_ALIGNMENT));
 }
-static void _sd_fft_direct_free(double *buf, ulong nbytes, ulong unused)
+
+static void _sd_fft_direct_free(double *buf, ulong nbytes)
 {
-    (void)buf; (void)nbytes; (void)unused;
+    if (nbytes > SD_FFT_RETAIN_BYTES)
+        flint_aligned_free(buf);
 }
 
 /*
@@ -673,8 +679,13 @@ static void _sd_fft_direct(nmod_poly_mat_t C,
 
     /* Local adaptation: no workspace budget or size cap. */
     (void) membytes;
-    const ulong bbytes = UWORD_MAX;
-    const slong NRG = m, NCG = n;
+    /* Keep large transforms in panels. Each column panel of B is transformed
+       once and reused across all row groups. Smaller products keep one batch. */
+    const double tile_bytes = ((double) k*n + (double) m*(k+(double)n))
+                              * opdbls * sizeof(double);
+    const int panelled = tile_bytes > 8.0*1024*1024;
+    const slong NRG = panelled ? FLINT_MIN(m, 8) : m;
+    const slong NCG = panelled ? FLINT_MIN(n, 16) : n;
 
     /* storage: the per-thread scratch ops first, since they are the only
        part with an alignment requirement (fft_small_op_init_borrowed
@@ -685,7 +696,7 @@ static void _sd_fft_direct(nmod_poly_mat_t C,
     const ulong nbytes = ((ulong) nthreads * scratchdbls
                           + ((ulong) k * NCG + (ulong) NRG * (k + NCG)) * opdbls)
                          * sizeof(double);
-    double * buf = _sd_fft_direct_alloc(R, nbytes, bbytes);
+    double * buf = _sd_fft_direct_alloc(R, nbytes);
     double * tilebuf = buf + (ulong) nthreads * scratchdbls;
     _tiles_struct Bt = { tilebuf, (ulong) k * NCG, ntiles, T };
     _tiles_struct At = { Bt.data + Bt.nops * opdbls, (ulong) NRG * k, ntiles, T };
@@ -839,7 +850,7 @@ static void _sd_fft_direct(nmod_poly_mat_t C,
     flint_free(zlen);
     flint_free(nzA);
     flint_free(cntA);
-    _sd_fft_direct_free(buf, nbytes, bbytes);
+    _sd_fft_direct_free(buf, nbytes);
     flint_give_back_threads(handles, nworkers);
     fft_small_plan_clear(P);
 }
