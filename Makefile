@@ -1456,5 +1456,5 @@ test-circuit-cli: $(DIXON_TARGET)
 .PHONY: dixon-rank-predictor
 dixon-rank-predictor: $(BUILD_DIR)/dixon_rank_predictor
 
-$(BUILD_DIR)/dixon_rank_predictor: $(APPS_DIR)/dixon_rank_predictor.c $(BUILD_DIR)/dixon/dixon_rank_predictor.o $(BUILD_DIR)/dixon/dixon_exterior.o
+$(BUILD_DIR)/dixon_rank_predictor: $(SRC_DIR)/dixon/dixon_rank_predictor_cli.c $(BUILD_DIR)/dixon/dixon_rank_predictor.o $(BUILD_DIR)/dixon/dixon_exterior.o
 	$(CC) $(ALL_CFLAGS) -o $@ $^ $(FLINT_LIBS) -lgmp $(RPATH_FLAGS) $(LDFLAGS)

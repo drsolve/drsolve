@@ -1562,6 +1562,6 @@ message(STATUS "  Install prefix  : ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "==============================================")
 
 add_executable(dixon_rank_predictor EXCLUDE_FROM_ALL
-  apps/dixon_rank_predictor.c src/dixon/dixon_rank_predictor.c src/dixon/dixon_exterior.c)
+  src/dixon/dixon_rank_predictor_cli.c src/dixon/dixon_rank_predictor.c src/dixon/dixon_exterior.c)
 target_include_directories(dixon_rank_predictor PRIVATE src)
 target_link_libraries(dixon_rank_predictor PRIVATE FLINT::FLINT ${GMP_LIBRARY})
