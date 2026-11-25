@@ -41,3 +41,26 @@ with tempfile.TemporaryDirectory(prefix='extension-schur-') as work:
                 assert 'compression ' not in log, log
         assert len(set(results)) == 1, (degrees, field, extra)
         print('PASS', degrees, field, extra, flush=True)
+
+    # A prime-field minor selected by the Schur seed has its complement
+    # pivots first on both axes. Reuse them, checking the determinant sign
+    # and every coefficient against the uncompressed selected minor.
+    for degrees, seed_size, rank in (('[3]*4', 24, 43), ('[2,3,3,4]', 36, 52)):
+        polynomials = []
+        for switch, verify_twice in (('--no-step4-schur', False),
+                                     ('--step4-schur', False), ('--step4-schur', True)):
+            command = [str(binary), '-r', degrees, '257', '--seed', '405', '--no-inverse-block',
+                       '-v', '3', switch, '-o', str(output)]
+            if verify_twice:
+                command.append('--step3-verify-second')
+            run = subprocess.run(command, env=env, cwd=work, capture_output=True,
+                                 text=True, timeout=60, check=True)
+            if switch == '--step4-schur':
+                assert f'Reusing {seed_size} Schur seed pivots' in run.stdout
+                assert f'Step 4 Schur: {rank} -> {rank - seed_size}' in run.stdout
+                assert 'repaired complement' not in run.stdout
+            if degrees == '[3]*4':
+                stopped = 'uniform rank upper bound 43 at the first point' in run.stdout
+                assert stopped == (not verify_twice)
+            polynomials.append(output.read_text().split('Resultant:\n', 1)[1])
+        assert len(set(polynomials)) == 1, degrees

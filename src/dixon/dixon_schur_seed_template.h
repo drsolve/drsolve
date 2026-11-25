@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Default complement-first selection; --no-schur-seed disables it. The seed is nonsingular over the
  * polynomial ring: degree bounds make it block triangular with invertible
- * constant diagonal blocks. Complete it over two scalar specializations;
+ * constant diagonal blocks. Complete it over up to two scalar specializations;
  * as in the existing selector, maximum rank remains a specialization heuristic.
- * All caller outputs are unchanged on rejection. */
-static int SCHUR_SEED_NAME(unified_mpoly_struct ***matrix,
+ * Return the number of leading seed pivots, or zero on rejection. */
+static slong SCHUR_SEED_NAME(unified_mpoly_struct ***matrix,
     slong nr, slong nc, const monom_t *rm, const monom_t *cm, slong m,
     const long *degrees, const fq_nmod_ctx_t ctx,
     slong **out_rows, slong **out_cols, slong *out_size
@@ -96,6 +96,16 @@ static int SCHUR_SEED_NAME(unified_mpoly_struct ***matrix,
                     }
                     SEED_ENTRY(full,i,j)=v;
 #else
+#ifndef SCHUR_SEED_EXTENSION
+                    if (trial == 0 && f->field_id == FIELD_ID_NMOD) {
+                        const nmod_mpoly_struct *poly = GET_NMOD_POLY(f);
+                        ulong sum = 0;
+                        for (slong t = 0; t < poly->length; t++)
+                            sum = nmod_add(sum, poly->coeffs[t], full->mod);
+                        SEED_ENTRY(full,i,j) = sum;
+                        continue;
+                    }
+#endif
                     evaluate_dr_mpoly_at_params(value,f,params);
                     SEED_STORE(full,i,j,value);
 #endif
@@ -128,7 +138,19 @@ static int SCHUR_SEED_NAME(unified_mpoly_struct ***matrix,
 #ifdef SEED_NATIVE_EVAL
             flint_free(powers);
 #endif
-            if(!ok)break;
+            if (!ok) break;
+            if (trial == 0 && !g_dixon_step3_second_verification) {
+                if (best == cap) break;
+#ifndef SCHUR_SEED_EXTENSION
+                /* A nonsingular minor supplies the lower bound. Stop only
+                 * when it meets the dense uniform upper bound for Dixon;
+                 * a smaller boundary-filtration prediction is insufficient. */
+                if (use_uniform_bound && dixon_reaches_uniform_rank_bound(best, degrees, m + 1, m)) {
+                    dixon_debug_log("  Step 3 reached the uniform rank upper bound %ld at the first point\n", best);
+                    break;
+                }
+#endif
+            }
         }
         fq_nmod_clear(value,ctx);fq_nmod_clear(params[0],ctx);
         if(ok && best) {
@@ -141,5 +163,5 @@ static int SCHUR_SEED_NAME(unified_mpoly_struct ***matrix,
     flint_free(best_rows);flint_free(best_cols);
     flint_free(ur);flint_free(uc);flint_free(perm);flint_free(ri);flint_free(ci);
     flint_free(rows);flint_free(cols);flint_free(rd);flint_free(cd);
-    return ok && best>0;
+    return ok && best > 0 ? count : 0;
 }

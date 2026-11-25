@@ -5,6 +5,7 @@
 // dixon_complexity.c - Modified to use Hessenberg method
 
 #include "dixon_complexity.h"
+#include "dixon_rank_predictor.h"
 
 static double log2_fmpz_upper_bound(const fmpz_t x);
 static void degree_sum_fmpz(fmpz_t sum, const long *degrees, slong len);
@@ -786,6 +787,19 @@ static int dixon_rank_model_uniform(fmpz_t rank_out,
     return ok;
 }
 
+/* The midpoint bound uses the complete dense support. Specializing the
+ * coefficients (or deleting zero rows/columns) cannot raise this bound. */
+int dixon_reaches_uniform_rank_bound(slong rank, const long *degrees, slong n, slong m)
+{
+    long degree;
+    if (!uniform_positive_degree(degrees, n, &degree)) return 0;
+    fmpz_t upper;
+    fmpz_init(upper);
+    int reached = dixon_rank_model_uniform(upper, n, m, degree) && fmpz_equal_si(upper, rank);
+    fmpz_clear(upper);
+    return reached;
+}
+
 /* The positive Hilbert difference is obtained from the bounded product
  * C(z)=prod_i(1+...+z^(d_i-1)). Sliding windows cost O(n*sum(d_i)),
  * avoiding a binomial sum at every degree. Only the increasing half is needed. */
@@ -1144,11 +1158,24 @@ static void mq_improved_bounds(dixon_complexity_report_t *report,
 
 }
 
+/* Select the same model for the cost estimates and full-precision output. */
+static int predicted_rank(fmpz_t rank, const long *degrees, slong n, slong num_elim,
+                          int model, long uniform_degree)
+{
+    if (!model || num_elim <= 0 || num_elim != n - 1)
+        return 0;
+    if (model == DIXON_RANK_GENERIC)
+        return dixon_generic_rank_from_degrees(rank, degrees, n, NULL);
+    if (uniform_degree > 0)
+        return dixon_rank_model_uniform(rank, n, num_elim, uniform_degree);
+    return dixon_rank_model_mixed(rank, degrees, n, num_elim);
+}
+
 /* Paper budget for Newton inversion of the complementary block, followed
  * by polynomial matrix products: soft-O(sigma*rho^omega). No degree-layer
  * products are enumerated. The core degree budget is exact for the profile. */
 static void schur_improved_bounds(dixon_complexity_report_t *report,
-    const long *degrees, slong n, double omega)
+    const long *degrees, slong n, double omega, const fmpz *selected_rank)
 {
     report->step4_mq_schur_log2 = INFINITY;
     report->step4_mq_schur_formation_log2 = INFINITY;
@@ -1188,6 +1215,8 @@ static void schur_improved_bounds(dixon_complexity_report_t *report,
         if (H) { for (slong j=0;j<nh;j++) fmpz_clear(H+j); flint_free(H); }
         if (!ok) goto cleanup;
     }
+    if (selected_rank)
+        fmpz_set(rank, selected_rank);
     if (fmpz_sgn(rank) <= 0 || fmpz_sgn(h) <= 0) goto cleanup;
     fmpz_one(sigma);
     for (slong i = 0; i < n; i++) fmpz_add_ui(sigma, sigma, (ulong) (degrees[i]-1));
@@ -1623,9 +1652,13 @@ static void dixon_complexity_report_from_degrees_impl(dixon_complexity_report_t 
         report->step1_direct_mpoly_mul_proxy_log2;
     step1_mq_bounds(report, degrees, num_polys, num_all_vars, num_elim_vars, num_parameter_vars);
     mq_improved_bounds(report, degrees, num_polys, field_order, omega, generic_field);
-    /* Schur costs only participate in the detailed report. */
-    if (include_schur)
-        schur_improved_bounds(report, degrees, num_polys, omega);
+    long uniform_degree = 0;
+    if (rank_prediction)
+        uniform_positive_degree(degrees, num_polys, &uniform_degree);
+    int have_rank = predicted_rank(rank_size, degrees, num_polys, num_elim_vars,
+                                   rank_prediction, uniform_degree);
+    if (include_schur && (rank_prediction != DIXON_RANK_GENERIC || have_rank))
+        schur_improved_bounds(report, degrees, num_polys, omega, have_rank ? rank_size : NULL);
     else {
         report->step4_mq_schur_log2 = INFINITY;
         report->step4_mq_schur_formation_log2 = INFINITY;
@@ -1766,19 +1799,18 @@ static void dixon_complexity_report_from_degrees_impl(dixon_complexity_report_t 
         double log2_bezout = log2_fmpz_upper_bound(bezout_step4);
         long entry_degree_bound = total_degree_sum > 0 ? total_degree_sum : 0;
         slong param_count = num_parameter_vars > 0 ? num_parameter_vars : 0;
-        long uniform_d = 0;
 
         report->step4_hnf_linear_algebra_log2 = log2_M_la;
         report->step3_rank_extraction_log2 = log2_M_la;
         report->step4_ordinary_probe_cost_log2 = log2_M_la;
         report->step4_sparse_slp_length_log2 = log2_M_la;
-    report->step4_rank_model_applicable = 0;
-        report->rank_prediction_enabled = rank_prediction ? 1 : 0;
+        report->step4_rank_model_applicable = 0;
+        report->rank_prediction_enabled = rank_prediction;
         report->step4_rank_size = 0;
         report->step4_rank_size_log2 = 0.0;
         report->step4_rank_hnf_log2 = INFINITY;
         report->step4_rank_hnf_degree_density_log2 = 0.0;
-        report->step4_rank_model_is_mixed = 0;
+        report->step4_rank_model_is_mixed = have_rank && uniform_degree == 0;
         report->rank_adjusted_overall_log2 = INFINITY;
 
         if (param_count <= 0) {
@@ -1849,30 +1881,9 @@ static void dixon_complexity_report_from_degrees_impl(dixon_complexity_report_t 
                 : step4_sparse_log2;
         }
 
-        if (rank_prediction && uniform_positive_degree(degrees, num_polys, &uniform_d) &&
-            dixon_rank_model_uniform(rank_size, num_polys, num_elim_vars, uniform_d)) {
+        if (have_rank) {
             double rank_log2 = log2_fmpz_upper_bound(rank_size);
 
-            report->step4_rank_model_applicable = 1;
-            report->step4_rank_size_log2 =
-                (isfinite(rank_log2) && rank_log2 > 0.0) ? rank_log2 : 0.0;
-            if (fmpz_fits_si(rank_size)) {
-                report->step4_rank_size = fmpz_get_si(rank_size);
-            } else {
-                report->step4_rank_size = WORD_MAX;
-            }
-            report->step4_rank_hnf_degree_density_log2 =
-                log2_step4_hnf_density_from_matrix_size(rank_size,
-                                                        entry_degree_bound,
-                                                        param_count);
-            report->step4_rank_hnf_log2 =
-                ((rank_log2 > 0.0) ? omega * rank_log2 : 0.0) +
-                report->step4_rank_hnf_degree_density_log2;
-        } else if (rank_prediction && dixon_rank_model_mixed(rank_size, degrees,
-                                          num_polys, num_elim_vars)) {
-            double rank_log2 = log2_fmpz_upper_bound(rank_size);
-
-            report->step4_rank_model_is_mixed = 1;
             report->step4_rank_model_applicable = 1;
             report->step4_rank_size_log2 =
                 (isfinite(rank_log2) && rank_log2 > 0.0) ? rank_log2 : 0.0;
@@ -2191,10 +2202,9 @@ static void dixon_complexity_write_report_body(
             if (report->step4_rank_size != WORD_MAX)
                 fmpz_set_si(rank, report->step4_rank_size);
             else {
-                long d;
-                if (uniform_positive_degree(degrees, num_polys, &d))
-                    uniform_rank_statistics(rank, core, num_polys, num_elim, d);
-                else dixon_rank_model_mixed(rank, degrees, num_polys, num_elim);
+                long degree = report->step4_rank_model_is_mixed ? 0 : degrees[0];
+                predicted_rank(rank, degrees, num_polys, num_elim,
+                               report->rank_prediction_enabled, degree);
             }
             fmpz_fprint(fp, rank);
         }
@@ -2698,13 +2708,10 @@ static void dixon_complexity_write_report_body(
                 fmpz_set_si(exact_rank_size, report->step4_rank_size);
                 exact_rank_available = 1;
             } else {
-                long uniform_d = 0;
-                exact_rank_available = report->step4_rank_model_is_mixed
-                    ? dixon_rank_model_mixed(exact_rank_size, degrees,
-                                             num_polys, num_elim)
-                    : (uniform_positive_degree(degrees, num_polys, &uniform_d) &&
-                       dixon_rank_model_uniform(exact_rank_size, num_polys,
-                                                num_elim, uniform_d));
+                long degree = report->step4_rank_model_is_mixed ? 0 : degrees[0];
+                exact_rank_available = predicted_rank(exact_rank_size, degrees, num_polys,
+                                                      num_elim, report->rank_prediction_enabled,
+                                                      degree);
             }
         }
 
@@ -2737,6 +2744,7 @@ static void dixon_complexity_write_report_body(
                 omega, report->step4_hnf_log2);
         if (report->step4_rank_model_applicable) {
             fprintf(fp, "Step 4 rank prediction%s matrix size: ",
+                    report->rank_prediction_enabled == DIXON_RANK_GENERIC ? " (generic boundary filtration)" :
                     report->step4_rank_model_is_mixed ? " (mixed)" : " (uniform)");
             if (exact_rank_available) fmpz_fprint(fp, exact_rank_size);
             else fprintf(fp, "%ld", report->step4_rank_size);
@@ -2814,6 +2822,8 @@ static void dixon_complexity_write_report_body(
             if (report->step4_rank_model_applicable) {
                 fprintf(fp, "  Rank prediction formula: omega*log2(r_D) + log2(E4*(r_D*E4+1)^(k-1))\n");
                 fprintf(fp, "  Rank prediction source : %s\n",
+                        report->rank_prediction_enabled == DIXON_RANK_GENERIC
+                        ? "generic midpoint reduction and boundary filtration" :
                         report->step4_rank_model_is_mixed
                         ? "mixed degrees: R_q from Dixon tail degrees, H_e from all equation degrees, sigma=sum_i(d_i-1)+1"
                         : "uniform degrees");

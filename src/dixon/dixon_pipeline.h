@@ -9,8 +9,9 @@ dixon_scalar_screen_report_t *dixon_scalar_screen_set_report(dixon_scalar_screen
 int dixon_scalar_screen_active(void);
 int dixon_scalar_screen_value(void);
 
-/* Borrowed matrix/labels; returned indices are owned by the caller. */
-void dixon_select_submatrix(unified_mpoly_struct ***matrix, slong nrows, slong ncols,
+/* The caller owns the selected indices. The return value is the number of
+ * leading pivots in a certified Schur seed, zero for other selectors. */
+slong dixon_select_submatrix(unified_mpoly_struct ***matrix, slong nrows, slong ncols,
     const monom_t *rows, const monom_t *cols, slong nvars, slong npars,
     const long *degrees, slong num_polys, slong ksy_constant_col,
     const fq_nmod_ctx_t ctx, slong **selected_rows, slong **selected_cols, slong *size);

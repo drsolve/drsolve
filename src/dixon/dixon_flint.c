@@ -5531,6 +5531,31 @@ static void dixon_mq_step4_prepare_predicted(dixon_mq_step4_profile *out,
     out->size = size; out->h = h; out->sigma = sigma;
 }
 
+/* Step 3 placed the independent boundary pivots first on both axes.
+ * Rotate them behind the core for Step 4. Equal row and column rotations
+ * preserve the determinant sign; the Schur kernel checks the actual blocks. */
+static void dixon_prepare_seed_profile(dixon_mq_step4_profile *p,
+    const monom_t *rm, const monom_t *cm, const slong *rows, const slong *cols,
+    slong size, slong seed, slong m, const long *degrees)
+{
+    p->size = size;
+    p->h = size - seed;
+    p->sigma = 1;
+    for (slong i = 0; i <= m; i++) p->sigma += degrees[i] - 1;
+    p->rows = flint_malloc(size * sizeof(*p->rows));
+    p->cols = flint_malloc(size * sizeof(*p->cols));
+    p->rd = flint_calloc(size, sizeof(*p->rd));
+    p->cd = flint_calloc(size, sizeof(*p->cd));
+    for (slong i = 0; i < size; i++) {
+        slong j = i < p->h ? seed + i : i - p->h;
+        p->rows[i] = p->cols[i] = j;
+        for (slong v = 0; v < m; v++) {
+            p->rd[i] += rm[rows[j]].exp[v];
+            p->cd[i] += cm[cols[j]].exp[v];
+        }
+    }
+}
+
 /* Preserve actual monomial weights even when the predicted Hilbert-layer
  * quotas cannot be matched. Step 4 can certify a partial
  * complement directly from the coefficient matrix. */
@@ -5888,33 +5913,35 @@ static void dixon_select_scalar(unified_mpoly_struct ***matrix, slong nr, slong 
 
 #include "dixon_schur_seed.h"
 
-void dixon_select_submatrix(unified_mpoly_struct ***full_matrix, slong nx_monoms, slong ndual_monoms,
+slong dixon_select_submatrix(unified_mpoly_struct ***full_matrix, slong nx_monoms, slong ndual_monoms,
     const monom_t *x_monoms, const monom_t *dual_monoms, slong nvars, slong npars,
     const long *degrees, slong num_polys, slong ksy_constant_col,
     const fq_nmod_ctx_t ctx, slong **selected_rows, slong **selected_cols, slong *size)
 {
     *selected_rows=NULL; *selected_cols=NULL; *size=0;
-    if (npars==1 && ksy_constant_col<0 &&
-        degrees && num_polys==nvars+1 && g_dixon_schur_seed &&
-        dixon_schur_seed_select(full_matrix,nx_monoms,ndual_monoms,
-            x_monoms,dual_monoms,nvars,degrees,ctx,
-            selected_rows,selected_cols,size)) {
+    slong seed_size = 0;
+    if (npars == 1 && ksy_constant_col < 0 && degrees &&
+        num_polys == nvars + 1 && g_dixon_schur_seed)
+        seed_size = dixon_schur_seed_select(full_matrix, nx_monoms, ndual_monoms,
+            x_monoms, dual_monoms, nvars, degrees, ctx, selected_rows, selected_cols, size,
+            !g_field_equation_reduction);
+    if (seed_size) {
         /* For a pair, both seed samples can be roots of the resultant
          * (e.g. t and t+1 in a binary extension). Recheck a deficient
          * candidate with the general selector before discarding directions. */
-        if (num_polys != 2 || *size == FLINT_MIN(nx_monoms,ndual_monoms)) return;
+        if (num_polys != 2 || *size == FLINT_MIN(nx_monoms,ndual_monoms)) return seed_size;
         flint_free(*selected_rows); flint_free(*selected_cols);
         *selected_rows=NULL; *selected_cols=NULL; *size=0;
         dixon_debug_log("  Pair Schur seed is rank deficient; using general selector\n");
     }
     if (npars == 0 && dixon_scalar_screen_active()) {
         dixon_screen_scalar(full_matrix, nx_monoms, ndual_monoms, dual_monoms, nvars, ctx);
-        return;
+        return 0;
     }
-    if (!nx_monoms || !ndual_monoms) return;
+    if (!nx_monoms || !ndual_monoms) return 0;
     if (npars==0) {
         dixon_select_scalar(full_matrix,nx_monoms,ndual_monoms,ctx,selected_rows,selected_cols,size);
-        return;
+        return 0;
     }
     slong *row_idx_array=NULL, *col_idx_array=NULL, num_rows=0, num_cols=0;
     const char *predict_env = getenv("DRSOLVE_PREDICT_MAXRANK");
@@ -5924,7 +5951,7 @@ void dixon_select_submatrix(unified_mpoly_struct ***full_matrix, slong nx_monoms
         find_fq_optimal_maximal_rank_submatrix(full_matrix, nx_monoms, ndual_monoms,
             selected_rows, selected_cols, &num_rows, &num_cols, npars, ksy_constant_col);
         *size = FLINT_MIN(num_rows, num_cols);
-        return;
+        return 0;
     }
     slong x_hash_size, dual_hash_size;
     hash_entry_t **x_index=dixon_label_index(x_monoms,nx_monoms,nvars,&x_hash_size);
@@ -6179,6 +6206,7 @@ selected:
     free_monom_index(x_index,x_hash_size); free_monom_index(dual_index,dual_hash_size);
     *selected_rows=row_idx_array; *selected_cols=col_idx_array;
     *size=FLINT_MIN(num_rows,num_cols);
+    return 0;
 }
 
 static void extract_fq_coefficient_matrix_from_dixon_impl(
@@ -6353,7 +6381,8 @@ static void extract_fq_coefficient_matrix_from_dixon_impl(
     slong *row_idx_array = NULL;
     slong *col_idx_array = NULL;
     slong num_rows, num_cols;
-    
+    slong seed_size = 0;
+
     if (projected_verified) {
         /* Step 1 emitted ONLY the verified target block. Every target row
          * and column occurs because its specialization is non-singular. */
@@ -6370,7 +6399,7 @@ static void extract_fq_coefficient_matrix_from_dixon_impl(
         goto coefficient_matrix_selected;
     }
 
-    dixon_select_submatrix(full_matrix, nx_monoms, ndual_monoms,
+    seed_size = dixon_select_submatrix(full_matrix, nx_monoms, ndual_monoms,
         x_monoms, dual_monoms, nvars, npars, degrees, num_polys, -1,
         coefficient_ctx, &row_idx_array, &col_idx_array, &num_rows);
     num_cols = num_rows;
@@ -6531,7 +6560,11 @@ coefficient_matrix_selected: ;
         }
     }
     *matrix_size = submat_rank;
-    if (mq_profile && (poly_matrix_out || prime_matrix_out))
+    if (mq_profile && prime_matrix_out && seed_size > 0 && seed_size < submat_rank) {
+        dixon_prepare_seed_profile(mq_profile, x_monoms, dual_monoms, row_idx_array,
+                                   col_idx_array, submat_rank, seed_size, nvars, degrees);
+        dixon_debug_log("  Reusing %ld Schur seed pivots for Step 4\n", seed_size);
+    } else if (mq_profile && (poly_matrix_out || prime_matrix_out))
         dixon_mq_step4_prepare(mq_profile, x_monoms, dual_monoms,
                                row_idx_array, col_idx_array, submat_rank, nvars, degrees);
     if (poly_matrix_out == NULL && prime_matrix_out == NULL)
@@ -7084,7 +7117,10 @@ void fq_dixon_resultant(unified_mpoly_struct *result, unified_mpoly_struct *poly
     fq_nmod_poly_mat_t poly_matrix;
     int use_poly_matrix = (npars == 1 && (dixon_global_method_step4 == -1 ||
                            (dixon_global_method_step4 == DET_METHOD_KRONECKER)));
-    int use_prime_matrix = use_poly_matrix && (projected_verified || nvars == 2) && fq_nmod_ctx_degree(polys[0].ctx)==1;
+    int try_mq_step4 = (g_dixon_mq_step4_schur != 0) && use_poly_matrix &&
+                      dixon_mq_step4_eligible(polys, nvars, npars);
+    int use_prime_matrix = use_poly_matrix && fq_nmod_ctx_degree(polys[0].ctx) == 1 &&
+        (projected_verified || nvars == 2 || (g_dixon_schur_seed && try_mq_step4));
     nmod_poly_mat_t prime_matrix;
     slong *row_indices = use_prime_matrix && projected_verified
                              ? NULL
@@ -7096,8 +7132,6 @@ void fq_dixon_resultant(unified_mpoly_struct *result, unified_mpoly_struct *poly
     slong extracted_x_power = 0;
     
     dixon_mq_step4_profile mq_profile = {0};
-    int try_mq_step4 = (g_dixon_mq_step4_schur != 0) && use_poly_matrix &&
-                      dixon_mq_step4_eligible(polys, nvars, npars);
     long *rank_degrees = dixon_polynomial_degrees(polys, nvars + 1, nvars);
     if(compact.nvars)
         dixon_extract_compact_matrix(prime_matrix,&matrix_size,&extracted_x_power,
@@ -7225,7 +7259,10 @@ void fq_dixon_resultant_with_names(unified_mpoly_struct *result, unified_mpoly_s
     fq_nmod_poly_mat_t poly_matrix;
     int use_poly_matrix = (npars == 1 && (dixon_global_method_step4 == -1 ||
                            (dixon_global_method_step4 == DET_METHOD_KRONECKER)));
-    int use_prime_matrix = use_poly_matrix && (projected_verified || nvars == 2) && fq_nmod_ctx_degree(polys[0].ctx)==1;
+    int try_mq_step4 = (g_dixon_mq_step4_schur != 0) && use_poly_matrix &&
+                      dixon_mq_step4_eligible(polys, nvars, npars);
+    int use_prime_matrix = use_poly_matrix && fq_nmod_ctx_degree(polys[0].ctx) == 1 &&
+        (projected_verified || nvars == 2 || (g_dixon_schur_seed && try_mq_step4));
     nmod_poly_mat_t prime_matrix;
     slong max_indices = dr_mpoly_length(&(d_poly)) > 0 ? dr_mpoly_length(&(d_poly)) : 1;
     slong *row_indices = use_prime_matrix && projected_verified ? NULL : (slong*) flint_malloc(max_indices * sizeof(slong));
@@ -7234,8 +7271,6 @@ void fq_dixon_resultant_with_names(unified_mpoly_struct *result, unified_mpoly_s
     slong extracted_x_power = 0;
     
     dixon_mq_step4_profile mq_profile = {0};
-    int try_mq_step4 = (g_dixon_mq_step4_schur != 0) && use_poly_matrix &&
-                      dixon_mq_step4_eligible(polys, nvars, npars);
     long *rank_degrees = dixon_polynomial_degrees(polys, nvars + 1, nvars);
     if(compact.nvars)
         dixon_extract_compact_matrix(prime_matrix,&matrix_size,&extracted_x_power,

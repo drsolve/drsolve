@@ -3284,7 +3284,7 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
     int    field_eq_final_only_mode = 0; /* --field-equation-s */
     int    time_mode   = 0;   /* --time */
     double omega       = DIXON_OMEGA;   /* default, overridden by --omega */
-    int rank_prediction = 1; /* fast rank bound enabled by default */
+    int rank_prediction = DIXON_RANK_FAST; /* fast rank bound enabled by default */
     int    det_method_step1 = -1;  /* determinant method override for step 1 */
     int    det_method_step4 = -1;  /* determinant method override for step 4 */
     int    num_threads = -1;  /* number of threads, -1 means use default */
@@ -3435,9 +3435,11 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
             return 1;
         } else if (strcmp(argv[i], "--rank-pred") == 0 ||
                    strcmp(argv[i], "--rank-prediction") == 0) {
-            rank_prediction = 1;
+            rank_prediction = DIXON_RANK_FAST;
+        } else if (strcmp(argv[i], "--generic-rank-pred") == 0) {
+            rank_prediction = DIXON_RANK_GENERIC;
         } else if (strcmp(argv[i], "--no-rank-pred") == 0) {
-            rank_prediction = 0;
+            rank_prediction = DIXON_RANK_DISABLED;
         } else if (strcmp(argv[i], "--homogeneous") == 0 ||
                    strcmp(argv[i], "--hom") == 0) {
             random_homogeneous = 1;
@@ -3804,6 +3806,10 @@ int drsolve_cli_main(int argc, char *argv[], const char *prog_name)
         }
     }
 
+    if (!comp_mode && rank_prediction == DIXON_RANK_GENERIC) {
+        fprintf(stderr, "Error: --generic-rank-pred requires --comp (-c).\n");
+        return 1;
+    }
     if (comp_mode && verbose_debug_alias) verbose_level = 3;
 
     /* --quotient selects construction; only a solve option requests solving. */

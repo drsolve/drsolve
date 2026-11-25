@@ -247,6 +247,7 @@ void drsolve_cli_print_full_usage(const char *prog_name)
     printf("  -w, --omega VALUE             Matrix exponent (default %.4g).\n", DIXON_OMEGA);
     puts("  --rank-pred                   Enable rank prediction (default on;");
     puts("                                alias --rank-prediction).");
+    puts("  --generic-rank-pred           Use the generic boundary-filtration rank predictor in --comp.");
     puts("  --no-rank-pred                Disable rank prediction and Schur estimates.");
     puts("  --ideal \"a^3=b+1,...\"         Reduce by substitution relations after products.");
     puts("                                With file input, read relations from the file.");
@@ -343,6 +344,7 @@ static int validate_cli_options(int argc, char *argv[])
         {"complexity", no_argument, NULL, 'c'},
         {"rank-pred", no_argument, NULL, OPT_FLAG},
         {"rank-prediction", no_argument, NULL, OPT_FLAG},
+        {"generic-rank-pred", no_argument, NULL, OPT_FLAG},
         {"no-rank-pred", no_argument, NULL, OPT_FLAG},
         {"random", no_argument, NULL, 'r'},
         {"vardeg", no_argument, NULL, OPT_FLAG},

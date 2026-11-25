@@ -85,6 +85,30 @@ with tempfile.TemporaryDirectory() as tmp:
     override, _ = report('[400]*3', '--debug', '-v', '2')
     assert 'Formation budget:' in alias and 'Formation budget:' not in override
 
+    # The boundary filtration removes two dimensions from the midpoint
+    # estimate for four quartics. Step 4 must use the corrected rank too.
+    fast, _ = report('[4]*4')
+    corrected, saved = report('[4]*4', '--generic-rank-pred')
+    assert 'Rank prediction: 104' in fast
+    for text in (corrected, saved):
+        assert 'Rank prediction: 102' in text
+    def step4(text):
+        return float(re.search(r'Step 4 complexity \(log2\): ([0-9.]+)', text)[1])
+    assert step4(corrected) < step4(fast)
+
+    # Mixed degrees in input order exercise the exterior-rank correction.
+    log, saved = report('[3,2,3,2,3]', '--generic-rank-pred', '-v', '3')
+    for text in (log, saved):
+        assert 'rank prediction (generic boundary filtration) matrix size: 102 ' in text
+        assert 'HNF values : M=102,' in text
+    system = Path(tmp) / 'quartics.dr'
+    system.write_text('x,y,z\n257\nx^4+t,y^4+t,z^4+t,t^4+x+y+z\n')
+    output = Path(tmp) / 'quartics-report.dr'
+    result = subprocess.run([str(binary), '--comp', '-f', str(system), '--generic-rank-pred',
+                             '-o', str(output)], cwd=tmp, env=env, text=True,
+                            capture_output=True, check=True, timeout=10)
+    assert 'Rank prediction: 102' in result.stdout and 'Rank prediction: 102' in output.read_text()
+
     disabled, _ = report('[400]*3', '--no-rank-pred')
     assert 'Rank prediction: disabled' in disabled
     assert 'Schur core size: disabled' in disabled

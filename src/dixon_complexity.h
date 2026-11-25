@@ -169,6 +169,13 @@ void collect_variables(const char **polys, slong npolys,
                                const char *gen_name,
                                char ***vars_out, slong *nvars_out);
 
+/* Rank model selected by the complexity analysis entry points. */
+enum {
+    DIXON_RANK_DISABLED = 0,
+    DIXON_RANK_FAST = 1,
+    DIXON_RANK_GENERIC = 2
+};
+
 // Main Dixon complexity analysis functions
 char* dixon_complexity_auto(const char **poly_strings, slong num_polys,
                            const char **elim_vars, slong num_elim_vars,
@@ -212,6 +219,8 @@ void dixon_complexity_report_from_degrees(dixon_complexity_report_t *report,
                                           const fmpz_t field_order,
                                           double omega,
                                           int rank_prediction);
+
+int dixon_reaches_uniform_rank_bound(slong rank, const long *degrees, slong n, slong m);
 
 int dixon_rank_profile_from_degrees(slong **strata_out, slong *strata_len_out,
                                     slong **hilbert_out, slong *hilbert_len_out,

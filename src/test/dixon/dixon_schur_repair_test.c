@@ -441,7 +441,7 @@ static void check_schur_seed(void)
             }
         }
         long degrees[2]={2,2};slong *rows=NULL,*cols=NULL,size=-1;
-        int ok=dixon_schur_seed_select(matrix,nr,nc,rm,cm,m,degrees,ctx,&rows,&cols,&size);
+        int ok=dixon_schur_seed_select(matrix,nr,nc,rm,cm,m,degrees,ctx,&rows,&cols,&size,0);
         if (fq_nmod_ctx_degree(ctx)>1) {
             slong *reference_rows=NULL,*reference_cols=NULL,reference_size=-1;
             int reference=dixon_schur_seed_extension(matrix,nr,nc,rm,cm,m,degrees,ctx,
@@ -479,7 +479,7 @@ static void check_schur_seed(void)
         /* A term beyond the budget must reject without publishing indices. */
         slong bad=4;fq_nmod_one(coeff,ctx);dr_mpoly_add_term(matrix[0][0],&zero,&bad,coeff);
         rows=cols=NULL;size=-1;
-        assert(!dixon_schur_seed_select(matrix,nr,nc,rm,cm,m,degrees,ctx,&rows,&cols,&size));
+        assert(!dixon_schur_seed_select(matrix,nr,nc,rm,cm,m,degrees,ctx,&rows,&cols,&size,0));
         assert(!rows && !cols && size==-1);
         for(slong i=0;i<nr;i++) {
             for(slong j=0;j<nc;j++){dr_mpoly_clear(matrix[i][j]);flint_free(matrix[i][j]);}

@@ -166,6 +166,8 @@ EXTERNAL_STATIC_ALL_LIBS = $(PML_STATIC_LIBS) $(FLINT_STATIC_LIBS) \
 # Source files for the math library (in src directory)
 # ============================================================
 MATH_SOURCES = $(SRC_DIR)/dixon/dixon_complexity.c \
+               $(SRC_DIR)/dixon/dixon_rank_predictor.c \
+               $(SRC_DIR)/dixon/dixon_exterior.c \
                $(SRC_DIR)/dixon/dixon_recursive.c \
                $(SRC_DIR)/dixon/dixon_flint.c \
                $(SRC_DIR)/dixon/dixon_interface_flint.c \
@@ -1450,3 +1452,9 @@ test-input-pipeline: $(DIXON_TARGET)
 .PHONY: test-circuit-cli
 test-circuit-cli: $(DIXON_TARGET)
 	python3 $(SRC_DIR)/test/cli/circuit_cli_test.py ./$(DIXON_TARGET)
+
+.PHONY: dixon-rank-predictor
+dixon-rank-predictor: $(BUILD_DIR)/dixon_rank_predictor
+
+$(BUILD_DIR)/dixon_rank_predictor: $(APPS_DIR)/dixon_rank_predictor.c $(BUILD_DIR)/dixon/dixon_rank_predictor.o $(BUILD_DIR)/dixon/dixon_exterior.o
+	$(CC) $(ALL_CFLAGS) -o $@ $^ $(FLINT_LIBS) -lgmp $(RPATH_FLAGS) $(LDFLAGS)

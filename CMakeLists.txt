@@ -586,6 +586,8 @@ set(MATH_INTERNAL_HEADERS
   src/determinant/mq_fq_layout.h
   src/determinant/mq_gf2n_layout.h
   src/determinant/mq_gf2n_template.h
+  src/dixon_rank_predictor.h
+  src/dixon/dixon_exterior.h
   src/dixon/dixon_fq_projection.h
   src/dixon/dixon_fq_schur.h
   src/dixon/dixon_gf2n_projection.h
@@ -605,6 +607,8 @@ set(MATH_INTERNAL_HEADERS
 )
 
 set(MATH_SOURCES
+  src/dixon/dixon_rank_predictor.c
+  src/dixon/dixon_exterior.c
   src/dixon/dixon_complexity.c
   src/dixon/dixon_recursive.c
   src/dixon/dixon_flint.c
@@ -1556,3 +1560,8 @@ message(STATUS "  ASan            : ${DRSOLVE_ENABLE_ASAN}")
 message(STATUS "  Static linking  : ${DRSOLVE_STATIC}")
 message(STATUS "  Install prefix  : ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "==============================================")
+
+add_executable(dixon_rank_predictor EXCLUDE_FROM_ALL
+  apps/dixon_rank_predictor.c src/dixon/dixon_rank_predictor.c src/dixon/dixon_exterior.c)
+target_include_directories(dixon_rank_predictor PRIVATE src)
+target_link_libraries(dixon_rank_predictor PRIVATE FLINT::FLINT ${GMP_LIBRARY})

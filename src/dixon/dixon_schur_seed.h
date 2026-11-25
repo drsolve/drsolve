@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Share the certified seed/completion algorithm while preserving native
  * prime arithmetic and full extension coefficients. */
+#define SCHUR_SEED_EXTRA , int use_uniform_bound
 #define SCHUR_SEED_NAME dixon_schur_seed_prime
 #define SEED_MAT nmod_mat_t
 #define SEED_INIT(a,r,c) nmod_mat_init(a,r,c,prime)
@@ -10,6 +11,7 @@
 #define SEED_STORE(a,i,j,v) (SEED_ENTRY(a,i,j)=nmod_poly_get_coeff_ui(v,0))
 #define SEED_ACCUMULATE(a,i,j,v) (SEED_ENTRY(a,i,j)=nmod_add(SEED_ENTRY(a,i,j),nmod_poly_get_coeff_ui(v,0),(a)->mod))
 #include "dixon_schur_seed_template.h"
+#undef SCHUR_SEED_EXTRA
 #undef SCHUR_SEED_NAME
 #undef SEED_MAT
 #undef SEED_INIT
@@ -42,10 +44,10 @@
 #include "dixon_schur_seed_byte.h"
 #include "dixon_schur_seed_native.h"
 
-static int dixon_schur_seed_select(unified_mpoly_struct ***matrix,
+static slong dixon_schur_seed_select(unified_mpoly_struct ***matrix,
     slong nr, slong nc, const monom_t *rm, const monom_t *cm, slong m,
     const long *degrees, const fq_nmod_ctx_t ctx,
-    slong **out_rows, slong **out_cols, slong *out_size)
+    slong **out_rows, slong **out_cols, slong *out_size, int use_uniform_bound)
 {
     if (fq_nmod_ctx_prime(ctx)==2 &&
         (fq_nmod_ctx_degree(ctx)==4 || fq_nmod_ctx_degree(ctx)==8)) {
@@ -59,7 +61,7 @@ static int dixon_schur_seed_select(unified_mpoly_struct ***matrix,
         byte.row=small ? gf24_get_scalar_row : gf28_get_scalar_row;
         byte.inverse=small ? gf24_inv : gf28_inv;
         quotient_byte_tables(byte.tables,small ? 16 : 256,byte.row);
-        int ok=dixon_schur_seed_byte(matrix,nr,nc,rm,cm,m,degrees,ctx,
+        slong ok=dixon_schur_seed_byte(matrix,nr,nc,rm,cm,m,degrees,ctx,
             out_rows,out_cols,out_size,&byte);
         field_ctx_clear(&byte.field);
         return ok;
@@ -67,7 +69,7 @@ static int dixon_schur_seed_select(unified_mpoly_struct ***matrix,
 native:
     if (fq_nmod_ctx_prime(ctx)==2 && fq_nmod_ctx_degree(ctx)>1 && fq_nmod_ctx_degree(ctx)<=128) {
         gf2n_native_ctx *field=gf2n_native_create(ctx);
-        int ok;
+        slong ok;
 #define SEED_SELECT(bits) seed_n##bits##_select(matrix,nr,nc,rm,cm,m,degrees,ctx,out_rows,out_cols,out_size,field)
         if(field->n<=8) ok=SEED_SELECT(8);
         else if(field->n<=16) ok=SEED_SELECT(16);
@@ -79,6 +81,6 @@ native:
         return ok;
     }
     return fq_nmod_ctx_degree(ctx) == 1
-        ? dixon_schur_seed_prime(matrix,nr,nc,rm,cm,m,degrees,ctx,out_rows,out_cols,out_size)
+        ? dixon_schur_seed_prime(matrix,nr,nc,rm,cm,m,degrees,ctx,out_rows,out_cols,out_size,use_uniform_bound)
         : dixon_schur_seed_extension(matrix,nr,nc,rm,cm,m,degrees,ctx,out_rows,out_cols,out_size);
 }
