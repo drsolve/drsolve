@@ -1,17 +1,22 @@
 name: C/C++ CI
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches:
       - main
 
 jobs:
+  flint-main:
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/flint-main.yml
 
   # ──────────────────────────────────────────────────────────────
   # Linux: build FLINT + PML from source → static binary + test
   # ──────────────────────────────────────────────────────────────
   build-linux:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-22.04
     env:
       INSTALL_PREFIX: ${{ github.workspace }}/deps
@@ -131,6 +136,7 @@ jobs:
   # macOS: build FLINT + PML from source → static binary + test
   # ──────────────────────────────────────────────────────────────
   build-macos:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: macos-latest
     env:
       INSTALL_PREFIX: ${{ github.workspace }}/deps

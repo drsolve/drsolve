@@ -1,0 +1,129 @@
+name: Static builds with FLINT main
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.flint.outputs.sha }}
+    steps:
+      - name: Resolve FLINT main once for both platforms
+        id: flint
+        run: |
+          ref=$(git ls-remote --exit-code https://github.com/flintlib/flint.git refs/heads/main)
+          echo "sha=${ref%%[[:space:]]*}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            platform: linux-x86_64
+          - runner: macos-15
+            platform: macos-arm64
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      FLINT_SHA: ${{ needs.resolve.outputs.sha }}
+      PLATFORM: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: flintlib/flint
+          ref: ${{ env.FLINT_SHA }}
+          path: flint-src
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake libtool-bin libgmp-dev libmpfr-dev ninja-build zip
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install autoconf automake libtool gmp mpfr ninja
+
+      - name: Cache the static FLINT installation
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: flint-install
+          key: flint-main-${{ matrix.runner }}-${{ runner.arch }}-${{ env.FLINT_SHA }}-${{ hashFiles('.github/workflows/flint-main.yml') }}
+
+      - name: Build and install static FLINT
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          prefix="$PWD/flint-install"
+          cd flint-src
+          ./bootstrap.sh
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            ./configure --prefix="$prefix" --enable-static --disable-shared \
+              --with-gmp="$(brew --prefix gmp)" --with-mpfr="$(brew --prefix mpfr)"
+            jobs=$(sysctl -n hw.ncpu)
+          else
+            ./configure --prefix="$prefix" --enable-static --disable-shared
+            jobs=$(nproc)
+          fi
+          make -j"$jobs"
+          make install
+
+      - name: Build DRsolve against the pinned static archives
+        run: |
+          prefix="$PWD/flint-install"
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            gmp="$(brew --prefix gmp)/lib/libgmp.a"
+            mpfr="$(brew --prefix mpfr)/lib/libmpfr.a"
+            options=(-DDRSOLVE_ENABLE_OPENMP=OFF "-DCMAKE_PREFIX_PATH=$(brew --prefix gmp);$(brew --prefix mpfr)")
+          else
+            gmp=$(gcc -print-file-name=libgmp.a)
+            mpfr=$(gcc -print-file-name=libmpfr.a)
+            options=(-DCMAKE_EXE_LINKER_FLAGS=-static -DOpenMP_C_LIB_NAMES=gomp
+                     "-DOpenMP_gomp_LIBRARY=$(gcc -print-file-name=libgomp.a)")
+          fi
+          cmake -S . -B build-main -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DDRSOLVE_STATIC=ON -DDRSOLVE_BUILD_ATTACK=OFF -DBUILD_TESTING=ON \
+            -DCMAKE_DISABLE_FIND_PACKAGE_FLINT=ON "-DFLINT_INCLUDE_DIR=$prefix/include" \
+            "-DFLINT_LIBRARY=$prefix/lib/libflint.a" "-DGMP_LIBRARY=$gmp" "-DMPFR_LIBRARY=$mpfr" \
+            "${options[@]}"
+          cmake --build build-main
+
+      - name: Run DRsolve tests
+        run: ctest --test-dir build-main --output-on-failure --no-tests=error
+
+      - name: Verify linkage and package the executable
+        run: |
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            otool -L build-main/drsolve > dependencies.txt
+            if tail -n +2 dependencies.txt | awk '{print $1}' | grep -Ev '^(/usr/lib/|/System/Library/)'; then exit 1; fi
+          else
+            readelf -d build-main/drsolve > dependencies.txt
+            if grep -F '(NEEDED)' dependencies.txt; then exit 1; fi
+          fi
+          mkdir dist
+          cp build-main/drsolve drsolve_sage_interface.sage COPYING dist/
+          cp flint-src/COPYING.LESSER dist/COPYING.FLINT
+          strip dist/drsolve
+          dist/drsolve --version > dist/build-info.txt
+          grep -F "FLINT version: $(cat flint-src/VERSION) " dist/build-info.txt
+          printf '\nDRsolve commit: %s\nFLINT commit: %s\nPlatform: %s\n' \
+            "$GITHUB_SHA" "$FLINT_SHA" "$PLATFORM" >> dist/build-info.txt
+          archive="drsolve-$(cat VERSION)-flint-main-${FLINT_SHA:0:12}-$PLATFORM.zip"
+          (cd dist && zip -qr "../$archive" .)
+          echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+
+      - name: Upload platform ZIP
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ env.ARCHIVE }}
+          archive: false
+          if-no-files-found: error
