@@ -16,7 +16,7 @@
 <a id="v062"></a>
 ## 0.6.2
 
-- Substantially reduce memory usage.
+- Reduce memory usage.
 - Add `--generic-rank-pred` to `--comp` for more accurate generic Dixon rank predictions.
 - Further speed up bivariate resultant computation.
 
