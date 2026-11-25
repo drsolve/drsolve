@@ -467,14 +467,18 @@ static int reconstruct(nmod_poly_t result,const nmod_poly_struct *coeffs,
         }
         nmod_poly_mat_clear(basis);
         dr_profile_end("block.select_denominator",detail_start);
-        stats->interpolation+=seconds()-start;start=seconds();
+        stats->interpolation+=seconds()-start;
         int plausible=1;
         if(precheck) {
+            start=seconds();
             plausible=denominator_precheck(den,coeffs,d,dilation,state);
-            stats->verification+=seconds()-start;start=seconds();
+            stats->verification+=seconds()-start;
         }
-        if(plausible)ok=nmod_poly_mat_det_hnf(result,den);
-        stats->determinant+=seconds()-start;
+        if(plausible) {
+            start=seconds();
+            ok=nmod_poly_mat_det_hnf(result,den);
+            stats->determinant+=seconds()-start;
+        }
         double clear_start=dr_profile_start();
         nmod_poly_mat_clear(den);
         dr_profile_end("block.clear_basis",clear_start);
